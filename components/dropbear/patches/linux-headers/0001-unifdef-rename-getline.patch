@@ -1,0 +1,39 @@
+From: Hermes build <ai-agent.tseiman@tseiman.de>
+Subject: [PATCH] scripts/unifdef: avoid collision with libc getline
+
+Modern libc headers declare POSIX getline(3). Linux 2.6.23's host-only
+headers_install helper used the same static function name. Rename that
+internal helper without changing generated UAPI headers.
+---
+ scripts/unifdef.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+--- a/scripts/unifdef.c
++++ b/scripts/unifdef.c
+@@ -206,7 +206,7 @@
+ static void             error(const char *);
+ static int              findsym(const char *);
+ static void             flushline(bool);
+-static Linetype         getline(void);
++static Linetype         parseline(void);
+ static Linetype         ifeval(const char **);
+ static void             ignoreoff(void);
+ static void             ignoreon(void);
+@@ -512,7 +512,7 @@
+ 
+ 	for (;;) {
+ 		linenum++;
+-		lineval = getline();
++		lineval = parseline();
+ 		trans_table[ifstate[depth]][lineval]();
+ 		debug("process %s -> %s depth %d",
+ 		    linetype_name[lineval],
+@@ -526,7 +526,7 @@
+  * help from skipcomment().
+  */
+ static Linetype
+-getline(void)
++parseline(void)
+ {
+ 	const char *cp;
+ 	int cursym;

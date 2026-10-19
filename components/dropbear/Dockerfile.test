@@ -1,0 +1,4 @@
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user openssh-client && rm -rf /var/lib/apt/lists/* && useradd -m -s /bin/sh -p x tester
+WORKDIR /test

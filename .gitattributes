@@ -1,0 +1,3 @@
+# Preserve upstream text exactly; patch context prefixes are significant.
+components/dropbear/licenses/** -whitespace
+components/dropbear/patches/** -whitespace

@@ -1,0 +1,13 @@
+# Generated trees and downloaded source archives
+/components/*/buildroot/
+/components/*/output-buildroot/
+/components/*/work/
+/components/*/package-stage/
+/components/*/artifacts/
+/components/*/dist/
+/components/*/sources/*.tar.*
+/components/*/sources/*.asc
+
+# Local editor and OS files
+*~
+.DS_Store

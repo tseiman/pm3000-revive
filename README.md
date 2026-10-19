@@ -1,2 +1,53 @@
 # pm3000-revive
-An independent community project to modernize Avocent PM3000 PDUs with updated SSH, an improved web UI, automation integrations, and future firmware updates. Not affiliated with Avocent or Vertiv.
+
+Independent community project for incrementally modernizing Avocent PM3000 PDUs. The long-term scope includes updated remote access, firmware analysis and packaging, a modern web UI, ACME certificate handling, and RPC-based automation integrations. This project is not affiliated with Avocent or Vertiv.
+
+> **Current milestone:** a tested, repeatable build environment for a fully static Dropbear SSH server targeting the PM3000's 32-bit big-endian PowerPC e300c3 platform and Linux 2.6.23 ABI baseline. No complete firmware image is provided yet.
+
+## Current result
+
+The first component provides:
+
+- Dropbear 2026.94 server and `dropbearkey`
+- static musl linkage; no dependency on the device's legacy glibc
+- modern SSH algorithms and Ed25519 host keys
+- disabled client, SCP/SFTP, forwarding, X11, compression, and SHA-1 algorithms
+- pinned, repeatable Buildroot cross-toolchain configuration
+- ELF, QEMU-user, key-generation, SSH login, PTY-allocation, and reconnect checks
+- a non-invasive device test procedure using TCP port 2222
+
+The stripped binaries total about 643 KiB. They do not replace or reconfigure the vendor SSH service automatically.
+
+## Reproduce on Linux
+
+Install the prerequisites listed in [Reproducing the current milestone](docs/REPRODUCING.md), then run:
+
+```bash
+git clone https://github.com/tseiman/pm3000-revive.git
+cd pm3000-revive/components/dropbear
+./fetch-sources.sh
+./build-toolchain.sh
+./build-dropbear.sh
+./verify.sh
+./package.sh
+```
+
+Validated binaries are written to `components/dropbear/artifacts/bin/`. Release archives are written to `components/dropbear/dist/`.
+
+## Install and test
+
+Installation is intentionally manual at this stage. Read [Installing the current Dropbear milestone](docs/INSTALL_DROPBEAR.md) before copying anything to a device. The documented path runs in parallel on port 2222 and leaves the existing SSH server untouched.
+
+## Project status and safety
+
+- Current stage: experimental component build; not a complete firmware update.
+- No PM3000 deployment is automated.
+- Do not overwrite vendor binaries, bootloader data, calibration data, or the original firmware.
+- Keep an existing management session and recovery route available during device testing.
+- Do not publish vendor firmware images, device dumps, credentials, host keys, or proprietary files in this repository.
+
+See [ROADMAP.md](ROADMAP.md) for the planned incremental work.
+
+## Licensing
+
+Repository-authored files are licensed under [MIT](LICENSE). Third-party components retain their original licenses; see [LICENSES.md](LICENSES.md) and the component license files.
