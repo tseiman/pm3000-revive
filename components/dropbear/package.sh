@@ -10,7 +10,8 @@ BUILD="$STAGE/pm3000-dropbear-build-debug-$VERSION"
 rm -rf "$STAGE"
 mkdir -p "$DIST" "$RUNTIME/bin" "$RUNTIME/licenses" \
   "$BUILD/artifacts/debug" "$BUILD/artifacts/logs" "$BUILD/configs" \
-  "$BUILD/patches/linux-headers" "$BUILD/sources" "$BUILD/licenses/runtime" "$BUILD/licenses/build"
+  "$BUILD/patches/linux-headers" "$BUILD/patches/dropbear" "$BUILD/tests" \
+  "$BUILD/sources" "$BUILD/licenses/runtime" "$BUILD/licenses/build"
 
 cp "$ROOT/artifacts/bin/dropbear" "$ROOT/artifacts/bin/dropbearkey" "$RUNTIME/bin/"
 cp "$ROOT/README.md" "$ROOT/BUILD-MANIFEST.md" "$ROOT/SECURITY-NOTES.md" "$ROOT/TEST-REPORT.md" "$ROOT/DEVICE-TEST.md" "$RUNTIME/"
@@ -26,6 +27,8 @@ cp "$ROOT/Dockerfile.test" "$ROOT/.dockerignore" "$BUILD/"
 cp "$ROOT/configs/buildroot-pm3000_defconfig" "$ROOT/configs/localoptions.h" "$BUILD/configs/"
 cp "$ROOT/output-buildroot/.config" "$BUILD/configs/buildroot-resolved.config"
 cp "$ROOT/patches/linux-headers/0001-unifdef-rename-getline.patch" "$BUILD/patches/linux-headers/"
+cp "$ROOT/patches/dropbear/"*.patch "$BUILD/patches/dropbear/"
+cp "$ROOT/tests/login-shell.sh" "$BUILD/tests/"
 cp "$ROOT/sources/dropbear-2026.94.tar.bz2" "$ROOT/sources/dropbear-2026.94.tar.bz2.asc" "$ROOT/sources/linux-2.6.23.tar.xz" "$BUILD/sources/"
 cp "$ROOT/artifacts/debug/dropbear" "$ROOT/artifacts/debug/dropbearkey" "$BUILD/artifacts/debug/"
 cp "$ROOT/artifacts/logs/"* "$BUILD/artifacts/logs/"

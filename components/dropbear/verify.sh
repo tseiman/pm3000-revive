@@ -63,3 +63,9 @@ trap - EXIT INT TERM
 printf "QEMU_USER_ED25519_OK\nSSH_ALGORITHMS_OK\nSSH_COMMAND_OK\nSSH_PTY_ALLOCATION_OK\nSSH_RECONNECT_OK\n"
 ' > "$ROOT/artifacts/logs/qemu-user-ssh-test.txt" 2>&1
 cat "$ROOT/artifacts/logs/qemu-user-ssh-test.txt"
+docker run --rm \
+  -v "$BIN:/input:ro" \
+  -v "$ROOT/tests:/tests:ro" \
+  pm3000-dropbear-test:bookworm /tests/login-shell.sh \
+  > "$ROOT/artifacts/logs/login-shell-test.txt" 2>&1
+cat "$ROOT/artifacts/logs/login-shell-test.txt"

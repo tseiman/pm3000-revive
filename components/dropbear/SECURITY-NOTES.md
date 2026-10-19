@@ -21,4 +21,12 @@ Hardening choices in this build:
 - Re-exec is disabled for Linux 2.6.23 compatibility.
 - The manual test procedure uses public-key-only mode (`-s`) and a non-conflicting port.
 
+## Login-shell extension
+
+`--login-shell /absolute/path` is a project-specific, optional server setting. At startup, before listeners are created, Dropbear requires the path to be absolute and to identify an existing executable regular file. The configured value is global to that server instance.
+
+The override is applied only in the already-authorized session child. User lookup, authentication, the account's original login-shell check, `-w` root-login restriction, UID/GID setup, and other account controls continue to use the original account data. It does not make an otherwise rejected account eligible to log in.
+
+Command policy remains separate from shell selection. A global `-c` forced command and an `authorized_keys` `command=` restriction still select the allowed command and preserve `SSH_ORIGINAL_COMMAND`; the optional session shell only determines which shell executes that selected command. When both forced-command mechanisms exist, Dropbear's existing global forced-command precedence remains unchanged.
+
 Operational security still depends on file ownership/modes, account policy, entropy quality, host-key protection, network filtering, and preserving a recovery path. Re-check upstream releases and advisories before deployment if these artifacts are no longer current.

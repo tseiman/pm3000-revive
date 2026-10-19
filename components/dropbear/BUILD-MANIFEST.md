@@ -1,6 +1,6 @@
 # Build Manifest
 
-Generated: 2026-10-18T23:44:06Z
+Generated: 2026-10-19T22:23:45Z
 
 ## Target
 
@@ -28,6 +28,12 @@ Generated: 2026-10-18T23:44:06Z
 ## Local compatibility patch
 
 `patches/linux-headers/0001-unifdef-rename-getline.patch` renames an internal host utility function in Linux 2.6.23's `scripts/unifdef.c` to avoid collision with modern libc `getline(3)`. It does not alter target headers or ABI.
+
+## Project Dropbear patch
+
+`patches/dropbear/0001-add-login-shell-option.patch` adds the optional `--login-shell /absolute/path` server argument. It validates the file before listener setup and changes only the session-child shell selection. Authentication, account restrictions, account-shell validation, forced-command selection, and `authorized_keys` processing remain in their upstream paths.
+
+`build-dropbear.sh` applies versioned Dropbear patches with forward-only semantics. A clean source tree is patched; an already patched local tree is retained; a conflicting local tree stops with an error and is never reset automatically.
 
 ## Build commands
 

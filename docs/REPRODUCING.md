@@ -4,7 +4,7 @@ The recommended build host is a recent Debian or Ubuntu x86-64 Linux system with
 
 This procedure provides a tested, pinned starting point for rebuilding the toolchain and binaries. It does not claim bit-for-bit identical output across different hosts or paths. Local source or configuration changes are allowed; after such changes, their functionality is the responsibility of the person making them.
 
-The scripts intentionally permit local development on the build host. Existing `buildroot/`, `output-buildroot/`, and `work/dropbear-2026.94/` trees are reused rather than forcibly reset. This allows changes to source code, the build chain, configurations, patches, and scripts. Delete the affected generated/work directory yourself only when you deliberately want a fresh reference build. Locally changed Dropbear sources are not automatically embedded in the build/debug archive; preserving and documenting custom changes is the local builder's responsibility.
+The scripts intentionally permit local development on the build host. Existing `buildroot/`, `output-buildroot/`, and `work/dropbear-2026.94/` trees are reused rather than forcibly reset. Versioned patches are applied forward-only: an already applied patch is retained, while a conflict stops the build without resetting the tree. Delete the affected generated/work directory yourself only when you deliberately want a fresh reference build. Uncommitted local source edits are not automatically embedded in the build/debug archive; preserving and documenting them is the local builder's responsibility.
 
 ## 1. Install prerequisites
 
@@ -51,7 +51,7 @@ artifacts/debug/dropbearkey
 ./verify.sh
 ```
 
-This verifies ELF32 PowerPC big-endian/static properties and runs the target binaries under QEMU user mode. It generates an Ed25519 host key, starts an isolated server, verifies public-key login, confirms PTY allocation, executes a command, and reconnects.
+This verifies ELF32 PowerPC big-endian/static properties and runs the target binaries under QEMU user mode. It generates an Ed25519 host key, starts isolated servers, verifies public-key login, confirms PTY allocation, executes commands, and reconnects. It also checks `--login-shell` startup validation, unchanged default shell behavior, Bash remote-command execution, forced-command precedence and `SSH_ORIGINAL_COMMAND`, rejection of an invalid account shell, and preservation of root/group restrictions.
 
 QEMU user mode does not emulate the PM3000's actual Linux 2.6.23 kernel. A successful device test remains mandatory.
 

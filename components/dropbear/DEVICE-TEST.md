@@ -10,6 +10,8 @@ This procedure deliberately runs Dropbear in parallel on TCP port 2222. Do not r
 - Runtime archive checksum verified off-device.
 - A temporary writable directory with enough space (at least 2 MiB plus logs and keys).
 - An authorized Ed25519 public key. Never copy private keys to the device.
+- `/bin/bash` exists and is an executable regular file.
+- The existing `root` account remains otherwise eligible for SSH login, and the `root` group contains no account that should be excluded from this test.
 
 ## Stage files
 
@@ -23,7 +25,16 @@ mkdir -m 0700 state
 ./bin/dropbearkey -t ed25519 -f state/dropbear_ed25519_host_key
 ```
 
-Create a temporary test account or authorized-key location using the vendor-approved account-management method. Do not alter the production root account. Confirm that the account has a valid shell and that its `~/.ssh/authorized_keys` contains only the approved public key.
+Create an isolated key directory without changing `/root/.ssh/authorized_keys`, `/etc/passwd`, `/etc/shells`, PAM, or the Avocent account configuration:
+
+```sh
+mkdir -m 0700 state/auth
+cp /approved/path/test_key.pub state/auth/authorized_keys
+chmod 0600 state/auth/authorized_keys
+id root
+```
+
+Inspect the `root` group membership using the commands available on the device. Continue only when `root` is a member and no other account that must be excluded belongs to that group. The original root login shell remains `/usr/bin/cli`; `--login-shell` must not be used to bypass an account that Dropbear otherwise rejects.
 
 ## Start in foreground
 
@@ -31,12 +42,14 @@ First verify that port 2222 is unused using the device's available passive socke
 
 ```sh
 ./bin/dropbear -F -s -p 2222 \
+  -D "$PWD/state/auth" -G root \
+  --login-shell /bin/bash \
   -r "$PWD/state/dropbear_ed25519_host_key" \
   -P "$PWD/state/dropbear.pid" \
   >"$PWD/state/dropbear.log" 2>&1
 ```
 
-`-s` disables password authentication. Keep this foreground session open.
+`-s` disables password authentication but leaves public-key authentication enabled. `-D` isolates this instance from existing per-user key files, `-G root` restricts authentication to members of the verified root group, and `--login-shell /bin/bash` replaces `/usr/bin/cli` only after the account has passed Dropbear's normal checks. Keep this foreground session open.
 
 ## Client checks
 
@@ -56,11 +69,16 @@ ssh-keygen -lf "$KNOWN_HOSTS"
 ssh -vv -p 2222 -i APPROVED_PRIVATE_KEY \
   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  TEST_USER@DEVICE_ADDRESS 'uname -a; id; printf "COMMAND_OK\n"'
+  root@DEVICE_ADDRESS 'uname -a; id; printf "SHELL=%s COMMAND_OK\n" "$SHELL"'
 ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  TEST_USER@DEVICE_ADDRESS 'tty; printf "PTY_OK\n"'
+  root@DEVICE_ADDRESS 'tty; printf "SHELL=%s PTY_OK\n" "$SHELL"'
+
+ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
+  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$KNOWN_HOSTS" \
+  root@DEVICE_ADDRESS
 rm -f "$KNOWN_HOSTS"
 ```
 
@@ -69,13 +87,15 @@ Confirm:
 - Host-key fingerprint matches the locally generated key.
 - Negotiated KEX/cipher/signature is one of those listed in `TEST-REPORT.md`.
 - `COMMAND_OK` and `PTY_OK` are returned.
+- Both command tests report `SHELL=/bin/bash`, and the command-free connection opens an interactive Bash session rather than `/usr/bin/cli`.
+- A non-root account using the same test key is rejected by the `-G root` restriction.
 - A second connection succeeds.
 - The vendor SSH service remains reachable on its original port.
 - No unexpected errors appear in `state/dropbear.log` or the kernel log.
 
 ## Stop and clean up
 
-Terminate the foreground Dropbear with Ctrl-C. Confirm port 2222 is no longer listening. Remove the temporary account/key authorization according to the approved procedure, then remove `/var/tmp/dropbear-test` when evidence has been retained.
+Terminate the foreground Dropbear with Ctrl-C. Confirm port 2222 is no longer listening. Remove the temporary key directory with the rest of `/var/tmp/dropbear-test` after required evidence has been retained.
 
 ## Abort conditions
 

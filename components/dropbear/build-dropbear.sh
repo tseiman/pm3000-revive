@@ -14,6 +14,17 @@ if [ ! -f "$BUILD/configure" ]; then
 else
   printf 'NOTICE: reusing local Dropbear work tree: %s\n' "$BUILD"
 fi
+for patchfile in "$ROOT"/patches/dropbear/*.patch; do
+  [ -f "$patchfile" ] || continue
+  if patch --batch --forward --dry-run -p1 -d "$BUILD" < "$patchfile" >/dev/null 2>&1; then
+    patch --batch --forward -p1 -d "$BUILD" < "$patchfile"
+  elif patch --batch --dry-run -R -p1 -d "$BUILD" < "$patchfile" >/dev/null 2>&1; then
+    printf 'NOTICE: Dropbear patch already applied: %s\n' "$(basename "$patchfile")"
+  else
+    printf 'ERROR: Dropbear patch does not apply cleanly: %s\n' "$patchfile" >&2
+    exit 1
+  fi
+done
 cp "$ROOT/configs/localoptions.h" "$BUILD/localoptions.h"
 cd "$BUILD"
 if CC="$CC" CFLAGS="-Os -g3" ./configure --host=powerpc-buildroot-linux-musl --enable-static --disable-zlib --disable-syslog --disable-lastlog --disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx >"$OUT/logs/configure-dropbear.log" 2>&1; then

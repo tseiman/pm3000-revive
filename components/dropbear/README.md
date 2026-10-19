@@ -13,6 +13,9 @@ This project builds a server-focused Dropbear 2026.94 for 32-bit big-endian Powe
 - No SHA-1 signatures/MACs, DSS, ECDSA, CBC, 3DES, compression, X11, agent forwarding, TCP/stream forwarding, or SFTP server
 - Default test port 2222; existing device SSH service is not replaced
 - Re-exec disabled because Linux 2.6.23 lacks the modern `fexecve` path
+- Project extension `--login-shell /absolute/path` optionally replaces the session shell after successful account authentication and authorization.
+
+Without `--login-shell`, Dropbear uses the account shell exactly as upstream does. With the option, the selected shell is used for SSH shell requests and for remote commands executed with `shell -c`. The path must name an existing executable regular file and is rejected during server startup otherwise. The override is server-wide for all accounts accepted by that instance; it does not change `/etc/passwd`, authentication, account-shell validation, forced-command selection, or `authorized_keys` restrictions.
 
 ## Build
 

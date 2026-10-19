@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: initial verification 2026-10-18 UTC; component-path rebuild and verification repeated 2026-10-19 UTC.
+Date: initial verification 2026-10-18 UTC; component-path rebuild and login-shell extension verified 2026-10-19 UTC.
 
 ## Passed checks
 
@@ -16,8 +16,16 @@ Date: initial verification 2026-10-18 UTC; component-path rebuild and verificati
 - Non-PTY remote command returned `COMMAND_OK`.
 - OpenSSH reported `PTY allocation request accepted`.
 - A subsequent independent SSH connection returned `RECONNECT_OK`.
+- `--login-shell` help and startup validation passed for relative, missing, directory, non-executable, missing-argument, and duplicate-option cases.
+- Startup with no override retained the account shell (`sh|/bin/sh`).
+- A remote command with `--login-shell /bin/bash` ran through Bash and exported `SHELL=/bin/bash`.
+- The login-shell test server accepted a PTY allocation with the override enabled.
+- `authorized_keys` `command=` and global `-c` forced commands remained effective, retained `SSH_ORIGINAL_COMMAND`, and used the selected session shell.
+- The existing global forced command retained precedence when both forced-command mechanisms were present.
+- An account with a shell absent from `/etc/shells` remained rejected, and the existing `-w` root-login restriction was not bypassed.
+- `-G root` allowed the root account, rejected the non-member test account, and continued to use `/bin/bash` only for the admitted session.
 
-The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt`.
+The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt` and `artifacts/logs/login-shell-test.txt`.
 
 ## Advertised algorithms
 
@@ -28,12 +36,12 @@ The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt`
 
 ## Sizes and hashes
 
-- `dropbear`: 394756 bytes; SHA-256 `bac507ee52198ea337c8573cf9489109c9d6ef71706f13b25302f143b47b693b`
+- `dropbear`: 394756 bytes; SHA-256 `ed00d4f9f3e034f4991da8304269876f457615f7e786f45d26b829d8cc11b2a1`
 - `dropbearkey`: 263328 bytes; SHA-256 `97cd3e35b4f9db7ea7a23041f862abe6144b84ee0a6c53fadafedf2996a65d8c`
 - Combined binary size: 658084 bytes, below the requested 2 MiB target.
 
 ## Limitations
 
-QEMU user mode runs PPC userspace code on the host kernel; it does not emulate the PM3000's Linux 2.6.23 kernel, vendor filesystem, NSS/account database, entropy devices, or hardware. During the forced-PTY test, OpenSSH confirmed successful PTY allocation, but executing a native x86 shell from the PPC QEMU process is a mixed-architecture harness limitation. Full PTY command execution must be confirmed on the device using `DEVICE-TEST.md`.
+QEMU user mode runs PPC userspace code on the host kernel; it does not emulate the PM3000's Linux 2.6.23 kernel, vendor filesystem, NSS/account database, entropy devices, or hardware. OpenSSH confirmed successful PTY allocation, but executing a host-native shell in the PPC QEMU PTY child is a mixed-architecture harness limitation. The non-PTY `/bin/bash -c` path was functionally verified; an interactive `/bin/bash` session and full PTY command execution must be confirmed on the device using `DEVICE-TEST.md`.
 
 No target device was contacted or modified.

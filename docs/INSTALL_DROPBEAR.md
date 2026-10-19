@@ -43,18 +43,29 @@ mkdir -m 0700 state
 ./bin/dropbearkey -t ed25519 -f state/dropbear_ed25519_host_key
 ```
 
-Provision an authorized public key for a temporary test account using an approved local method. Confirm the account has a valid shell and correct UID/GID.
+Confirm `/bin/bash` is an executable regular file. Create a private test key directory instead of changing the existing account configuration:
+
+```bash
+mkdir -m 0700 state/auth
+cp /approved/path/test_key.pub state/auth/authorized_keys
+chmod 0600 state/auth/authorized_keys
+id root
+```
+
+Inspect group membership with the tools available on the device. Continue only if `root` belongs to the `root` group and that group contains no other account that should be excluded. Do not change `/etc/passwd`, `/etc/shells`, PAM, `/root/.ssh/authorized_keys`, or the Avocent account configuration.
 
 ## 4. Start on port 2222
 
 ```bash
 ./bin/dropbear -F -s -p 2222 \
+  -D "$PWD/state/auth" -G root \
+  --login-shell /bin/bash \
   -r "$PWD/state/dropbear_ed25519_host_key" \
   -P "$PWD/state/dropbear.pid" \
   >"$PWD/state/dropbear.log" 2>&1
 ```
 
-`-F` keeps the process in the foreground and `-s` disables password login. Keep this session open.
+`-F` keeps the process in the foreground, `-s` disables password login without disabling public-key authentication, `-D` uses only the isolated key file, and `-G root` restricts this instance to the verified root group. `--login-shell /bin/bash` affects the session only after normal account checks. Keep this session open.
 
 On the PM3000, display the host-key fingerprint through the retained trusted session:
 
@@ -73,17 +84,22 @@ ssh-keygen -lf "$KNOWN_HOSTS"
 ssh -vv -p 2222 -i APPROVED_PRIVATE_KEY \
   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  TEST_USER@DEVICE_ADDRESS 'id; uname -a; printf "COMMAND_OK\n"'
+  root@DEVICE_ADDRESS 'id; uname -a; printf "SHELL=%s COMMAND_OK\n" "$SHELL"'
 
 ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
   -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  TEST_USER@DEVICE_ADDRESS 'tty; printf "PTY_OK\n"'
+  root@DEVICE_ADDRESS 'tty; printf "SHELL=%s PTY_OK\n" "$SHELL"'
+
+ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
+  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile="$KNOWN_HOSTS" \
+  root@DEVICE_ADDRESS
 
 rm -f "$KNOWN_HOSTS"
 ```
 
-Also verify a second connection and confirm the original SSH service remains reachable.
+Confirm that both command tests report `SHELL=/bin/bash`, the command-free connection opens interactive Bash rather than `/usr/bin/cli`, a non-root account is rejected, a second root connection succeeds, and the original SSH service remains reachable.
 
 ## 5. Stop and remove
 
