@@ -1,0 +1,162 @@
+# Native REST v1 adapter
+
+Stage 4 provides a bounded C99 CGI runtime for the PM3000 REST v1 contract. It is designed for the existing PowerPC e300c3, big-endian, soft-float firmware environment and preserves the vendor backend chain:
+
+```text
+browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
+```
+
+The runtime has not been installed on a device. All development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution.
+
+## Implemented routes
+
+- `GET /api/v1/health`
+- `GET /api/v1/outlets`
+- `GET /api/v1/outlets/{outletId}`
+- `POST /api/v1/outlets/{outletId}/actions`
+  - always returns `503 action_disabled` after authorization
+  - never opens the Avtrans socket
+- `GET /api/v1/tokens`
+- `POST /api/v1/tokens`
+- `POST /api/v1/tokens/{tokenId}/enable`
+- `POST /api/v1/tokens/{tokenId}/disable`
+- `DELETE /api/v1/tokens/{tokenId}`
+
+Every route requires `HTTPS=on` except no route is exposed over plain HTTP. The health route is unauthenticated after the HTTPS gate. Outlet and token routes require bearer authorization according to `api/openapi-v1.json`.
+
+## Fixed production paths
+
+Production builds do not accept environment overrides:
+
+- Token store: `/mnt/hdUser/pm3000-revive/rest/tokens.json`
+- Token lock: `/mnt/hdUser/pm3000-revive/rest/tokens.json.lock`
+- Avtrans socket: `/dev/avtrans_socket`
+- Controller credentials: `/etc/pm3000-rest/controller.credentials`
+
+`PM3000_TESTING` host builds accept path overrides only for isolated tests. The target Makefile never defines `PM3000_TESTING`.
+
+## Build
+
+Prerequisites:
+
+- the repository was cloned with the pinned Buildroot toolchain already produced under `components/dropbear/output-buildroot/host/`
+- GNU Make
+- a host C compiler for tests
+
+From the repository root:
+
+```bash
+make -C modern-WebUI/native clean target
+```
+
+The target uses:
+
+```text
+-std=c99 -Os -Wall -Wextra -Werror -pedantic
+-static -mcpu=e300c3 -msoft-float
+```
+
+The target is stripped with the matching Buildroot `powerpc-buildroot-linux-musl-strip`. The output is:
+
+```text
+modern-WebUI/native/build/pm3000-rest-ppc32
+```
+
+The verified Stage 4 build is a stripped, statically linked ELF32 MSB PowerPC executable. Two clean builds were byte-identical. The final binary and Stage 5 production assets must remain below the combined 400 KiB release budget.
+
+## Verification
+
+Run all fixture, schema, token-store, adapter, and UI asset tests:
+
+```bash
+python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py'
+```
+
+Build and inspect the target:
+
+```bash
+make -C modern-WebUI/native clean target
+file modern-WebUI/native/build/pm3000-rest-ppc32
+components/dropbear/output-buildroot/host/bin/powerpc-buildroot-linux-musl-readelf \
+  -h modern-WebUI/native/build/pm3000-rest-ppc32
+```
+
+A local QEMU health check may be run in a disposable container. It mounts only the build directory read-only and does not contact a PM3000:
+
+```bash
+docker run --rm \
+  -v "$PWD/modern-WebUI/native/build:/work:ro" \
+  debian:bookworm-slim \
+  sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends qemu-user >/dev/null && \
+    REQUEST_METHOD=GET PATH_INFO=/api/v1/health HTTPS=on \
+    qemu-ppc -cpu e300c3 /work/pm3000-rest-ppc32'
+```
+
+Expected status and payload:
+
+```text
+Status: 200 OK
+{"apiVersion":"v1","status":"live"}
+```
+
+## Security boundaries
+
+### Backend projection
+
+The Avtrans client has no generic proxy or free-form command interface. It emits only the observed login, read-only `get units.topology`, and logout sequence. The XML projector accepts one bounded, observed topology shape and maps only approved fields to REST v1.
+
+Malformed, oversized, ambiguous, duplicate, or unexpected backend data fails closed. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
+
+### Token store
+
+The native reader and writer enforce the Stage 3 canonical store contract:
+
+- strict schema and canonical field order
+- bounded store, token, and outlet counts
+- exactly one enabled administrator or more
+- SHA-256 digests only; bearer plaintext is never stored
+- independent random token record IDs
+- exclusive lock during validation and mutation
+- descriptor-relative `O_NOFOLLOW` operations
+- owner-only regular files and a mode-`0700` owner-only directory
+- verified parent-directory `fsync` before each transaction, followed by a same-directory temporary file, file `fsync`, atomic rename, and private-directory `fsync`
+- generation increment for every successful mutation
+- protection against disabling or revoking the final enabled administrator
+
+A created bearer value appears only in its one-time `201` response. While the exclusive lock is held, the candidate store is first written and `fsync`ed to a same-directory temporary file. The response is then written and flushed before the atomic rename. A response-delivery failure removes the candidate and preserves the old store byte-for-byte. A subsequent pre-rename failure can leave the client with an inactive credential, but cannot leave an active credential whose plaintext was not delivered. Once rename succeeds, directory-`fsync` uncertainty is reported locally and never rolled back; the already delivered credential remains the authoritative result. List responses contain metadata only. Error responses and tests must not contain token plaintext or digests.
+
+### Disabled power actions
+
+The action route validates HTTPS, bearer authorization, scope, outlet permission, and route shape, then returns:
+
+```json
+{"code":"action_disabled","message":"Outlet actions are disabled."}
+```
+
+It does not open `/dev/avtrans_socket`, emit XML, change settings, reboot the device, or switch an outlet.
+
+## Deployment preconditions
+
+No deployment is part of Stage 4. Before a later deployment stage, the installer must independently provide and verify:
+
+1. an owner-only persistent directory at `/mnt/hdUser/pm3000-revive/rest/` with mode `0700`;
+2. the canonical token store and lock file with mode `0600`;
+3. an owner-only credentials file at `/etc/pm3000-rest/controller.credentials`;
+4. an Apache mapping that preserves the existing vendor Web UI as a fallback;
+5. HTTPS-only access and the required CGI environment;
+6. a staged health check before exposing any additional route.
+
+Do not deploy by overwriting vendor files in place.
+
+## Rollback design
+
+A later installer must make rollback an atomic configuration operation:
+
+1. remove or disable only the new REST/modern-UI Apache mapping;
+2. restore the previous Apache configuration from a validated backup;
+3. remove only project-owned binaries and assets;
+4. leave the vendor Web UI and vendor backend chain untouched;
+5. preserve the token store unless an operator explicitly requests its destruction;
+6. verify that the legacy Web UI is reachable after rollback.
+
+Rollback must not restore unknown firmware, restart unrelated services, or issue any Avtrans power/settings command.

@@ -14,3 +14,7 @@ __pycache__/
 *.py[cod]
 *~
 .DS_Store
+
+# Modern Web UI local build and browser-check artifacts
+/modern-WebUI/native/build/
+/modern-WebUI/artifacts/
