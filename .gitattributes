@@ -1,3 +1,5 @@
 # Preserve upstream text exactly; patch context prefixes are significant.
 components/dropbear/licenses/** -whitespace
 components/dropbear/patches/** -whitespace
+fix-WebUI/file-hashes.json -text
+fix-WebUI/webui-2.0.1.23-to-tested-state.patch -text -whitespace

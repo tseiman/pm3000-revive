@@ -1,0 +1,458 @@
+--- a/usr/share/apache2/htdocs/scripts-20150511.js
++++ b/usr/share/apache2/htdocs/scripts-20150511.js
+@@ -30,7 +30,7 @@
+     }    
+ 
+     if (keycode == 13) {
+-        eval(((document.getElementById("login_button").childNodes[1].href).split(":"))[1]);
++        eval(((document.getElementById("login_button").getElementsByTagName("a")[0].href).split(":"))[1]);
+         return false;
+     } else {
+         return true;
+@@ -103,15 +103,15 @@
+                 document.getElementById("form").style.width = ((document.getElementById("main").style.width).split("px"))[0] - 12 + 'px';
+             }
+         }
+-        if(document.getElementById("form").firstChild.id == "form_table"){//Workaround fix for the wizard's security page line scrunch(firefox 3.x); *It is also for IE's min line wrapping problem.
+-            document.getElementById("form").firstChild.style.width = "100%"; //or = ((document.getElementById("main").style.width).split("px"))[0] - 10 + 'px';   
+-            document.getElementById("form").firstChild.style.height = "auto";
++        if(document.getElementById("form").firstElementChild.id == "form_table"){//Workaround fix for the wizard's security page line scrunch(firefox 3.x); *It is also for IE's min line wrapping problem.
++            document.getElementById("form").firstElementChild.style.width = "100%"; //or = ((document.getElementById("main").style.width).split("px"))[0] - 10 + 'px';   
++            document.getElementById("form").firstElementChild.style.height = "auto";
+         }
+     }
+     if (document.getElementById("table_form")) document.getElementById("table_form").style.height = document.getElementById("main").offsetHeight - 86 - TFT + 'px';
+     if (document.getElementById("table")) {
+         document.getElementById("table").style.width = document.getElementById("table_form").offsetWidth - diff4 + 'px';
+-        if(document.getElementById("table_form")) document.getElementById("table_form").firstChild.style.width = document.getElementById("table").offsetWidth+'px';
++        if(document.getElementById("table_form")) document.getElementById("table_form").firstElementChild.style.width = document.getElementById("table").offsetWidth+'px';
+     }
+ 
+     //get the perfect height for 'tbody' - bug w4
+@@ -147,7 +147,7 @@
+ }
+ 
+ function initializeForm(){       
+-    var parameters = document.getElementById("form_table").firstChild.childNodes;
++    var parameters = document.getElementById("form_table").firstElementChild.children;
+     originalForm = '<section structure="form">' + get_elements(parameters) + '</section>';
+ }
+ 
+@@ -185,7 +185,7 @@
+ //Get the total number of rows of a table.
+ function getRows(tid) {     
+     var table = document.getElementById(tid);
+-    var cells = table.childNodes;
++    var cells = table.children;
+     var rows = 0; 
+     /*
+     if ((!cascadeTop)&&(topologyTable))rows = 1;
+@@ -269,7 +269,7 @@
+         document.getElementById(tree).style.visibility='visible';
+         bar_width = document.getElementById(tree).offsetWidth;
+         
+-        var tree_node = document.getElementById(tree).childNodes[0].childNodes[1];
++        var tree_node = document.getElementById(tree).children[0].children[1];
+         first_navcall(tree_node);
+     }
+     else {
+@@ -484,10 +484,10 @@
+     }
+     else{
+         //Deselect all table rows
+-        var lines = check.parentNode.parentNode.parentNode.childNodes;
++        var lines = check.parentNode.parentNode.parentNode.children;
+         for(var i=0; i < lines.length; i++) {
+             if(lines[i].style.visibility != "hidden"){ //Do not select the hidden rows.
+-                lines[i].firstChild.firstChild.checked = false;
++                lines[i].firstElementChild.firstElementChild.checked = false;
+             }
+         }        
+     }
+@@ -498,7 +498,7 @@
+         buttonRowRequest = '<array id="'+ text_filter(neu.id) +'"></array>'; 
+     }
+     else {
+-        neu = check.parentNode.parentNode.firstChild.firstChild;
++        neu = check.parentNode.parentNode.firstElementChild.firstElementChild;
+         neu.checked = true;
+     }
+ }
+@@ -902,8 +902,8 @@
+                                             //set elem's height as offsetHeight/scrollHeight to avoid the firefox's bug(mis-positioning).
+                                             if(elem.className == 'radio_child')elem.style.height = elem.offsetHeight+'px';  
+                                         }
+-                                    if (elem.firstChild.tagName.toLowerCase() == 'span') {
+-                                        elem.firstChild.style.display = elem.style.display;
++                                    if (elem.firstElementChild && elem.firstElementChild.tagName.toLowerCase() == 'span') {
++                                        elem.firstElementChild.style.display = elem.style.display;
+                                     }
+ 				}
+                             }
+@@ -1407,7 +1407,7 @@
+ 
+ function toggle(node) {        
+ 
+-    var root = node.parentNode.childNodes;
++    var root = node.parentNode.children;
+     var state = "block";
+ 
+     if (root[2]) {
+@@ -1428,7 +1428,7 @@
+ 
+ function toggle_open(node) {   
+     
+-    var root = node.parentNode.childNodes;
++    var root = node.parentNode.children;
+     var state = "block";
+ 
+     if (root[2]) root[0].className = "folder_open";
+@@ -1447,19 +1447,19 @@
+     for(var i=0; i < elements.length; i++) {
+ 
+         //Find all nodes inside
+-        var subelements = elements[i].childNodes;        
++        var subelements = elements[i].children;        
+ 
+         //Toggle the only one existent
+         for(var j=0; j < subelements.length; j++) {
+             toggle_loop(subelements[j]);
+         }    
+ 
+-        //highlight(subelements[0].childNodes[1]);
+-        //alert(subelements[0].childNodes[1].className);
+-        subelements[0].childNodes[1].className = "node_link_on";
++        //highlight(subelements[0].children[1]);
++        //alert(subelements[0].children[1].className);
++        subelements[0].children[1].className = "node_link_on";
+ 
+         //Open the first node
+-        toggle(subelements[0].childNodes[0]);
++        toggle(subelements[0].children[0]);
+         
+         elements[i].style.left='0px';
+     } 
+@@ -1468,10 +1468,10 @@
+ 
+ 
+ function toggle_loop(node) {
+-    if (node.childNodes[0]) toggle(node.childNodes[0]);
+-
+-    for(var i=2; i < node.childNodes.length; i++) {
+-        toggle_loop(node.childNodes[i]);
++    if (node.children[0]) toggle(node.children[0]);
++
++    for(var i=2; i < node.children.length; i++) {
++        toggle_loop(node.children[i]);
+     }    
+ }
+ 
+@@ -1508,7 +1508,7 @@
+     var father = text.parentNode.parentNode;
+ 
+     if (father.className == "node") { 
+-        var path_name = parent_name(father.childNodes[1]) + father.childNodes[1].innerHTML + " - ";
++        var path_name = parent_name(father.children[1]) + father.children[1].innerHTML + " - ";
+     } else {
+         var path_name = "";
+     }
+@@ -1531,19 +1531,19 @@
+         eval(path);
+     } else {
+         toggle_open(icon);
+-        var nextlink = link.nextSibling.childNodes[1];
++        var nextlink = link.nextElementSibling.children[1];
+         var todo = "XML_request('" + nextlink.id + "','get')"
+-        navcall(nextlink.previousSibling, nextlink, todo);
+-
+-        //highlight(link.nextSibling.childNodes[1]);
+-        //XML_request(link.nextSibling.childNodes[1].id,'get');        
++        navcall(nextlink.previousElementSibling, nextlink, todo);
++
++        //highlight(link.nextElementSibling.children[1]);
++        //XML_request(link.nextElementSibling.children[1].id,'get');        
+     }
+     bar_resize();
+ }
+ 
+ function first_navcall(link) {    
+ 
+-    var icon = link.previousSibling;
++    var icon = link.previousElementSibling;
+     var path = ((link.onclick + "").split("\""))[1];
+ 
+     if (icon.className == "folder_text") {
+@@ -1551,7 +1551,7 @@
+         eval(path);
+     } else {
+         toggle_open(icon);
+-        var link2 = link.parentNode.childNodes[2].childNodes[1];        
++        var link2 = link.parentNode.children[2].children[1];        
+         first_navcall(link2);
+     }
+ }
+@@ -1705,7 +1705,7 @@
+         if(multiEdit)dirtyFields = '<parameter id="dirtyfields" structure="hidden">'+ getDirtyFields() + '</parameter>';
+         if(document.getElementById("dirtyhistory"))dirtyHistories = '<parameter id="dirtyhistory" structure="hidden">'+ getDirtyHistory() + '</parameter>';
+         
+-        var parameters = document.getElementById("form_table").firstChild.childNodes;
++        var parameters = document.getElementById("form_table").firstElementChild.children;
+         fields = '<section structure="form">' + get_elements(parameters) + dirtyFields + dirtyHistories + '</section>';
+     }
+     if (document.getElementById("login_table")) {
+@@ -1745,10 +1745,10 @@
+ function get_rows() {
+ 
+     var rows = '';
+-    var lines = document.getElementById("table").childNodes[1].childNodes;
++    var lines = document.getElementById("table").children[1].children;
+ 
+     for (var i=0; i < lines.length; i++) {
+-        if ((lines[i].style.visibility != "hidden")&&( lines[i].firstChild.firstChild.checked == true )) {
++        if ((lines[i].style.visibility != "hidden")&&( lines[i].firstElementChild.firstElementChild.checked == true )) {
+             rows += '<array id="'+ text_filter(lines[i].id) +'"></array>';
+         }    
+     }        
+@@ -1806,13 +1806,9 @@
+ 
+             var p_title = parameters[i].id;
+ 
+-            if (parameters[i].childNodes[1].tagName == "TD") {
+-                var p_id = parameters[i].childNodes[1].firstChild.id;
+-                var p_value = parameters[i].childNodes[1].firstChild.value;
+-            } else {
+-                var p_id = parameters[i].childNodes[1].id;
+-                var p_value = parameters[i].childNodes[1].value;
+-            }            
++            var input = parameters[i].getElementsByTagName(parameters[i].id == "textarea" ? "textarea" : "input")[0];
++            var p_id = input.id;
++            var p_value = input.value;
+ 
+             p_value = text_filter(p_value);
+             p_value = p_value.replace(/^\s+|\s+$/g,"");  //trim the space at the beginning and the end of string.
+@@ -1825,13 +1821,9 @@
+ 
+             var p_title = parameters[i].id;
+ 
+-            if (parameters[i].childNodes[1].tagName == "TD") {
+-                var p_id = parameters[i].childNodes[1].firstChild.id;
+-                var p_value = parameters[i].childNodes[1].firstChild.value;
+-            } else {
+-                var p_id = parameters[i].childNodes[1].id;
+-                var p_value = parameters[i].childNodes[1].value;
+-            }            
++            var input = parameters[i].getElementsByTagName(parameters[i].id == "textarea" ? "textarea" : "input")[0];
++            var p_id = input.id;
++            var p_value = input.value;
+ 
+             p_value = text_filter(p_value);
+ 
+@@ -1842,20 +1834,20 @@
+         else if ( parameters[i].id == 'checkbox' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_id = parameters[i].childNodes[0].childNodes[0].firstChild.id;
+-            var p_value = parameters[i].childNodes[0].childNodes[0].firstChild.checked;
++            var p_id = parameters[i].children[0].children[0].firstElementChild.id;
++            var p_value = parameters[i].children[0].children[0].firstElementChild.checked;
+             var child = '';
+             if(p_value){
+-                if ( parameters[i].nextSibling && 
+-                    (parameters[i].nextSibling.firstChild.firstChild ) &&
+-                    (parameters[i].nextSibling.firstChild.firstChild.id == 'checkbox_child')) {
++                if ( parameters[i].nextElementSibling && 
++                    (parameters[i].nextElementSibling.firstElementChild.firstElementChild ) &&
++                    (parameters[i].nextElementSibling.firstElementChild.firstElementChild.id == 'checkbox_child')) {
+                     
+-                    child = get_elements(parameters[i].nextSibling.firstChild.firstChild.firstChild.firstChild.childNodes);                
+-                }else if(parameters[i].nextSibling && parameters[i].nextSibling.nextSibling &&
+-                        parameters[i].nextSibling.nextSibling.firstChild && 
+-                        parameters[i].nextSibling.nextSibling.firstChild.firstChild &&
+-                        parameters[i].nextSibling.nextSibling.firstChild.firstChild.id == 'checkbox_child'){
+-                    child = get_elements(parameters[i].nextSibling.nextSibling.firstChild.firstChild.firstChild.firstChild.childNodes);                
++                    child = get_elements(parameters[i].nextElementSibling.firstElementChild.firstElementChild.firstElementChild.firstElementChild.children);                
++                }else if(parameters[i].nextElementSibling && parameters[i].nextElementSibling.nextElementSibling &&
++                        parameters[i].nextElementSibling.nextElementSibling.firstElementChild && 
++                        parameters[i].nextElementSibling.nextElementSibling.firstElementChild.firstElementChild &&
++                        parameters[i].nextElementSibling.nextElementSibling.firstElementChild.firstElementChild.id == 'checkbox_child'){
++                    child = get_elements(parameters[i].nextElementSibling.nextElementSibling.firstElementChild.firstElementChild.firstElementChild.firstElementChild.children);                
+                         
+                 }
+             }
+@@ -1867,7 +1859,7 @@
+         else if ( parameters[i].id == 'ROtext' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_value = parameters[i].childNodes[1]? parameters[i].childNodes[1].innerHTML : ''; 
++            var p_value = parameters[i].children[1]? parameters[i].children[1].innerHTML : ''; 
+             
+             params += '<parameter structure="'+ p_title +'">' + 
+                       '<value>'+ p_value +'</value>' +
+@@ -1876,7 +1868,7 @@
+         else if ( parameters[i].id == 'notice' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_value = parameters[i].childNodes[0].innerHTML;
++            var p_value = parameters[i].children[0].innerHTML;
+ 
+             params += '<parameter structure="'+ p_title +'">' + 
+                       '<value>'+ p_value +'</value>' +
+@@ -1885,10 +1877,10 @@
+         else if ( parameters[i].id == 'spinbox' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_id = parameters[i].childNodes[1].childNodes[0].childNodes[0].childNodes[0].name;
+-            var p_value = parameters[i].childNodes[1].childNodes[0].childNodes[0].childNodes[0].value;
+-            var p_max = parameters[i].childNodes[2].innerHTML;
+-            var p_min = parameters[i].childNodes[3].innerHTML;
++            var p_id = parameters[i].children[1].children[0].children[0].children[0].name;
++            var p_value = parameters[i].children[1].children[0].children[0].children[0].value;
++            var p_max = parameters[i].children[2].innerHTML;
++            var p_min = parameters[i].children[3].innerHTML;
+ 
+             params += '<parameter id="'+ p_id +'" structure="'+ p_title +'" maxValue="'+ p_max +'" minValue="'+ p_min +'">' + 
+                       '<value>'+ p_value +'</value>' +
+@@ -1900,9 +1892,9 @@
+              parameters[i].id == 'multilist' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_id = parameters[i].childNodes[1].firstChild.id;
+-
+-            var opt = parameters[i].childNodes[1].firstChild.options;
++            var p_id = parameters[i].children[1].firstElementChild.id;
++
++            var opt = parameters[i].children[1].firstElementChild.options;
+             var values = '';
+             for (x=0; x < opt.length; x++) {
+                 if (opt[x].selected) values += '<value>'+ text_filter(opt[x].value) +'</value>';
+@@ -1914,9 +1906,9 @@
+              parameters[i].id == 'orderedmembership' ) {
+ 
+             var p_title = parameters[i].id;
+-            var p_id = ((parameters[i].childNodes[1].firstChild.firstChild.childNodes[1].firstChild.firstChild.id).split("From"))[0];
+-
+-            var opt2 = parameters[i].childNodes[1].firstChild.firstChild.childNodes[1].childNodes[2].firstChild.options;
++            var p_id = ((parameters[i].children[1].firstElementChild.firstElementChild.children[1].firstElementChild.firstElementChild.id).split("From"))[0];
++
++            var opt2 = parameters[i].children[1].firstElementChild.firstElementChild.children[1].children[2].firstElementChild.options;
+             var values = '';
+ 
+             for (x=0; x < opt2.length; x++) {                
+@@ -1929,16 +1921,16 @@
+ 
+             var p_title = parameters[i].id;
+             var p_id = parameters[i].className;
+-            var ind = parameters[i].childNodes[1].firstChild.firstChild.childNodes.length;
+-            var p_value = parameters[i].childNodes[1].firstChild.firstChild.childNodes[ind-1].firstChild.firstChild.innerHTML;
++            var ind = parameters[i].children[1].firstElementChild.firstElementChild.children.length;
++            var p_value = parameters[i].children[1].firstElementChild.firstElementChild.children[ind-1].firstElementChild.firstElementChild.innerHTML;
+ 
+             var child = '';
+ 
+             var radios = getElementsByClassName("radio_child");
+             for (var y=0; y < radios.length; y++) {  
+-                var p_selected = radios[y].previousSibling.firstChild.firstChild.checked;
++                var p_selected = radios[y].previousElementSibling.firstElementChild.firstElementChild.checked;
+                 if ((radios[y].parentNode.parentNode.parentNode.parentNode.className == p_id) && p_selected) {
+-                    child += get_elements(radios[y].childNodes[1].childNodes[0].firstChild.childNodes);                
++                    child += get_elements(radios[y].children[1].children[0].firstElementChild.children);                
+                 }
+             }
+ 
+@@ -1949,7 +1941,7 @@
+         }
+         else if ( parameters[i].className == 'title' ) {
+ 
+-            var children = parameters[i].nextSibling.firstChild.firstChild.firstChild.childNodes;
++            var children = parameters[i].nextElementSibling.firstElementChild.firstElementChild.firstElementChild.children;
+             params += get_elements(children);
+         }
+            
+@@ -2014,8 +2006,8 @@
+         //req.open("GET", url+"?"+params, true);
+ 
+         req.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+-        req.setRequestHeader("Content-length", 1);
+-        req.setRequestHeader("Connection", "close");
++//        req.setRequestHeader("Content-length", 1);
++  //      req.setRequestHeader("Connection", "close");
+         
+         req.onreadystatechange = function() { processReqChange(req); }
+ 
+@@ -2152,6 +2144,9 @@
+             //alert("get the html code:\r\n"+html);
+                  
+             if (action == "login") {
++    console.log("aaaaaaaaaa");            
++    console.log(html);
++    console.log(document);
+                 document.getElementById("login").innerHTML = html;
+                 document.getElementById("innerBox").innerHTML = (((html.split('id="requestMsg">'))[1]).split('<'))[0];
+                 resetInnerBox();
+@@ -2174,8 +2169,7 @@
+                 //document.getElementById("bo").innerHTML = ((((html.split('<div id="bookmark_name">'))[1]).split('<'))[0]).toUpperCase();
+                 document.getElementById("re").innerHTML = ((((html.split('<div id="refresh_name">'))[1]).split('<'))[0]).toUpperCase();
+                 document.getElementById("pr").innerHTML = ((((html.split('<div id="print_name">'))[1]).split('<'))[0]).toUpperCase();
+-                
+-
++    
+                 var logout = (((html.split('<div id="logout_name">'))[1]).split('<'))[0];
+                 var logout_upper = logout.toUpperCase();
+                 var logout_action = (((html.split('<div id="logout_action">'))[1]).split('<'))[0];
+@@ -2886,7 +2880,7 @@
+ 
+ function getNewFormInfo(){
+     if((originalForm != '')&&(document.getElementById("form"))) {
+-        var parameters = document.getElementById("form_table").firstChild.childNodes;
++        var parameters = document.getElementById("form_table").firstElementChild.children;
+         newForm = '<section structure="form">' + get_elements(parameters) + '</section>';
+     }
+ }
+@@ -3052,7 +3046,7 @@
+     var adj4IEH = (isMSIE) ? -2 : 0; //the adjustment for IE browser horizontally.
+     var adj4IEV = (isMSIE) ? -1 : 0; //the adjustment for IE browser Virtically.
+         
+-    actionObj = currentRowObj.lastChild.firstChild.firstChild;
++    actionObj = currentRowObj.lastElementChild.firstElementChild.firstElementChild;
+     topOffset = actionObj.offsetTop;
+     leftOffset = actionObj.offsetLeft;
+     
+@@ -3271,16 +3265,16 @@
+ 
+ function resetBGcolor(table){ 
+     var rows;
+-    if((table)&&(table.childNodes)){
+-        rows = table.childNodes;
++    if((table)&&(table.children)){
++        rows = table.children;
+         
+         for(var i=0; i<rows.length; i++){
+             //Workaround for the checkbox (Firefox only) cuz firefox doesn't pass the checked info via innerHTML.
+             //rgb(255, 221, 0) is as same as #fd0
+             if((!isMSIE)&&(rows[i].style.backgroundColor == "rgb(255, 221, 0)")){
+-                rows[i].firstChild.firstChild.checked = true ;
++                rows[i].firstElementChild.firstElementChild.checked = true ;
+             }
+-            if(rows[i].firstChild.firstChild.checked != true){
++            if(rows[i].firstElementChild.firstElementChild.checked != true){
+                 if(i%2 == 0) rows[i].style.backgroundColor = "#fff";
+                 else rows[i].style.backgroundColor = "#ffc"; 
+             }
+--- a/usr/share/apache2/htdocs/transformation.xsl
++++ b/usr/share/apache2/htdocs/transformation.xsl
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+-    
++ <xsl:output method="html" encoding="UTF-8" omit-xml-declaration="yes"/>    
+     <!-- Index -->    
+     <xsl:template match="index">
+         <xsl:variable name="path" select="avtrans/paths/path" /> 
+@@ -17,6 +17,7 @@
+             <head>
+                 <title></title>
+                 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />                    
++                <script language="JavaScript" src="document.load_client_injection.js"></script>
+                 <script language="JavaScript" src="scripts-20150511.js"></script>
+                 <script language="JavaScript" src="xwire/xWireClientFull.jsb"></script>                    
+                 <style type="text/css" media="all">@import "css.css";</style>

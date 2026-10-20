@@ -2,7 +2,7 @@
 
 Independent community project for incrementally modernizing Avocent PM3000 PDUs. The long-term scope includes updated remote access, firmware analysis and packaging, a modern web UI, ACME certificate handling, and RPC-based automation integrations. This project is not affiliated with Avocent or Vertiv.
 
-> **Current milestone:** a tested, repeatable build environment for a fully static Dropbear SSH server targeting the PM3000's 32-bit big-endian PowerPC e300c3 platform and Linux 2.6.23 ABI baseline. No complete firmware image is provided yet.
+> **Current milestone:** a tested static Dropbear build plus a documented compatibility patch for the legacy Web UI. No complete firmware image or replacement UI is provided yet.
 
 ## Current result
 
@@ -17,6 +17,13 @@ The first component provides:
 - a non-invasive device test procedure using TCP port 2222
 
 The stripped binaries total about 643 KiB. They do not replace or reconfigure the vendor SSH service automatically.
+
+## Components
+
+- [`components/dropbear/`](components/dropbear/) — static Dropbear server, build environment, tests, and device-test procedure.
+- [`fix-WebUI/`](fix-WebUI/) — firmware `2.0.1.23` compatibility patch, hashes, installation limits, and investigation notes for the legacy browser UI.
+
+A separate `modern-WebUI/` component may be added later for a clean replacement interface over the existing backend. The compatibility patch is reference material for that work, not its architecture.
 
 ## Reproduce on Linux
 

@@ -12,3 +12,5 @@ The current Dropbear component builds and packages third-party software under it
 - Linux kernel headers: [`components/dropbear/licenses/build/Linux-COPYING`](components/dropbear/licenses/build/Linux-COPYING)
 
 Generated archives include the applicable license texts. Future components must add their license and provenance information before release.
+
+The compatibility patch under [`fix-WebUI/`](fix-WebUI/) contains limited context from Avocent/Vertiv web files. Its upstream licensing is not established, and it is not relicensed under this repository's MIT license. No firmware image or complete vendor source file is included.

@@ -1,0 +1,14 @@
+{
+  "scripts-20150511.js": {
+    "original_sha256": "7d81064e772a02c7987b68be906372f9f80ec558ff8798a8215879ca923be368",
+    "backup_sha256": "18fdbca0cf3528c7bbe8e2cc788f3f0c7ea4b81b413b22e5df49115042011aa5",
+    "original_bytes": 139308,
+    "backup_bytes": 139515
+  },
+  "transformation.xsl": {
+    "original_sha256": "5534a71c61b62c9df426d3efebd3699daaed7cf7e2dce776944613bcdaef3337",
+    "backup_sha256": "762bb6ca4127795928af9fdefb593f5b743a5d6bdd8f9b67d18774c4f94922db",
+    "original_bytes": 104397,
+    "backup_bytes": 104565
+  }
+}
