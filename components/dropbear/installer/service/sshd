@@ -1,0 +1,123 @@
+#!/bin/sh
+# Managed PM3000 Dropbear SysV service. Installed as /etc/init.d/sshd only after port-22 confirmation.
+set -u
+
+ROOT_PREFIX=${PM3000_ROOT:-}
+COMMON=$ROOT_PREFIX/mnt/hdUser/pm3000-revive/dropbear/lib/common.sh
+[ -r "$COMMON" ] || { printf 'ERROR: missing installer library: %s\n' "$COMMON" >&2; exit 1; }
+. "$COMMON"
+
+service_check() {
+    require_regular_nonsymlink "$DROPBEAR_BIN"
+    require_regular_nonsymlink "$DROPBEARKEY_BIN"
+    require_regular_nonsymlink "$HOST_KEY"
+    require_regular_nonsymlink "$BACKUP_INIT"
+    expected_hash=$(state_value BUILD_SHA256 2>/dev/null || true)
+    case "$expected_hash" in ''|*[!0-9a-f]*) die 'missing or invalid build hash in installer state' ;; esac
+    [ "${#expected_hash}" -eq 64 ] || die 'invalid build hash length in installer state'
+    actual_hash=$(sha256_file "$DROPBEAR_BIN")
+    [ "$actual_hash" = "$expected_hash" ] || die 'installed Dropbear hash does not match installer state'
+    [ -x "$(root_path /bin/bash)" ] || die 'required executable shell missing: /bin/bash'
+    "$DROPBEARKEY_BIN" -y -f "$HOST_KEY" >/dev/null 2>&1 || die 'host key validation failed'
+    return 0
+}
+
+service_start() {
+    running_pid=$(managed_dropbear_pid "$PROD_PIDFILE" 22 2>/dev/null || true)
+    if valid_pid "$running_pid"; then
+        say "Managed Dropbear is already running on port 22 (PID $running_pid)."
+        return 0
+    fi
+    port_owner=$(listener_pid 22 2>/dev/null || true)
+    if valid_pid "$port_owner"; then
+        if verified_openssh_pid "$port_owner" >/dev/null 2>&1; then
+            say "Vendor OpenSSH fallback is already running on port 22 (PID $port_owner)."
+            return 0
+        fi
+        die "port 22 is occupied by unrecognized PID $port_owner"
+    fi
+    launch_interrupted=0
+    trap 'launch_interrupted=1' 1 2 15
+    start_result=1
+    if ( service_check ) >/dev/null 2>&1 && start_dropbear 22 "$PROD_PIDFILE" "$PROD_LAUNCH_PIDFILE"; then
+        start_result=0
+    fi
+    trap - 1 2 15
+    if [ "$start_result" = 0 ]; then
+        running_pid=$(managed_dropbear_pid "$PROD_PIDFILE" 22) || die 'Dropbear started but identity verification failed'
+        say "Managed Dropbear started on port 22 (PID $running_pid)."
+        [ "$launch_interrupted" = 0 ] || warn 'start was interrupted only after Dropbear became fully identifiable'
+        return 0
+    fi
+    pending_pid=$(pending_dropbear_pid "$PROD_LAUNCH_PIDFILE" "$PROD_PIDFILE" 22 2>/dev/null || true)
+    if valid_pid "$pending_pid"; then
+        stop_verified_pid "$pending_pid" "$DROPBEAR_BIN" || die "failed Dropbear launch PID $pending_pid did not stop; OpenSSH fallback was not started"
+    fi
+    rm -f "$PROD_PIDFILE" "$PROD_LAUNCH_PIDFILE"
+    warn 'managed Dropbear failed to start; trying the preserved vendor OpenSSH service on port 22'
+    fallback_pid=$(start_original_openssh 2>/dev/null || true)
+    if valid_pid "$fallback_pid"; then
+        say "Vendor OpenSSH fallback started on port 22 (PID $fallback_pid)."
+        return 0
+    fi
+    die 'both managed Dropbear and vendor OpenSSH failed to start on port 22'
+}
+
+service_stop() {
+    running_pid=$(managed_dropbear_pid "$PROD_PIDFILE" 22 2>/dev/null || true)
+    pending_pid=$(pending_dropbear_pid "$PROD_LAUNCH_PIDFILE" "$PROD_PIDFILE" 22 2>/dev/null || true)
+    stop_pid=$running_pid
+    valid_pid "$stop_pid" || stop_pid=$pending_pid
+    if valid_pid "$stop_pid"; then
+        stop_verified_pid "$stop_pid" "$DROPBEAR_BIN" || die "managed Dropbear PID $stop_pid did not stop after TERM"
+        rm -f "$PROD_PIDFILE" "$PROD_LAUNCH_PIDFILE"
+        say 'Managed Dropbear listener stopped; existing session children were not targeted.'
+        return 0
+    fi
+    port_owner=$(listener_pid 22 2>/dev/null || true)
+    if valid_pid "$port_owner" && verified_openssh_pid "$port_owner" >/dev/null 2>&1; then
+        stop_verified_pid "$port_owner" "$OPENSSH_BIN" || die "OpenSSH listener PID $port_owner did not stop after TERM"
+        rm -f "$OPENSSH_PIDFILE"
+        say 'Vendor OpenSSH fallback listener stopped; existing session children were not targeted.'
+        return 0
+    fi
+    if valid_pid "$port_owner"; then
+        die "refusing to stop unrecognized port-22 owner PID $port_owner"
+    fi
+    say 'No managed port-22 listener is running.'
+}
+
+service_status() {
+    running_pid=$(managed_dropbear_pid "$PROD_PIDFILE" 22 2>/dev/null || true)
+    if valid_pid "$running_pid"; then
+        say "Managed Dropbear is running on port 22 (PID $running_pid)."
+        return 0
+    fi
+    port_owner=$(listener_pid 22 2>/dev/null || true)
+    if valid_pid "$port_owner" && verified_openssh_pid "$port_owner" >/dev/null 2>&1; then
+        say "Vendor OpenSSH fallback is running on port 22 (PID $port_owner)."
+        return 0
+    fi
+    if valid_pid "$port_owner"; then
+        say "An unrecognized process owns port 22 (PID $port_owner)."
+        return 1
+    fi
+    say 'No listener is detected on port 22.'
+    return 3
+}
+
+require_root
+case "${1:-}" in
+    start) service_start ;;
+    stop) service_stop ;;
+    status) service_status ;;
+    check) service_check && say 'Managed Dropbear files, build hash, shell, and host key are valid.' ;;
+    restart|reload|force-reload)
+        printf 'ERROR: %s is intentionally unsupported; use explicit stop/start with a recovery session.\n' "$1" >&2
+        exit 2
+        ;;
+    *)
+        printf 'Usage: %s {start|stop|status|check}\n' "$0" >&2
+        exit 2
+        ;;
+esac

@@ -20,7 +20,7 @@ The first component provides:
 - ELF, QEMU-user, key-generation, SSH login, PTY-allocation, and reconnect checks
 - a non-invasive device test procedure using TCP port 2222
 
-The stripped binaries total about 643 KiB. They do not replace or reconfigure the vendor SSH service automatically.
+The stripped binaries total about 643 KiB. The binaries alone do not replace or reconfigure vendor SSH; only the operator-invoked, explicitly confirmed installer phase 2 performs that transition.
 
 ## Components
 
@@ -47,7 +47,7 @@ Validated binaries are written to `components/dropbear/artifacts/bin/`. Release 
 
 ## Install and test
 
-Installation is intentionally manual at this stage. Read [Installing the current Dropbear milestone](docs/INSTALL_DROPBEAR.md) before copying anything to a device. The documented path runs in parallel on port 2222 and leaves the existing SSH server untouched.
+Installation is operator-initiated and uses the packaged two-phase installer. Read [Installing Dropbear on the PM3000](docs/INSTALL_DROPBEAR.md) before copying anything to a device. Phase 1 runs one parallel test on port 2222 while preserving vendor OpenSSH; phase 2 takes port 22 and enables SysV startup only after explicit confirmation of both the test login and a new port-22 login. No installer command reboots the PDU, and `rollback.sh` restores the preserved OpenSSH service.
 
 ## Project status and safety
 

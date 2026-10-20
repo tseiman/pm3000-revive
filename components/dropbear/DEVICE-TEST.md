@@ -1,102 +1,76 @@
-# Manual PM3000 Test Procedure
+# Manual PM3000 Acceptance Procedure
 
-This procedure deliberately runs Dropbear in parallel on TCP port 2222. Do not replace, stop, or reconfigure the vendor SSH server.
+This procedure validates the packaged two-phase installer on an Avocent PM3000 running firmware `2.0.1.23`. The repository build and automated tests never contact a PDU.
 
 ## Prerequisites
 
 - Approved maintenance window and rollback owner.
-- Existing vendor SSH session kept open throughout testing.
-- Out-of-band recovery path confirmed.
-- Runtime archive checksum verified off-device.
-- A temporary writable directory with enough space (at least 2 MiB plus logs and keys).
-- An authorized Ed25519 public key. Never copy private keys to the device.
-- `/bin/bash` exists and is an executable regular file.
-- The existing `root` account remains otherwise eligible for SSH login, and the `root` group contains no account that should be excluded from this test.
+- Existing vendor SSH session kept open through both phases.
+- Confirmed console or other out-of-band recovery.
+- Runtime archive and extracted `CHECKSUMS.sha256` verified on the workstation.
+- `/mnt/hdUser`, `/etc`, `/bin/bash`, free space, and port 2222 ready.
+- No private client key copied to the PDU.
 
-## Stage files
+Follow the [installer README](https://github.com/tseiman/pm3000-revive/blob/main/components/dropbear/installer/README.md) or the [full installation guide](https://github.com/tseiman/pm3000-revive/blob/main/docs/INSTALL_DROPBEAR.md) for transfer and exact commands.
 
-Copy only the extracted runtime directory to a temporary location, for example `/var/tmp/dropbear-test`. Do not overwrite system binaries.
+## Phase 1 acceptance
 
-```sh
-cd /var/tmp/dropbear-test
-sha256sum -c CHECKSUMS.sha256
-chmod 0755 bin/dropbear bin/dropbearkey
-mkdir -m 0700 state
-./bin/dropbearkey -t ed25519 -f state/dropbear_ed25519_host_key
-```
+Run `./01-prepare.sh` once on the PDU. Confirm:
 
-Create an isolated key directory without changing `/root/.ssh/authorized_keys`, `/etc/passwd`, `/etc/shells`, PAM, or the Avocent account configuration:
+- Package, platform, mounts, space, and current port-22 OpenSSH listener pass preflight.
+- The original init script is preserved without overwriting an older backup.
+- Existing host key is retained, or one new Ed25519 key is generated with mode `0600`.
+- Exactly one Dropbear test listener runs on the selected test port, normally 2222.
+- Vendor OpenSSH remains available on port 22.
+- The displayed host-key fingerprint matches the client-observed fingerprint.
 
-```sh
-mkdir -m 0700 state/auth
-cp /approved/path/test_key.pub state/auth/authorized_keys
-chmod 0600 state/auth/authorized_keys
-id root
-```
+From a local client terminal, perform exactly the required acceptance:
 
-Inspect the `root` group membership using the commands available on the device. Continue only when `root` is a member and no other account that must be excluded belongs to that group. The original root login shell remains `/usr/bin/cli`; `--login-shell` must not be used to bypass an account that Dropbear otherwise rejects.
+1. A remote command returns `id`, `SHELL=/bin/bash`, and the expected marker.
+2. A command-free PTY connection opens interactive Bash instead of failing in `/usr/bin/cli`.
+3. A second connection succeeds.
+4. For a newly rebuilt artifact, classic `scp -O` succeeds; SFTP is not expected.
+5. Account UID/GID and permissions remain appropriate. The shell override must not make a regular account root.
 
-## Start in foreground
+Authentication success without a working shell or remote command is a failure.
 
-First verify that port 2222 is unused using the device's available passive socket-listing tool. Then, from the retained vendor SSH session:
+## Phase 2 acceptance
 
-```sh
-./bin/dropbear -F -s -p 2222 \
-  -D "$PWD/state/auth" -G root \
-  --login-shell /bin/bash \
-  -r "$PWD/state/dropbear_ed25519_host_key" \
-  -P "$PWD/state/dropbear.pid" \
-  >"$PWD/state/dropbear.log" 2>&1
-```
+Run `./02-activate.sh --confirmed-test` only after phase 1 passes. While the script waits for confirmation:
 
-`-s` disables password authentication but leaves public-key authentication enabled. `-D` isolates this instance from existing per-user key files, `-G root` restricts authentication to members of the verified root group, and `--login-shell /bin/bash` replaces `/usr/bin/cli` only after the account has passed Dropbear's normal checks. Keep this foreground session open.
+- Keep the phase-1 connection open.
+- Open a **new** client connection to port 22.
+- Repeat the remote-command and interactive-shell checks.
+- Use client verbose output (`ssh -vv`) to confirm that the new connection's remote software banner identifies Dropbear. The managed init script is not installed until after confirmation, so do not use `/etc/init.d/sshd status` as this pre-confirmation gate.
 
-## Client checks
+Type `PORT-22-LOGIN-OK` only after those checks succeed. Then confirm:
 
-Display the host-key fingerprint through the retained vendor SSH session:
+- Managed Dropbear owns port 22.
+- The test listener is gone.
+- `/etc/init.d/sshd check` succeeds.
+- `/etc/init.d/sshd status` reports the actual product, port, and PID.
+- No permanent OpenSSH listener exists on an additional port.
+- The original init script and host key remain protected under `/mnt/hdUser/pm3000-revive/dropbear/`.
 
-```sh
-cd /var/tmp/dropbear-test
-./bin/dropbearkey -y -f state/dropbear_ed25519_host_key
-```
+If the new login fails, do not confirm. The script must request OpenSSH again on port 22 and retain the test listener. Use `rollback.sh` if the activation terminal is interrupted or state needs explicit restoration.
 
-From an approved client, capture the port-2222 key in a temporary file. Display its fingerprint and compare it exactly with the value obtained through the retained session before connecting:
+## Separate reboot acceptance
 
-```sh
-KNOWN_HOSTS=$(mktemp)
-ssh-keyscan -p 2222 DEVICE_ADDRESS >"$KNOWN_HOSTS"
-ssh-keygen -lf "$KNOWN_HOSTS"
-ssh -vv -p 2222 -i APPROVED_PRIVATE_KEY \
-  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  root@DEVICE_ADDRESS 'uname -a; id; printf "SHELL=%s COMMAND_OK\n" "$SHELL"'
-ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
-  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  root@DEVICE_ADDRESS 'tty; printf "SHELL=%s PTY_OK\n" "$SHELL"'
+The installer never reboots and phase 2 does not prove boot persistence. At a separately approved time, account for the possible effect on powered equipment and reboot manually. After boot, confirm:
 
-ssh -tt -p 2222 -i APPROVED_PRIVATE_KEY \
-  -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  root@DEVICE_ADDRESS
-rm -f "$KNOWN_HOSTS"
-```
-
-Confirm:
-
-- Host-key fingerprint matches the locally generated key.
-- Negotiated KEX/cipher/signature is one of those listed in `TEST-REPORT.md`.
-- `COMMAND_OK` and `PTY_OK` are returned.
-- Both command tests report `SHELL=/bin/bash`, and the command-free connection opens an interactive Bash session rather than `/usr/bin/cli`.
-- A non-root account using the same test key is rejected by the `-G root` restriction.
-- A second connection succeeds.
-- The vendor SSH service remains reachable on its original port.
-- No unexpected errors appear in `state/dropbear.log` or the kernel log.
-
-## Stop and clean up
-
-Terminate the foreground Dropbear with Ctrl-C. Confirm port 2222 is no longer listening. Remove the temporary key directory with the rest of `/var/tmp/dropbear-test` after required evidence has been retained.
+1. A normal port-22 login and remote command succeed.
+2. `/etc/init.d/sshd status` identifies managed Dropbear, or clearly identifies the OpenSSH startup fallback.
+3. No test listener or additional permanent SSH port remains.
+4. Classic `scp -O` still works when file transfer is required.
 
 ## Abort conditions
 
-Immediately stop the test if the vendor SSH service changes state, the device reports memory/storage pressure, authentication maps to an unexpected UID/GID, entropy/key generation fails, PTY allocation fails, or any reboot/service replacement would be required.
+Stop and retain the current recovery session if any of these occur:
+
+- Unknown process owns port 22 or the selected test port.
+- Package or installed-binary hash differs.
+- PID, executable, arguments, or listener ownership cannot be verified.
+- `/mnt/hdUser` or `/etc` is unavailable/read-only, space is insufficient, or `/bin/bash` is missing.
+- Host-key generation/validation, PTY allocation, account mapping, or remote commands fail.
+- OpenSSH cannot be restored after a rejected activation.
+- Any step would require a filesystem remount, global process kill, automatic reboot, firmware change, or bootloader change.

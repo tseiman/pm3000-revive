@@ -1,6 +1,6 @@
 # Verification Report
 
-Date: initial verification 2026-10-18 UTC; component-path rebuild and login-shell extension verified 2026-10-19 UTC.
+Date: initial verification 2026-10-18 UTC; component-path rebuild and login-shell extension verified 2026-10-19 UTC; installer simulation added 2026-10-20 UTC.
 
 ## Passed checks
 
@@ -24,8 +24,15 @@ Date: initial verification 2026-10-18 UTC; component-path rebuild and login-shel
 - The existing global forced command retained precedence when both forced-command mechanisms were present.
 - An account with a shell absent from `/etc/shells` remained rejected, and the existing `-w` root-login restriction was not bypassed.
 - `-G root` allowed the root account, rejected the non-member test account, and continued to use `/bin/bash` only for the admitted session.
+- The two-phase installer simulation passed real `/proc/net/tcp` socket-to-PID resolution, OpenSSH detection without an explicit port argument, package-corruption rejection, rejection of payload-plus-manifest replacement after initial verification, pre-mutation rejection of protected child-directory symlinks, non-use of legacy runtime-log symlinks, foreign test-port detection with an unrelated PID file, exact historical-build no-op handling despite an unrelated occupied test port, fresh preparation, root-only staging cleanup, launch-PID rollback of a child delayed longer than the former wait bound, idempotent preparation, rollback-prepare-rollback repetition, host-key retention, explicit activation gates, rejected activation recovery, failed-TERM fail-closed behavior, successful activation, active-installation no-op behavior, targeted listener shutdown, original-init content/mode restoration, preserved-`$0` OpenSSH startup fallback after a managed-binary validation failure, and OpenSSH rollback.
 
-The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt` and `artifacts/logs/login-shell-test.txt`.
+The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt`, `artifacts/logs/login-shell-test.txt`, and `artifacts/logs/installer-test.txt`.
+
+## Reported PM3000 hardware results
+
+The operator reported successful tests of this exact Dropbear build on a PM3000 running firmware `2.0.1.23`: program startup and help, Ed25519 host-key generation, modern Ed25519 handshake, password login for root and a regular account, interactive Bash, remote commands, classic `scp -O`, background operation on port 22, and SysV startup after a real reboot. SFTP was not installed or tested.
+
+These are historical device results supplied by the operator. The new packaged installer scripts were not executed on a PM3000 during repository development and must follow the manual acceptance sequence in `installer/README.md`.
 
 ## Advertised algorithms
 
@@ -42,6 +49,6 @@ The machine-readable test markers are in `artifacts/logs/qemu-user-ssh-test.txt`
 
 ## Limitations
 
-QEMU user mode runs PPC userspace code on the host kernel; it does not emulate the PM3000's Linux 2.6.23 kernel, vendor filesystem, NSS/account database, entropy devices, or hardware. OpenSSH confirmed successful PTY allocation, but executing a host-native shell in the PPC QEMU PTY child is a mixed-architecture harness limitation. The non-PTY `/bin/bash -c` path was functionally verified; an interactive `/bin/bash` session and full PTY command execution must be confirmed on the device using `DEVICE-TEST.md`.
+QEMU user mode runs PPC userspace code on the host kernel; it does not emulate the PM3000's Linux 2.6.23 kernel, vendor filesystem, NSS/account database, entropy devices, or hardware. OpenSSH confirmed successful PTY allocation, but executing a host-native shell in the PPC QEMU PTY child is a mixed-architecture harness limitation. The installer regression suite uses isolated host-native fake daemons and filesystem roots; it proves state transitions and process-selection behavior, not target-kernel compatibility or boot persistence.
 
 No target device was contacted or modified.

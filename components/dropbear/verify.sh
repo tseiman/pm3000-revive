@@ -6,6 +6,7 @@ READELF="$ROOT/output-buildroot/host/bin/powerpc-buildroot-linux-musl-readelf"
 FILE_OUT="$ROOT/artifacts/logs/elf-file.txt"
 READELF_OUT="$ROOT/artifacts/logs/readelf.txt"
 mkdir -p "$ROOT/artifacts/logs"
+"$ROOT/tests/installer.sh" | tee "$ROOT/artifacts/logs/installer-test.txt"
 file "$BIN/dropbear" "$BIN/dropbearkey" | tee "$FILE_OUT"
 for f in dropbear dropbearkey; do
   header="$ROOT/artifacts/logs/readelf-$f.txt"

@@ -11,7 +11,7 @@ This project builds a server-focused Dropbear 2026.94 for 32-bit big-endian Powe
 - Curve25519, sntrup761/x25519, and DH group14/SHA-256 KEX
 - ChaCha20-Poly1305 and AES-CTR ciphers; HMAC-SHA2-256
 - No SHA-1 signatures/MACs, DSS, ECDSA, CBC, 3DES, compression, X11, agent forwarding, TCP/stream forwarding, or SFTP server
-- Default test port 2222; existing device SSH service is not replaced
+- Two-phase installer: one parallel test on port 2222, then explicitly confirmed activation on port 22
 - Re-exec disabled because Linux 2.6.23 lacks the modern `fexecve` path
 - Project extension `--login-shell /absolute/path` optionally replaces the session shell after successful account authentication and authorization.
 
@@ -35,12 +35,21 @@ cd pm3000-revive/components/dropbear
 
 ## Outputs
 
-- `dist/pm3000-dropbear-runtime-2026.94.tar.xz`: target runtime, licenses, checksums, and safe manual test procedure.
+- `dist/pm3000-dropbear-runtime-2026.94.tar.xz`: target runtime, two-phase installer, rollback tool, service script, licenses, checksums, and operator documentation.
 - `dist/pm3000-dropbear-runtime-2026.94.tar.xz.sha256`: checksum sidecar for verifying the runtime archive before extraction.
 - `dist/pm3000-dropbear-build-debug-2026.94.tar.xz`: build scripts, the effective Buildroot configuration, patches, source inputs, logs, and debug binaries.
 - `dist/pm3000-dropbear-build-debug-2026.94.tar.xz.sha256`: checksum sidecar for the build/debug archive.
 - `dist/SHA256SUMS`: combined checksum manifest for both archives.
 
+## Installation
+
+Read the [installer README](https://github.com/tseiman/pm3000-revive/blob/main/components/dropbear/installer/README.md) and the [full installation guide](https://github.com/tseiman/pm3000-revive/blob/main/docs/INSTALL_DROPBEAR.md). The recommended path has exactly two phases:
+
+1. `01-prepare.sh` installs protected persistent files and starts one parallel test listener while preserving vendor OpenSSH on port 22.
+2. `02-activate.sh --confirmed-test` provisionally takes port 22 and finalizes SysV startup only after a new port-22 login is explicitly confirmed.
+
+`rollback.sh` restores the original init script and OpenSSH on port 22. No installer command reboots the PDU.
+
 ## Safety boundary
 
-No deployment is automated. Nothing in this project connects to, uploads to, restarts, or reconfigures a PM3000. Follow `DEVICE-TEST.md` manually and retain the vendor SSH service.
+Builds, tests, and packaging never contact, upload to, restart, or reconfigure a PM3000. Device changes occur only when an operator deliberately transfers the runtime package and runs its installer as root. Keep a vendor SSH session and out-of-band recovery available until activation is confirmed.
