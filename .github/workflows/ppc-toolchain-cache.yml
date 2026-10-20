@@ -1,0 +1,54 @@
+name: Seed shared PPC toolchain cache
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/ppc-toolchain-cache.yml"
+      - "components/dropbear/configs/buildroot-pm3000_defconfig"
+      - "components/dropbear/patches/**"
+      - "components/dropbear/fetch-sources.sh"
+      - "components/dropbear/build-toolchain.sh"
+      - "components/dropbear/sources/SHA256SUMS.required"
+
+permissions:
+  contents: read
+
+jobs:
+  seed-toolchain-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git curl file patch perl rsync cpio unzip \
+            bzip2 xz-utils python3
+
+      - name: Fetch and verify pinned sources
+        run: components/dropbear/fetch-sources.sh
+
+      - name: Restore or create shared PPC cross-toolchain cache
+        id: toolchain-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            components/dropbear/buildroot/dl
+            components/dropbear/output-buildroot/host
+            components/dropbear/output-buildroot/.config
+          key: pm3000-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('components/dropbear/configs/buildroot-pm3000_defconfig', 'components/dropbear/patches/**', 'components/dropbear/fetch-sources.sh', 'components/dropbear/build-toolchain.sh', 'components/dropbear/sources/SHA256SUMS.required') }}
+
+      - name: Build PPC cross-toolchain on cache miss
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: components/dropbear/build-toolchain.sh
+
+      - name: Verify cached compiler
+        run: |
+          test -x components/dropbear/output-buildroot/host/bin/powerpc-buildroot-linux-musl-gcc
+          components/dropbear/output-buildroot/host/bin/powerpc-buildroot-linux-musl-gcc --version
