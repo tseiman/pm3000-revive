@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid />
+  <action>login</action>
+  <paths>
+    <path>login</path>
+  </paths>
+  <error severity="error" label="SYNTHETIC_LOGIN_FAILURE" />
+  <payload structure="login">
+    <section structure="login">
+      <parameter id="SYNTHETIC_LOGIN_FIELD_A" structure="RWtext" label="SYNTHETIC_USERNAME_LABEL">
+        <value />
+      </parameter>
+      <parameter id="SYNTHETIC_LOGIN_FIELD_B" structure="password" label="SYNTHETIC_PASSWORD_LABEL">
+        <value />
+      </parameter>
+      <controls>
+        <control id="SYNTHETIC_LOGIN_CONTROL" path="SYNTHETIC_LOGIN_PATH" label="SYNTHETIC_LOGIN_LABEL" />
+      </controls>
+    </section>
+  </payload>
+</avtrans>

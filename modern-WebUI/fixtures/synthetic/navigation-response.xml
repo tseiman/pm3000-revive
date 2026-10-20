@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid>[REDACTED-SID]</sid>
+  <action>navigation</action>
+  <paths>
+    <path>SYNTHETIC_NAVIGATION_PATH</path>
+  </paths>
+  <payload structure="navigation">
+    <section structure="nav" id="SYNTHETIC_ROOT_MENU" label="SYNTHETIC_ROOT_LABEL">
+      <section structure="nav" id="SYNTHETIC_POWER_MENU" label="SYNTHETIC_POWER_LABEL">
+        <controls>
+          <control id="SYNTHETIC_NAV_CONTROL" path="SYNTHETIC_OUTLET_LIST_PATH" structure="link" label="SYNTHETIC_OUTLET_LIST_LABEL" />
+        </controls>
+      </section>
+    </section>
+  </payload>
+</avtrans>

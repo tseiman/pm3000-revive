@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid>[REDACTED-SID]</sid>
+  <action>navigation</action>
+  <agents>
+    <src>wmi</src>
+    <dest>controller</dest>
+  </agents>
+  <paths>
+    <path>SYNTHETIC_NAVIGATION_PATH</path>
+  </paths>
+</avtrans>

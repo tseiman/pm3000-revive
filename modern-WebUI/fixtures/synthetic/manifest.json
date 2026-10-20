@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "file": "initial-login-request.xml",
+      "direction": "request",
+      "purpose": "Initial unauthenticated login-form read",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "login-submit-request.xml",
+      "direction": "request",
+      "purpose": "Redacted login form submission shape",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "login-failure-response.xml",
+      "direction": "response",
+      "purpose": "Login error rendering shape",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "navigation-request.xml",
+      "direction": "request",
+      "purpose": "Authenticated navigation request envelope",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "navigation-response.xml",
+      "direction": "response",
+      "purpose": "Minimal server-described navigation shape",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "outlet-inventory-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic OutletTable inventory and status rows",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "outlet-status-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic outlet_details status row",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "authorization-denied-response.xml",
+      "direction": "response",
+      "purpose": "Backend authorization-denial error shape",
+      "evidence": "synthetic"
+    }
+  ],
+  "transport_timeout": {
+    "representation": "no-response",
+    "reason": "A transport timeout has no Avtrans XML response and must not be modeled as invented backend XML."
+  }
+}

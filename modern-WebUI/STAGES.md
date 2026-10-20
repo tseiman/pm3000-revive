@@ -10,6 +10,8 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 1 — Sanitized protocol evidence
 
+**Status:** sanitizer, tests, synthetic fixtures, and capture guide complete; operator-run sanitized captures pending.
+
 - Build a local Avtrans sanitizer.
 - Add synthetic fixtures for login, navigation, inventory, status, errors, and authorization denial.
 - Obtain user-run sanitized captures from the real Web UI.

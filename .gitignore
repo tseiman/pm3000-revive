@@ -8,7 +8,9 @@
 /components/*/sources/*.tar.*
 /components/*/sources/*.asc
 
-# Local agent, editor, and OS files
+# Local agent, editor, Python cache, and OS files
 /.hermes/
+__pycache__/
+*.py[cod]
 *~
 .DS_Store

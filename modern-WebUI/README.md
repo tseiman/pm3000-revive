@@ -20,6 +20,9 @@ The design keeps Apache and the vendor backend. The first REST scope is delibera
 - [Architecture and security analysis](ANALYSIS.md)
 - [Implementation stages](STAGES.md)
 - [Protocol boundary](docs/PROTOCOL.md)
+- [Manual Avtrans capture procedure](docs/CAPTURE.md)
+- [Reported device storage baseline](docs/DEVICE-STORAGE.md)
+- [Synthetic fixture notes](fixtures/synthetic/README.md)
 - [Resume status](STATUS.md)
 - [Legacy compatibility patch](../fix-WebUI/README.md)
 

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid>[REDACTED-SID]</sid>
+  <action>get</action>
+  <paths>
+    <path>SYNTHETIC_DENIED_PATH</path>
+  </paths>
+  <error severity="error" label="SYNTHETIC_AUTHORIZATION_DENIED" />
+  <payload structure="content" />
+</avtrans>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid />
+  <action>login</action>
+  <agents>
+    <src>wmi</src>
+    <dest>controller</dest>
+  </agents>
+  <paths>
+    <path>SYNTHETIC_LOGIN_PATH</path>
+  </paths>
+  <payload>
+    <section structure="login">
+      <parameter id="SYNTHETIC_LOGIN_FIELD_A" structure="RWtext">
+        <value>[REDACTED-USERNAME]</value>
+      </parameter>
+      <parameter id="SYNTHETIC_LOGIN_FIELD_B" structure="password">
+        <value>[REDACTED]</value>
+      </parameter>
+    </section>
+  </payload>
+</avtrans>

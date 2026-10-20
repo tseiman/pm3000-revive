@@ -69,3 +69,20 @@ Sanitized fixtures are still required for:
 - malformed and timeout behavior.
 
 The framing between `mod_avtrans` and `/dev/avtrans_socket` must be proven before a CGI adapter connects directly. Alternatively, a same-origin call through the existing handler must be proven safe and non-deadlocking. Neither path is assumed yet.
+
+## Stage 1 evidence set
+
+[`../fixtures/synthetic/`](../fixtures/synthetic/) contains only clean-room schema examples. Its manifest marks every XML file as `synthetic`; these files do not establish concrete device paths, action IDs, controls, row IDs, or complete responses.
+
+[`CAPTURE.md`](CAPTURE.md) defines the short operator-run procedure for obtaining request and response bodies without replaying requests. Raw captures remain outside Git. Only manually reviewed sanitizer output can be promoted to observed protocol evidence.
+
+The sanitizer at `../tools/sanitize_avtrans.py`:
+
+- requires an `<avtrans>` root;
+- rejects DTD/entity declarations through the XML parser regardless of source encoding, input over 1 MiB, and XML deeper than 32 levels;
+- redacts SID, login, credential, token, certificate, common network fields, RFC1918 addresses, and private hostname suffixes across namespaced elements, attributes, and mixed content;
+- supports explicit literal replacement for device labels or serials;
+- opens raw input with no-follow and nonblocking semantics, then accepts only a regular file;
+- writes a separate output atomically with mode `0600`.
+
+A transport timeout is represented as the absence of a response, not as invented backend XML.

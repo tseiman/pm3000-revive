@@ -78,7 +78,7 @@ Largest components:
 - XSL stylesheet: 104,397 bytes;
 - images and styles: approximately 205 KiB.
 
-A dependency-free modern UI, inline or tightly bundled SVG icons, and a small native CGI adapter should fit below a provisional 400 KiB installed target. This target must be measured from the release archive and installed tree at every milestone. The observed free persistent space was about 2.3 MiB, but deployment must re-measure it.
+A dependency-free modern UI, inline or tightly bundled SVG icons, and a small native CGI adapter should fit below a provisional 400 KiB installed target. This target must be measured from the release archive and installed tree at every milestone. The current operator-reported storage snapshot is recorded in [`docs/DEVICE-STORAGE.md`](docs/DEVICE-STORAGE.md); deployment must re-measure it.
 
 ## Recommended target architecture
 

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <sid>[REDACTED-SID]</sid>
+  <action>get</action>
+  <paths>
+    <path>SYNTHETIC_OUTLET_DETAIL_PATH</path>
+  </paths>
+  <payload structure="content">
+    <section structure="table" id="outlet_details" label="SYNTHETIC_OUTLET_DETAIL_LABEL">
+      <array id="SYNTHETIC_ROW_A">
+        <parameter id="name" structure="ROtext" label="SYNTHETIC_NAME_LABEL"><value>SYNTHETIC_OUTLET_A</value></parameter>
+        <parameter id="outlet_status" structure="ROtext" label="SYNTHETIC_STATUS_LABEL"><value>ON</value></parameter>
+      </array>
+    </section>
+  </payload>
+</avtrans>
