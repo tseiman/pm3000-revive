@@ -50,7 +50,7 @@ Stages 4, 5, and 6 are implemented, locally verified, independently reviewed wit
 
 ## Verified gates
 
-- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 131 tests, including the Stage 7 read-only preflight, portable macOS/Linux backup, and selective restore contracts.
+- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 142 tests, including the Stage 7 read-only preflight, portable macOS/Linux backup, selective restore, and adversarial end-to-end fixed `/tmp` device-compatibility contracts.
 - Two clean native target builds are byte-identical.
 - Target binary: stripped static ELF32, big-endian PowerPC, no dynamic interpreter.
 - Build uses `-mcpu=e300c3 -msoft-float`; disassembly contains no PPC floating-point instruction matches.
@@ -70,7 +70,7 @@ Stages 4, 5, and 6 are implemented, locally verified, independently reviewed wit
 - Exact state-changing payloads for outlet `on`, `off`, and `cycle` remain unknown and must not be guessed.
 - Apache CGI `Authorization` forwarding, `AcceptPathInfo`, and the complete target-device Unix-socket behavior require Stage 7 passive/device validation.
 - A dedicated least-privilege vendor service account has not been provisioned or tested.
-- Real SSH/SCP transport, target ownership/modes, free space, BusyBox behavior, and physical-filesystem directory `fsync` remain unverified; all live deployment stays disabled.
+- A fixed backup-gated SSH/SCP compatibility command is ready but has not yet been run against the appliance. Target execution, ownership/modes, and BusyBox behavior therefore remain unverified; physical-filesystem directory `fsync` also remains outside this `/tmp` check and live deployment stays disabled.
 
 ## Safety statement
 

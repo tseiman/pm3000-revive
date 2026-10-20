@@ -18,6 +18,9 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
   filesystem backup over SSH and validates it locally before any deployment SCP.
 - `stage7-selective-restore.py` — validates a completed full backup, previews a
   fixed restore profile, and optionally creates a profile-only restore TAR.
+- `stage7-device-compatibility.sh` — validates the completed backup and release,
+  tests the two PPC binaries only from a private appliance `/tmp` directory, and
+  removes that directory without installing or reloading anything.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -238,11 +241,33 @@ fragment), and `apache` (`/etc/apache2`). The modern profile never includes
 archive member list before displaying or preparing anything. Prepared artifacts
 are private, atomically published host files and are not automatically applied.
 
-No real appliance path, free-space value, owner/group IDs, BusyBox tar behavior,
-Apache `SetEnvIf`/Authorization forwarding, CGI `PATH_INFO`, HTTPS health
-endpoint, or SCP transport has
-been observed in Stage 6. Consequently the host wrappers fail closed to local
-simulation rather than pretending a remote pilot was verified. The POSIX device
-helpers are reviewable pilot primitives, not authorization to run them. A live
-pilot must first confirm the inventory and then add/test the narrow SSH/SCP
-transport without weakening the backup gate.
+The first real binary check is likewise non-installing. After building a release,
+run from the repository root:
+
+```bash
+modern-WebUI/deploy/stage7-device-compatibility.sh \
+  root@pdu1 \
+  /path/to/pm3000-release-2026-10-21.1.tar \
+  ../backup/stage7-full-backup-20261020T221022Z-4266
+```
+
+The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3
+manifest, its archive binding, and an exact match between the manifest's saved
+SSH target and the requested SSH target. It validates the release sidecar before
+transfer, then reads the package once with no-follow semantics, requires the
+exact ordered eight-member allowlist with regular non-link members, fixed modes,
+and root archive ownership, and writes those same bytes to private host storage.
+The uploaded digest binds the remote bytes to that immutable snapshot. It uses legacy `scp -O`
+to copy the package into a
+private `/tmp/pm3000-stage7-compat-*` directory, checks the uploaded SHA-256 with
+OpenSSL, enforces the eight-member allowlist, normalizes only those fixed members
+to the installer contract's exact modes, executes the packaged helper's
+regular-file and release-tree checks, and calls only the REST CGI `/api/v1/health`
+route. Success ends with `compatibility.complete=yes` and `apply=no`; cleanup is
+trapped on success and failure. It does not write below `/etc` or `/mnt`, contact
+Avtrans, reload Apache, or install the release.
+
+Installation remains separately gated. The POSIX install/rollback helpers are
+reviewable pilot primitives, not authorization to run them; successful `/tmp`
+compatibility does not prove Apache integration, physical-filesystem durability,
+or old-kernel behavior outside the executed paths.
