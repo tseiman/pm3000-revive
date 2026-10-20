@@ -194,7 +194,7 @@ Do not redirect its output on the appliance. The report begins with
 CGI `PATH_INFO`, static-helper execution, directory `fsync`, and SCP transport as
 not tested because those checks require a later approved pilot action or write.
 
-For the confirmed first-install state, run this on the Mac from the repository
+For the confirmed first-install state, run this on macOS or Linux from the repository
 root. Replace the local backup directory if desired; the SSH alias may come from
 the Mac's existing OpenSSH configuration:
 
@@ -204,7 +204,8 @@ modern-WebUI/deploy/stage7-first-backup.sh \
   --backup-dir ../backup-202610202348/
 ```
 
-The remote SSH program only reads kernel, firmware hash, and the two managed
+The host requires Bash, Python 3, OpenSSH, and `tar`; it does not depend on GNU
+Coreutils or `shasum`. The remote SSH program only reads kernel, firmware hash, and the two managed
 paths. The script refuses to continue unless both managed paths are absent. It
 creates `REMOTE_INVENTORY.txt`, `BACKUP_ARCHIVE.tar`, `BACKUP_MANIFEST.json`, and
 `BACKUP_COMPLETE` privately on the Mac, flushes them to disk, and prints their

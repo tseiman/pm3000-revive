@@ -50,7 +50,7 @@ Stages 4, 5, and 6 are implemented, locally verified, independently reviewed wit
 
 ## Verified gates
 
-- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 128 tests, including the Stage 7 read-only preflight and Mac backup contracts.
+- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 129 tests, including the Stage 7 read-only preflight and portable macOS/Linux backup contracts.
 - Two clean native target builds are byte-identical.
 - Target binary: stripped static ELF32, big-endian PowerPC, no dynamic interpreter.
 - Build uses `-mcpu=e300c3 -msoft-float`; disassembly contains no PPC floating-point instruction matches.

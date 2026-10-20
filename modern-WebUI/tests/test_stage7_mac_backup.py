@@ -10,6 +10,13 @@ SCRIPT = ROOT / "modern-WebUI" / "deploy" / "stage7-first-backup.sh"
 
 
 class Stage7MacBackupTests(unittest.TestCase):
+    def test_uses_no_gnu_option_separator_with_macos_file_commands(self):
+        source = SCRIPT.read_text()
+        self.assertNotIn("shasum", source)
+        for command in ("mkdir", "chmod", "rm", "cd", "mv"):
+            with self.subTest(command=command):
+                self.assertNotRegex(source, rf"(?m)^\\s*{command}[^\\n]*\\s--(?:\\s|$)")
+
     def _run(self, inventory: str):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

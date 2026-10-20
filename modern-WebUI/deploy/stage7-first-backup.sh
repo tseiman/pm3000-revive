@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
-# Create a private first-install backup record on the Mac using read-only SSH probes.
+# Create a private first-install backup record on macOS/Linux using read-only SSH probes.
 set -euo pipefail
 umask 077
+
+sha256_file()
+{
+    python3 - "$1" <<'PY_SHA256'
+import hashlib
+import sys
+from pathlib import Path
+print(hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest())
+PY_SHA256
+}
 
 target=
 backup_parent=
@@ -19,25 +29,26 @@ done
 
 [[ -n $target && -n $backup_parent ]] || { printf '%s\n' 'target and backup directory are required' >&2; exit 2; }
 case "$target" in ''|-*) printf '%s\n' 'unsafe SSH target' >&2; exit 2;; esac
+case "$backup_parent" in -*) printf '%s\n' 'backup path must not start with a dash' >&2; exit 2;; esac
 
 if [[ ! -e $backup_parent ]]; then
-    mkdir -p -- "$backup_parent"
+    mkdir -p "$backup_parent"
 fi
 [[ -d $backup_parent ]] || { printf '%s\n' 'backup path is not a directory' >&2; exit 1; }
-backup_parent=$(cd -- "$backup_parent" && pwd -P)
-chmod 700 -- "$backup_parent"
+backup_parent=$(cd "$backup_parent" && pwd -P)
+chmod 700 "$backup_parent"
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 temporary="$backup_parent/.stage7-first-backup-$timestamp-$$.tmp"
 final="$backup_parent/stage7-first-backup-$timestamp-$$"
 [[ ! -e $temporary && ! -e $final ]] || { printf '%s\n' 'backup destination collision' >&2; exit 1; }
-mkdir -m 700 -- "$temporary"
+mkdir -m 700 "$temporary"
 cleanup()
 {
     status=$?
     trap - EXIT HUP INT TERM
     if [[ $status -ne 0 && -d $temporary && ! -L $temporary ]]; then
-        rm -rf -- "$temporary"
+        rm -rf "$temporary"
     fi
     exit "$status"
 }
@@ -80,7 +91,7 @@ done
 printf '%s\n' 'pm3000_first_backup.complete=yes'
 EOF_REMOTE
 
-chmod 600 -- "$inventory"
+chmod 600 "$inventory"
 [[ $(sed -n '1p' "$inventory") == pm3000_first_backup.format=1 ]] || { printf '%s\n' 'invalid remote inventory header' >&2; exit 1; }
 [[ $(sed -n '$p' "$inventory") == pm3000_first_backup.complete=yes ]] || { printf '%s\n' 'incomplete remote inventory' >&2; exit 1; }
 [[ $(grep -c '^path\.pm3000_revive=absent$' "$inventory") -eq 1 ]] || { printf '%s\n' 'managed PM3000 path is not absent; full backup required' >&2; exit 1; }
@@ -110,24 +121,25 @@ manifest = {
 }
 sys.stdout.write(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n")
 PY_MANIFEST
-chmod 600 -- "$manifest"
+chmod 600 "$manifest"
 
 archive="$temporary/BACKUP_ARCHIVE.tar"
 tar -cf "$archive" -C "$temporary" REMOTE_INVENTORY.txt
 [[ $(tar -tf "$archive") == REMOTE_INVENTORY.txt ]] || { printf '%s\n' 'local backup archive validation failed' >&2; exit 1; }
-chmod 600 -- "$archive"
+chmod 600 "$archive"
 
-archive_hash=$(shasum -a 256 "$archive" | cut -d ' ' -f 1)
-manifest_hash=$(shasum -a 256 "$manifest" | cut -d ' ' -f 1)
+archive_hash=$(sha256_file "$archive")
+manifest_hash=$(sha256_file "$manifest")
 for digest in "$archive_hash" "$manifest_hash"; do
     case "$digest" in *[!0-9a-f]*|'') printf '%s\n' 'local SHA-256 calculation failed' >&2; exit 1;; esac
     [[ ${#digest} -eq 64 ]] || { printf '%s\n' 'invalid local SHA-256 length' >&2; exit 1; }
 done
 printf '%s\n%s\n' "$archive_hash" "$manifest_hash" >"$temporary/BACKUP_COMPLETE"
-chmod 600 -- "$temporary/BACKUP_COMPLETE"
+chmod 600 "$temporary/BACKUP_COMPLETE"
 
 python3 - "$temporary" <<'PY_FSYNC'
 import os
+import errno
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
@@ -136,18 +148,27 @@ for name in ("REMOTE_INVENTORY.txt", "BACKUP_MANIFEST.json", "BACKUP_ARCHIVE.tar
         os.fsync(stream.fileno())
 descriptor = os.open(root, os.O_RDONLY)
 try:
-    os.fsync(descriptor)
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        if error.errno not in (errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)):
+            raise
 finally:
     os.close(descriptor)
 PY_FSYNC
 
-mv -- "$temporary" "$final"
+mv "$temporary" "$final"
 python3 - "$backup_parent" <<'PY_PARENT_FSYNC'
 import os
+import errno
 import sys
 descriptor = os.open(sys.argv[1], os.O_RDONLY)
 try:
-    os.fsync(descriptor)
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        if error.errno not in (errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)):
+            raise
 finally:
     os.close(descriptor)
 PY_PARENT_FSYNC
