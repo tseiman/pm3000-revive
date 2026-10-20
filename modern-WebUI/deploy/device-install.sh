@@ -48,7 +48,6 @@ backup_complete=$4
 [ "$(id -u)" = 0 ] || { echo "installer must run as root" >&2; exit 1; }
 command -v openssl >/dev/null 2>&1 || { echo "openssl missing" >&2; exit 1; }
 case "$release_id" in ''|*[!A-Za-z0-9._-]*|.|..) echo "unsafe release id" >&2; exit 2;; esac
-case "$package" in /*) :;; *) echo "package path must be absolute" >&2; exit 2;; esac
 [ -f "$package" ] && [ ! -L "$package" ] || { echo "unsafe package" >&2; exit 1; }
 [ -f "$backup_complete" ] && [ ! -L "$backup_complete" ] || { echo "BACKUP_COMPLETE missing or unsafe" >&2; exit 1; }
 {

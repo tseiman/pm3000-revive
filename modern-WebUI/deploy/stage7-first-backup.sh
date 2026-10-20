@@ -10,7 +10,7 @@ while (($#)); do
         --target) target=${2:?missing SSH target}; shift 2 ;;
         --backup-dir) backup_parent=${2:?missing backup directory}; shift 2 ;;
         --help)
-            printf '%s\n' 'usage: stage7-first-backup.sh --target USER@HOST --backup-dir ABSOLUTE_DIRECTORY'
+            printf '%s\n' 'usage: stage7-first-backup.sh --target USER@HOST --backup-dir DIRECTORY'
             exit 0
             ;;
         *) printf 'stage7-first-backup.sh: unsupported argument: %s\n' "$1" >&2; exit 2 ;;
@@ -18,13 +18,13 @@ while (($#)); do
 done
 
 [[ -n $target && -n $backup_parent ]] || { printf '%s\n' 'target and backup directory are required' >&2; exit 2; }
-case "$target" in ''|*[!A-Za-z0-9._@:-]*|-*) printf '%s\n' 'unsafe SSH target' >&2; exit 2;; esac
-case "$backup_parent" in /*) :;; *) printf '%s\n' 'backup directory must be absolute' >&2; exit 2;; esac
+case "$target" in ''|-*) printf '%s\n' 'unsafe SSH target' >&2; exit 2;; esac
 
 if [[ ! -e $backup_parent ]]; then
     mkdir -p -- "$backup_parent"
 fi
-[[ -d $backup_parent && ! -L $backup_parent ]] || { printf '%s\n' 'unsafe backup directory' >&2; exit 1; }
+[[ -d $backup_parent ]] || { printf '%s\n' 'backup path is not a directory' >&2; exit 1; }
+backup_parent=$(cd -- "$backup_parent" && pwd -P)
 chmod 700 -- "$backup_parent"
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)

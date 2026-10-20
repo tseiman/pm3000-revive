@@ -201,7 +201,7 @@ the Mac's existing OpenSSH configuration:
 ```bash
 modern-WebUI/deploy/stage7-first-backup.sh \
   --target root@pdu1 \
-  --backup-dir "$HOME/Library/Application Support/pm3000-revive/backups"
+  --backup-dir ../backup-202610202348/
 ```
 
 The remote SSH program only reads kernel, firmware hash, and the two managed

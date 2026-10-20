@@ -49,7 +49,6 @@ expected=$4
 command -v openssl >/dev/null 2>&1 || { echo "openssl missing" >&2; exit 1; }
 case "$release_id" in ''|*[!A-Za-z0-9._-]*|.|..) echo "unsafe release id" >&2; exit 2;; esac
 case "$restore_dir" in /tmp/stage6-restore-*) :;; *) echo "unsafe restore directory" >&2; exit 2;; esac
-case "$package" in /*) :;; *) echo "package path must be absolute" >&2; exit 2;; esac
 case "$expected" in *[!0-9a-f]*|'') echo "invalid package digest" >&2; exit 2;; esac
 [ "${#expected}" -eq 64 ] || { echo "invalid package digest length" >&2; exit 2; }
 [ -d "$restore_dir" ] && [ ! -L "$restore_dir" ] || { echo "restore directory missing or unsafe" >&2; exit 1; }

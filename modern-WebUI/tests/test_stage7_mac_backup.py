@@ -25,11 +25,12 @@ class Stage7MacBackupTests(unittest.TestCase):
         environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
         environment["FAKE_INVENTORY"] = inventory
         result = subprocess.run(
-            ["bash", str(SCRIPT), "--target", "root@pdu1", "--backup-dir", str(backup_parent)],
+            ["bash", str(SCRIPT), "--target", "root@pdu1", "--backup-dir", "backups"],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=environment,
+            cwd=root,
             check=False,
         )
         return root, backup_parent, result
