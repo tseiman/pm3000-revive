@@ -332,7 +332,9 @@ static int run_token_route(const char *method, const char *path, const char *sto
 static int run_cgi(void) {
     const char *method = getenv("REQUEST_METHOD");
     const char *path = getenv("PATH_INFO");
+    const char *script_name = getenv("SCRIPT_NAME");
     const char *https = getenv("HTTPS");
+    char routed_path[256];
     const char *header;
     const char *token;
     pm3000_authorization authorization;
@@ -342,6 +344,14 @@ static int run_cgi(void) {
     int auth_result;
     int detail_request = 0;
     char requested_outlet[23] = {0};
+    if (path != NULL && strncmp(path, "/api/v1", 7U) != 0 &&
+        script_name != NULL && strcmp(script_name, "/api/v1") == 0 && path[0] == '/') {
+        int written = snprintf(routed_path, sizeof(routed_path), "%s%s", script_name, path);
+        if (written < 0 || (size_t)written >= sizeof(routed_path)) {
+            return cgi_error(400U, "Bad Request", "bad_request", "The request path is invalid.");
+        }
+        path = routed_path;
+    }
     if (https == NULL || strcmp(https, "on") != 0) {
         return cgi_error(403U, "Forbidden", "forbidden", "HTTPS is required.");
     }

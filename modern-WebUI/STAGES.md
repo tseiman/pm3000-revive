@@ -56,12 +56,16 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 6 — Backup-first deployment and rollback
 
+**Offline implementation status:** complete pending final independent re-review. The host entry points remain
+simulation-only and fail closed for remote targets. Live SSH/SCP and appliance
+installation remain blocked on the Stage 7 observations below.
+
 - Create host-side `deploy.sh` and `rollback.sh` plus a minimal device installer.
-- Before any installation write: create a complete remote archive, transfer it to the host with SCP, compare remote/local SHA-256, inspect contents, and publish `BACKUP_COMPLETE` locally.
+- Before any installation write: create a complete remote archive, transfer it to private host storage, compare remote/local SHA-256, inspect contents, and publish `BACKUP_COMPLETE` locally. Stage 6 proves this sequence with isolated transport simulation; Stage 7 must verify SCP and target identity on the appliance.
 - Install from a checksummed allowlist into a versioned persistent directory.
 - Restore exactly the previous files and remove only files created by the selected deployment.
 - Never reboot or switch an outlet.
-- **Gate:** isolated failure-injection simulation proves no install write before backup and byte-identical rollback.
+- **Gate:** isolated failure-injection simulation proves no install write before backup, exact release-tree validation, recovery from real process exits at publication boundaries, and byte-identical rollback.
 
 ## Stage 7 — Manual read-only device pilot
 

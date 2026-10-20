@@ -4,7 +4,7 @@ This directory contains the clean-room design and future implementation of a com
 
 ## Current status
 
-**Stages 4 and 5 are implemented, locally verified, and independently reviewed with PASS.** The repository contains reviewed protocol evidence, a strict REST v1 contract, host and native token-store administration, a static PPC32 big-endian adapter, and a responsive dependency-free Web UI. Nothing has been installed on a PM3000, and the legacy UI remains the required deployment fallback.
+**Stages 4 and 5 are implemented, locally verified, and independently reviewed with PASS. Stage 6 is implemented as an offline-only backup-first deployment and rollback transaction and is awaiting its final release review.** Remote deployment remains disabled until the Stage 7 device preflight. Nothing has been installed on a PM3000, and the legacy UI remains the required fallback.
 
 Confirmed architecture:
 
@@ -24,6 +24,7 @@ The design keeps Apache and the vendor backend. The native adapter exposes stric
 - [Bearer-token store and host administration](docs/TOKEN-STORE.md)
 - [Native REST v1 adapter build, operation, and rollback](docs/NATIVE-ADAPTER.md)
 - [Stage 5 Web UI and local browser verification](web/README.md)
+- [Stage 6 backup-first deployment and rollback](deploy/README.md)
 - [Machine-readable OpenAPI v1 contract](api/openapi-v1.json)
 - [Manual Avtrans capture procedure](docs/CAPTURE.md)
 - [Reported device storage baseline](docs/DEVICE-STORAGE.md)

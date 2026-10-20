@@ -628,6 +628,11 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIn(b"Status: 403", denied_detail.stdout)
 
     def test_known_routes_methods_accept_and_backend_protocol_errors_match_contract(self) -> None:
+        apache_path_info = self.run_cgi(
+            "GET", "/health", extra_environment={"SCRIPT_NAME": "/api/v1"}
+        )
+        self.assertIn(b"Status: 200", apache_path_info.stdout)
+        self.assertIn(b'"status":"live"', apache_path_info.stdout)
         self.assertIn(b"Status: 405", self.run_cgi("POST", "/api/v1/health").stdout)
         unacceptable = self.run_cgi("GET", "/api/v1/health", extra_environment={"HTTP_ACCEPT": "text/plain"})
         headers, body = self.cgi_json(unacceptable)
