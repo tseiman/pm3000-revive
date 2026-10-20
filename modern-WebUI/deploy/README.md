@@ -16,6 +16,8 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
   standard output and never installs, reloads, restarts, or creates a device file.
 - `stage7-first-backup.sh` — macOS/Linux host command that streams a full device
   filesystem backup over SSH and validates it locally before any deployment SCP.
+- `stage7-selective-restore.py` — validates a completed full backup, previews a
+  fixed restore profile, and optionally creates a profile-only restore TAR.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -213,6 +215,28 @@ their exclusion is recorded in the manifest. The script creates
 `BACKUP_COMPLETE` privately on the host, validates every archive member, flushes
 the files to disk, and prints their directory, hashes, and archive size. No
 remote file is created and no deployment SCP occurs in this step.
+
+Restore preparation is deliberately selective. There is no full-root profile
+and this command never contacts the appliance:
+
+```bash
+python3 modern-WebUI/deploy/stage7-selective-restore.py \
+  --backup ../backup-202610202348/stage7-full-backup-YYYYMMDDTHHMMSSZ-PID \
+  --profile legacy-webui
+
+python3 modern-WebUI/deploy/stage7-selective-restore.py \
+  --backup ../backup-202610202348/stage7-full-backup-YYYYMMDDTHHMMSSZ-PID \
+  --profile legacy-webui \
+  --prepare ../restore-legacy-webui.tar
+```
+
+The available profiles are `legacy-webui` (`/usr/share/apache2/htdocs`),
+`modern-webui` (`/mnt/hdUser/pm3000-revive/webui` plus its dedicated Apache
+fragment), and `apache` (`/etc/apache2`). The modern profile never includes
+`/mnt/hdUser/pm3000-revive/rest/tokens.json`. The tool verifies
+`BACKUP_COMPLETE`, both backup hashes, the format-3 manifest, and the exact
+archive member list before displaying or preparing anything. Prepared artifacts
+are private, atomically published host files and are not automatically applied.
 
 No real appliance path, free-space value, owner/group IDs, BusyBox tar behavior,
 Apache `SetEnvIf`/Authorization forwarding, CGI `PATH_INFO`, HTTPS health
