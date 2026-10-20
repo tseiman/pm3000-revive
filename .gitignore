@@ -19,3 +19,4 @@ __pycache__/
 /modern-WebUI/native/build/
 /modern-WebUI/deploy/build/
 /modern-WebUI/artifacts/
+/modern-WebUI/dist/

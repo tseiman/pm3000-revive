@@ -46,6 +46,18 @@ cd pm3000-revive/components/dropbear
 
 Validated binaries are written to `components/dropbear/artifacts/bin/`. Release archives are written to `components/dropbear/dist/`.
 
+The modern PM3000 release is versioned independently from Dropbear. On Linux,
+after the shared PPC toolchain above has been built, create it with:
+
+```bash
+modern-WebUI/deploy/build-release.sh 2026-10-21.1
+```
+
+Outputs are written to `modern-WebUI/dist/`. A `dropbear-v*` tag builds only the
+Dropbear component; a `pm3000-v*` tag builds, QEMU-checks, and publishes the
+corresponding `pm3000-release-*.tar`. Both workflows reuse the same cached PPC
+cross-toolchain but do not couple their component versions.
+
 ## Install and test
 
 Installation is operator-initiated and uses the packaged two-phase installer. Read [Installing Dropbear on the PM3000](docs/INSTALL_DROPBEAR.md) before copying anything to a device. Phase 1 runs one parallel test on port 2222 while preserving vendor OpenSSH; phase 2 takes port 22 and enables SysV startup only after explicit confirmation of both the test login and a new port-22 login. No installer command reboots the PDU, and `rollback.sh` restores the preserved OpenSSH service.

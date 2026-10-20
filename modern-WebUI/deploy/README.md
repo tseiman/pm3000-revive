@@ -50,7 +50,22 @@ gate.
 
 ## Build the exact allowlist release
 
-From the repository root:
+For a complete PPC32 big-endian release on Linux, including the native runtime,
+atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
+`qemu-ppc` is installed, run from the repository root:
+
+```sh
+modern-WebUI/deploy/build-release.sh 2026-10-21.1
+```
+
+This uses the shared toolchain under `components/dropbear/output-buildroot/host`.
+If it is absent, the script prints the commands needed to create it. macOS hosts
+should use the `Build modern PM3000 release` GitHub Actions workflow rather than
+trying to run the Linux Buildroot toolchain locally. Tags named
+`pm3000-v<release-id>` publish `pm3000-release-<release-id>.tar` and its checksum;
+Dropbear remains independently versioned under `dropbear-v*`.
+
+The lower-level package-only command is:
 
 ```sh
 python3 modern-WebUI/deploy/deployment.py package \

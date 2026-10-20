@@ -1,0 +1,115 @@
+name: Build modern PM3000 release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing pm3000-v* tag to rebuild and populate; leave empty for a test build"
+        required: false
+        type: string
+      release_id:
+        description: "Release ID for an untagged test build; ignored when release_tag is set"
+        required: false
+        type: string
+  push:
+    tags:
+      - "pm3000-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git curl file patch perl rsync cpio unzip \
+            bzip2 xz-utils python3 qemu-user
+
+      - name: Fetch and verify pinned sources
+        run: components/dropbear/fetch-sources.sh
+
+      - name: Restore shared PPC cross-toolchain cache
+        id: toolchain-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            components/dropbear/buildroot/dl
+            components/dropbear/output-buildroot/host
+            components/dropbear/output-buildroot/.config
+          key: pm3000-toolchain-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('components/dropbear/configs/buildroot-pm3000_defconfig', 'components/dropbear/patches/**', 'components/dropbear/fetch-sources.sh', 'components/dropbear/build-toolchain.sh', 'components/dropbear/sources/SHA256SUMS.required') }}
+
+      - name: Build PPC cross-toolchain on cache miss
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: components/dropbear/build-toolchain.sh
+
+      - name: Derive PM3000 release ID
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+          TEST_RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            case "$RELEASE_TAG" in
+              pm3000-v*) release_id=${RELEASE_TAG#pm3000-v} ;;
+              *) echo "Refusing unexpected release tag: $RELEASE_TAG" >&2; exit 1 ;;
+            esac
+          else
+            release_id=${TEST_RELEASE_ID:-test-${GITHUB_RUN_NUMBER}}
+          fi
+          case "$release_id" in
+            ''|*[!A-Za-z0-9._-]*|.|..) echo "Unsafe release ID: $release_id" >&2; exit 1 ;;
+          esac
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify modern PM3000 release
+        run: modern-WebUI/deploy/build-release.sh "${{ steps.version.outputs.release_id }}" modern-WebUI/dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pm3000-modern-${{ github.run_id }}
+          path: |
+            modern-WebUI/dist/pm3000-release-*.tar
+            modern-WebUI/dist/pm3000-release-*.tar.sha256
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/pm3000-v') || inputs.release_tag != ''
+    needs: build-test-package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pm3000-modern-${{ github.run_id }}
+          path: dist
+
+      - name: Publish tagged GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          case "$RELEASE_TAG" in
+            pm3000-v*) ;;
+            *) echo "Refusing unexpected release tag: $RELEASE_TAG" >&2; exit 1 ;;
+          esac
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.tar dist/*.tar.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.tar dist/*.tar.sha256 \
+              --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" \
+              --generate-notes --verify-tag
+          fi
