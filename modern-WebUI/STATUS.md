@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stage 2 is complete. The tested REST v1 contract exposes only local health, fixed read-only outlet list/detail projections, and a closed action request shape that cannot dispatch in this stage. No adapter or device installation exists yet.
+Stage 3 is complete. The tested REST v1 contract now includes closed administrator-only token management, and the repository contains a fault-tested host-side token-store/reference administration implementation. No native adapter, replacement UI, or device installation exists yet.
 
 ## Completed
 
@@ -18,11 +18,15 @@ Stage 2 is complete. The tested REST v1 contract exposes only local health, fixe
 - Authenticated read-only device pages confirmed firmware 2.0.1.23, model/CPU identity fields, and live memory/flash table schemas without changing configuration or power state.
 - A machine-readable OpenAPI 3.1 REST v1 contract and normative contract document.
 - Opaque outlet/PDU identifiers, inventory-revision semantics, exact route/method allowlists, closed JSON schemas, bounded input, and fixed read templates.
-- A reserved `on`/`off`/`cycle` request shape whose Stage 2 response is always `503 action_disabled` with no backend request.
+- A reserved `on`/`off`/`cycle` request shape whose Stage 3 response remains `503 action_disabled` with no backend request.
+- A host-side strict token store with digest-only persistence, `read`/`control`/`admin` scopes, outlet allowlists, enable/disable/revoke, and final-administrator protection.
+- Directory-FD-anchored locking and atomic persistence with strict JSON/owner/mode/link validation, bounded reads, pre-commit preservation, and explicit post-commit durability semantics.
+- A host administration command that bootstraps and manages tokens without placing administrator credentials in command arguments or environment variables.
+- Closed `admin`-only REST token-management operations with no HTTP bootstrap, digest export, plaintext recovery, generic patch, or backend request.
 
 ## Verified gate
 
-- All 28 sanitizer, fixture, and REST-contract tests pass.
+- All 60 sanitizer, fixture, REST-contract, token-store, and token-administration tests pass.
 - Every synthetic XML fixture parses with `<avtrans>` as its root.
 - Every XML fixture is declared with evidence level `synthetic` in `manifest.json`.
 - Every observed XML fixture parses with `<avtrans>` as its root and is declared with evidence level `observed-sanitized`.
@@ -30,8 +34,10 @@ Stage 2 is complete. The tested REST v1 contract exposes only local health, fixe
 - The PM3000 was contacted only through authenticated read-only HTTPS requests and logout; no configuration or outlet/PDU action was sent.
 - No firmware binary was executed.
 - No vendor payload or raw device capture was copied into the repository.
-- Every non-health REST route requires bearer authentication in the contract.
-- The action route has no backend template and no 2xx response in Stage 2.
+- Every non-health REST route requires bearer authentication; outlet reads/actions have explicit scope and allowlist behavior, and token administration requires `admin`.
+- The action route has no backend template and no 2xx response in Stage 3.
+- Token plaintext is flushed exactly once before publication, never persisted or listed; output failure publishes no record, and post-commit durability uncertainty retains the already delivered credential.
+- Store and lock symlinks/non-regular files, malformed/deep JSON, invalid Unicode, duplicate members/IDs/digests, unsafe permissions, and final-administrator removal fail closed.
 - Every REST response disables caching and content sniffing.
 
 ## Open evidence and later-stage blockers
@@ -44,4 +50,4 @@ Stage 2 is complete. The tested REST v1 contract exposes only local health, fixe
 
 ## Next step
 
-Proceed to Stage 3 token persistence and scope semantics. Stage 4 may then implement only local health and the fixed read-only outlet projections; action enablement remains a separately approved Stage 8 task.
+Proceed to Stage 4: implement a small PPC32 big-endian native adapter for local health, fixed read-only outlet projections, and the validated Stage 3 token-store/authorization contract. Outlet-action dispatch remains disabled and is a separately approved Stage 8 task.

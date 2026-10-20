@@ -26,6 +26,10 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/outlets",
                 "/api/v1/outlets/{outletId}",
                 "/api/v1/outlets/{outletId}/actions",
+                "/api/v1/tokens",
+                "/api/v1/tokens/{tokenId}",
+                "/api/v1/tokens/{tokenId}/disable",
+                "/api/v1/tokens/{tokenId}/enable",
             },
             set(paths),
         )
@@ -33,6 +37,61 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get"}, set(paths["/api/v1/outlets"]))
         self.assertEqual({"get", "parameters"}, set(paths["/api/v1/outlets/{outletId}"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/outlets/{outletId}/actions"]))
+        self.assertEqual({"get", "post"}, set(paths["/api/v1/tokens"]))
+        self.assertEqual({"delete", "parameters"}, set(paths["/api/v1/tokens/{tokenId}"]))
+        self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/disable"]))
+        self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/enable"]))
+
+    def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
+        paths = self.contract["paths"]
+        operations = [
+            paths["/api/v1/tokens"]["get"],
+            paths["/api/v1/tokens"]["post"],
+            paths["/api/v1/tokens/{tokenId}"]["delete"],
+            paths["/api/v1/tokens/{tokenId}/disable"]["post"],
+            paths["/api/v1/tokens/{tokenId}/enable"]["post"],
+        ]
+        for operation in operations:
+            with self.subTest(operation=operation["operationId"]):
+                self.assertEqual([{"bearerAuth": []}], operation["security"])
+                self.assertEqual("admin", operation["x-required-scope"])
+                self.assertEqual(
+                    "token-store-only-no-backend-request",
+                    operation["x-stage3-behavior"],
+                )
+                self.assertNotIn("x-backend-template", operation)
+
+        schemas = self.contract["components"]["schemas"]
+        create = schemas["TokenCreateRequest"]
+        self.assertFalse(create["additionalProperties"])
+        self.assertEqual(["label", "scope"], create["required"])
+        self.assertEqual(["read", "control", "admin"], schemas["TokenScope"]["enum"])
+        self.assertTrue(create["properties"]["outlets"]["uniqueItems"])
+        self.assertEqual(256, create["properties"]["outlets"]["maxItems"])
+
+        metadata = schemas["TokenMetadata"]
+        self.assertFalse(metadata["additionalProperties"])
+        self.assertNotIn("digest", metadata["properties"])
+        self.assertNotIn("token", metadata["properties"])
+        self.assertIn("token", schemas["TokenCreated"]["properties"])
+        issued_token = schemas["TokenCreated"]["properties"]["token"]
+        self.assertTrue(issued_token["readOnly"])
+        self.assertNotIn("writeOnly", issued_token)
+
+        create_operation = paths["/api/v1/tokens"]["post"]
+        self.assertEqual(
+            "#/components/schemas/TokenCreateRequest",
+            create_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        )
+        self.assertEqual(
+            "#/components/responses/TokenCreated",
+            create_operation["responses"]["201"]["$ref"],
+        )
+        self.assertEqual(
+            "#/components/schemas/TokenCreated",
+            self.contract["components"]["responses"]["TokenCreated"]["content"]["application/json"]["schema"]["$ref"],
+        )
+        self.assertNotIn("/api/v1/tokens/bootstrap", paths)
 
     def test_uses_opaque_outlet_ids_and_fixed_read_templates(self) -> None:
         schemas = self.contract["components"]["schemas"]
@@ -53,6 +112,15 @@ class RestV1ContractTests(unittest.TestCase):
             },
             operations,
         )
+        collection = self.contract["paths"]["/api/v1/outlets"]["get"]
+        detail = self.contract["paths"]["/api/v1/outlets/{outletId}"]["get"]
+        action = self.contract["paths"]["/api/v1/outlets/{outletId}/actions"]["post"]
+        self.assertEqual("read", collection["x-required-scope"])
+        self.assertEqual("filter-collection", collection["x-outlet-allowlist-behavior"])
+        self.assertEqual("read", detail["x-required-scope"])
+        self.assertEqual("require-membership", detail["x-outlet-allowlist-behavior"])
+        self.assertEqual("control", action["x-required-scope"])
+        self.assertEqual("require-membership", action["x-outlet-allowlist-behavior"])
 
     def test_opaque_identifiers_are_domain_separated_and_have_fixed_vectors(self) -> None:
         schemas = self.contract["components"]["schemas"]
@@ -107,6 +175,10 @@ class RestV1ContractTests(unittest.TestCase):
             "Outlet",
             "OutletCollection",
             "OutletActionRequest",
+            "TokenCreateRequest",
+            "TokenMetadata",
+            "TokenCreated",
+            "TokenCollection",
             "ApiError",
         ):
             with self.subTest(schema=name):
@@ -130,6 +202,9 @@ class RestV1ContractTests(unittest.TestCase):
                 "action_disabled",
                 "action_outcome_unknown",
                 "internal_error",
+                "last_administrator",
+                "token_limit_reached",
+                "token_store_unavailable",
             ],
             schemas["ErrorCode"]["enum"],
         )
@@ -140,6 +215,11 @@ class RestV1ContractTests(unittest.TestCase):
             ("/api/v1/outlets", "get"),
             ("/api/v1/outlets/{outletId}", "get"),
             ("/api/v1/outlets/{outletId}/actions", "post"),
+            ("/api/v1/tokens", "get"),
+            ("/api/v1/tokens", "post"),
+            ("/api/v1/tokens/{tokenId}", "delete"),
+            ("/api/v1/tokens/{tokenId}/disable", "post"),
+            ("/api/v1/tokens/{tokenId}/enable", "post"),
         ):
             with self.subTest(path=path):
                 self.assertEqual(

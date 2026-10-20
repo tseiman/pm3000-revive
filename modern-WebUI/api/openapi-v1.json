@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.0.0-stage2",
-    "description": "Strict Stage 2 contract. Inventory and status reads use fixed Avtrans templates. Outlet actions are shape-validated but never dispatched in this stage."
+    "version": "1.0.0-stage3",
+    "description": "Strict Stage 3 contract. Read-only inventory/status remain fixed-template operations; bearer-token administration is added with closed admin-only routes. Outlet actions remain shape-validated and are never dispatched."
   },
   "servers": [
     {
@@ -80,7 +80,9 @@
           "503": {
             "$ref": "#/components/responses/BackendUnavailable"
           }
-        }
+        },
+        "x-required-scope": "read",
+        "x-outlet-allowlist-behavior": "filter-collection"
       }
     },
     "/api/v1/outlets/{outletId}": {
@@ -117,7 +119,9 @@
           "503": {
             "$ref": "#/components/responses/BackendUnavailable"
           }
-        }
+        },
+        "x-required-scope": "read",
+        "x-outlet-allowlist-behavior": "require-membership"
       }
     },
     "/api/v1/outlets/{outletId}/actions": {
@@ -189,6 +193,239 @@
                 "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
               }
             }
+          }
+        },
+        "x-required-scope": "control",
+        "x-outlet-allowlist-behavior": "require-membership"
+      }
+    },
+    "/api/v1/tokens": {
+      "get": {
+        "operationId": "listTokens",
+        "summary": "List non-secret token metadata",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "admin",
+        "x-stage3-behavior": "token-store-only-no-backend-request",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/TokenCollection"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "$ref": "#/components/responses/TokenStoreUnavailable"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createToken",
+        "summary": "Create a bearer token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "admin",
+        "x-stage3-behavior": "token-store-only-no-backend-request",
+        "x-max-body-bytes": 2048,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/TokenCreated"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "409": {
+            "$ref": "#/components/responses/TokenLimitReached"
+          },
+          "503": {
+            "$ref": "#/components/responses/TokenStoreUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{tokenId}/disable": {
+      "parameters": [
+        {
+          "name": "tokenId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TokenRecordId"
+          },
+          "description": "Opaque token record identifier; never bearer-token plaintext."
+        }
+      ],
+      "post": {
+        "operationId": "disableToken",
+        "summary": "Disable a token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "admin",
+        "x-stage3-behavior": "token-store-only-no-backend-request",
+        "responses": {
+          "204": {
+            "description": "Token disabled.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LastAdministrator"
+          },
+          "503": {
+            "$ref": "#/components/responses/TokenStoreUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{tokenId}/enable": {
+      "parameters": [
+        {
+          "name": "tokenId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TokenRecordId"
+          },
+          "description": "Opaque token record identifier; never bearer-token plaintext."
+        }
+      ],
+      "post": {
+        "operationId": "enableToken",
+        "summary": "Enable a token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "admin",
+        "x-stage3-behavior": "token-store-only-no-backend-request",
+        "responses": {
+          "204": {
+            "description": "Token enabled.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LastAdministrator"
+          },
+          "503": {
+            "$ref": "#/components/responses/TokenStoreUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{tokenId}": {
+      "parameters": [
+        {
+          "name": "tokenId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TokenRecordId"
+          },
+          "description": "Opaque token record identifier; never bearer-token plaintext."
+        }
+      ],
+      "delete": {
+        "operationId": "revokeToken",
+        "summary": "Permanently revoke a token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "admin",
+        "x-stage3-behavior": "token-store-only-no-backend-request",
+        "responses": {
+          "204": {
+            "description": "Token digest and metadata removed.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LastAdministrator"
+          },
+          "503": {
+            "$ref": "#/components/responses/TokenStoreUnavailable"
           }
         }
       }
@@ -368,7 +605,10 @@
           "backend_protocol_error",
           "action_disabled",
           "action_outcome_unknown",
-          "internal_error"
+          "internal_error",
+          "last_administrator",
+          "token_limit_reached",
+          "token_store_unavailable"
         ]
       },
       "ApiError": {
@@ -395,6 +635,179 @@
         "maxLength": 22,
         "pattern": "^[A-Za-z0-9_-]{22}$",
         "description": "Domain-separated opaque identifier derived from the validated backend PDU row identity; collisions fail closed."
+      },
+      "TokenRecordId": {
+        "type": "string",
+        "pattern": "^tok_[A-Za-z0-9_-]{22}$",
+        "minLength": 26,
+        "maxLength": 26,
+        "description": "Opaque identifier for a token record; not a bearer credential."
+      },
+      "TokenScope": {
+        "type": "string",
+        "enum": [
+          "read",
+          "control",
+          "admin"
+        ]
+      },
+      "TokenCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 3,
+        "required": [
+          "label",
+          "scope"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]{1,64}$",
+            "x-max-utf8-bytes": 128
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TokenScope"
+          },
+          "outlets": {
+            "type": "array",
+            "maxItems": 256,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/OutletId"
+            }
+          }
+        },
+        "description": "Omit outlets for unrestricted outlet access. An empty array grants access to no outlets."
+      },
+      "TokenMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "createdAt",
+          "enabled",
+          "scope",
+          "outlets"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/TokenRecordId"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]{1,64}$",
+            "x-max-utf8-bytes": 128
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TokenScope"
+          },
+          "outlets": {
+            "oneOf": [
+              {
+                "type": "array",
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/components/schemas/OutletId"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null means unrestricted; an empty array denies all outlets."
+          }
+        }
+      },
+      "TokenCreated": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "createdAt",
+          "enabled",
+          "scope",
+          "outlets",
+          "token"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/TokenRecordId"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]{1,64}$",
+            "x-max-utf8-bytes": 128
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/TokenScope"
+          },
+          "outlets": {
+            "oneOf": [
+              {
+                "type": "array",
+                "maxItems": 256,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/components/schemas/OutletId"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "null means unrestricted; an empty array denies all outlets."
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^pm3_[A-Za-z0-9_-]{43}$",
+            "minLength": 47,
+            "maxLength": 47,
+            "description": "Returned exactly once. Never persisted in plaintext and never returned by list operations.",
+            "readOnly": true
+          }
+        }
+      },
+      "TokenCollection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "$ref": "#/components/schemas/TokenMetadata"
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -593,6 +1006,108 @@
           },
           "X-Content-Type-Options": {
             "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "TokenCollection": {
+        "description": "Non-secret token metadata; plaintext tokens and digests are omitted.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TokenCollection"
+            }
+          }
+        }
+      },
+      "TokenCreated": {
+        "description": "Token created; plaintext bearer credential is returned exactly once.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/TokenCreated"
+            }
+          }
+        }
+      },
+      "LastAdministrator": {
+        "description": "The operation would remove the final enabled administrator.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "last_administrator",
+              "message": "The final enabled administrator cannot be disabled or revoked."
+            }
+          }
+        }
+      },
+      "TokenLimitReached": {
+        "description": "The fixed token-record limit was reached.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "token_limit_reached",
+              "message": "No additional tokens can be created."
+            }
+          }
+        }
+      },
+      "TokenStoreUnavailable": {
+        "description": "The token store could not be loaded or committed safely.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            },
+            "example": {
+              "code": "token_store_unavailable",
+              "message": "Token administration is unavailable."
+            }
           }
         }
       }

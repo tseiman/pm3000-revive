@@ -4,7 +4,7 @@ This directory contains the clean-room design and future implementation of a com
 
 ## Current status
 
-**Stages 0 through 2 are complete.** The repository contains reviewed protocol evidence and a strict REST v1 contract, but no replacement UI, REST adapter, or device installer yet.
+**Stages 0 through 3 are complete.** The repository contains reviewed protocol evidence, a strict REST v1 contract, and a fault-tested host-side bearer-token store/administration tool. No replacement UI, native REST adapter, or device installer exists yet.
 
 Confirmed architecture:
 
@@ -13,7 +13,7 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The design keeps Apache and the vendor backend. The active REST scope is deliberately narrow: read-only outlet inventory/status. The `on`, `off`, and `cycle` request shape is reserved, but Stage 2 always rejects it without sending a backend request. Exact action templates remain deferred until separately approved hardware evidence exists.
+The design keeps Apache and the vendor backend. The active device-facing REST scope remains deliberately narrow: read-only outlet inventory/status. Stage 3 adds closed `admin`-only token-management routes and a host-side token-store implementation; those operations are local to the token store and never reach Avtrans. The `on`, `off`, and `cycle` request shape is reserved, but it remains rejected without sending a backend request. Exact action templates remain deferred until separately approved hardware evidence exists.
 
 ## Documents
 
@@ -21,6 +21,7 @@ The design keeps Apache and the vendor backend. The active REST scope is deliber
 - [Implementation stages](STAGES.md)
 - [Protocol boundary](docs/PROTOCOL.md)
 - [REST API v1 contract](docs/REST-V1.md)
+- [Bearer-token store and host administration](docs/TOKEN-STORE.md)
 - [Machine-readable OpenAPI v1 contract](api/openapi-v1.json)
 - [Manual Avtrans capture procedure](docs/CAPTURE.md)
 - [Reported device storage baseline](docs/DEVICE-STORAGE.md)

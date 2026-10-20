@@ -29,10 +29,12 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 3 — Multiple bearer tokens
 
+**Status:** complete for the persistent model, host administration tool, and REST contract. The Stage 4 native adapter must port the validated store reader/writer and authorization semantics; the visual administration submenu remains a Stage 5 deliverable.
+
 - Store only SHA-256 token digests.
-- Support labels, `read`, `control`, and `admin` scopes, optional outlet allowlists, disable, and revoke.
-- Create the first admin token via a host-side bootstrap command; manage subsequent tokens through the new Web UI submenu.
-- **Gate:** atomic fault-tested persistence retains the previous valid token set after any failure.
+- Support labels, `read`, `control`, and `admin` scopes, optional outlet allowlists, disable, enable, and revoke.
+- Create the first admin token via a host-side bootstrap command; expose only closed `admin`-only management operations for the later Web UI submenu.
+- **Gate:** atomic fault-tested persistence retains the previous valid token set after every pre-commit failure and reports post-rename durability uncertainty distinctly.
 
 ## Stage 4 — Read-only native adapter
 
