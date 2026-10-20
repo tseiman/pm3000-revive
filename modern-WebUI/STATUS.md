@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stages 4, 5, and 6 are implemented, locally verified, independently reviewed with PASS, and published. Stage 7 has a read-only stdout preflight script, but no device preflight or pilot has been run. Nothing has been installed on a PM3000.
+Stages 4, 5, and 6 are implemented, locally verified, independently reviewed with PASS, and published. The operator-provided Stage 7 preflight confirmed the initial managed paths are absent and identified OpenSSL as the device SHA-256 provider. A Mac-side first-install backup recorder is ready; no upload or installation has run. Nothing has been installed on a PM3000.
 
 ## Completed through Stage 3
 
@@ -50,7 +50,7 @@ Stages 4, 5, and 6 are implemented, locally verified, independently reviewed wit
 
 ## Verified gates
 
-- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 126 tests, including the Stage 7 read-only preflight contract.
+- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 128 tests, including the Stage 7 read-only preflight and Mac backup contracts.
 - Two clean native target builds are byte-identical.
 - Target binary: stripped static ELF32, big-endian PowerPC, no dynamic interpreter.
 - Build uses `-mcpu=e300c3 -msoft-float`; disassembly contains no PPC floating-point instruction matches.

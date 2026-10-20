@@ -14,6 +14,8 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
   publication helpers for the later manually approved device pilot.
 - `device-preflight.sh` — read-only Stage 7 inventory; writes its report only to
   standard output and never installs, reloads, restarts, or creates a device file.
+- `stage7-first-backup.sh` — Mac/Linux host command that uses fixed read-only SSH
+  probes and durably records an initial absent-state backup locally before SCP.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -191,6 +193,23 @@ Do not redirect its output on the appliance. The report begins with
 `pm3000_preflight.complete=yes`. It deliberately reports Authorization forwarding,
 CGI `PATH_INFO`, static-helper execution, directory `fsync`, and SCP transport as
 not tested because those checks require a later approved pilot action or write.
+
+For the confirmed first-install state, run this on the Mac from the repository
+root. Replace the local backup directory if desired; the SSH alias may come from
+the Mac's existing OpenSSH configuration:
+
+```bash
+modern-WebUI/deploy/stage7-first-backup.sh \
+  --target root@pdu1 \
+  --backup-dir "$HOME/Library/Application Support/pm3000-revive/backups"
+```
+
+The remote SSH program only reads kernel, firmware hash, and the two managed
+paths. The script refuses to continue unless both managed paths are absent. It
+creates `REMOTE_INVENTORY.txt`, `BACKUP_ARCHIVE.tar`, `BACKUP_MANIFEST.json`, and
+`BACKUP_COMPLETE` privately on the Mac, flushes them to disk, and prints their
+directory and hashes to standard output. No SCP or remote write occurs in this
+step.
 
 No real appliance path, free-space value, owner/group IDs, BusyBox tar behavior,
 Apache `SetEnvIf`/Authorization forwarding, CGI `PATH_INFO`, HTTPS health
