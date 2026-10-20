@@ -38,12 +38,16 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 4 — Read-only native adapter
 
+**Status:** complete. The native adapter, token administration, disabled-action boundary, PPC target, failure semantics, and security/boundary matrix are locally verified and independently reviewed with PASS.
+
 - Implement a small PPC32 big-endian CGI adapter.
 - Reuse Avtrans/uicontrold and a dedicated least-privilege vendor account.
 - Start with inventory and status only.
 - **Gate:** static target verification and fake-controller tests; state-changing code remains disabled.
 
 ## Stage 5 — Read-only modern UI
+
+**Status:** complete. The REST-v1-only Web UI, token administration flows, in-memory secret lifecycle, responsive layout, fake adapter, and Firefox browser gates are locally verified and independently reviewed with PASS.
 
 - Add a responsive, dependency-free UI with familiar PM3000 functional groupings.
 - Add the **REST API tokens** administration submenu.

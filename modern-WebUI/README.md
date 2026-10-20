@@ -4,7 +4,7 @@ This directory contains the clean-room design and future implementation of a com
 
 ## Current status
 
-**Stages 0 through 3 are complete.** The repository contains reviewed protocol evidence, a strict REST v1 contract, and a fault-tested host-side bearer-token store/administration tool. No replacement UI, native REST adapter, or device installer exists yet.
+**Stages 4 and 5 are implemented, locally verified, and independently reviewed with PASS.** The repository contains reviewed protocol evidence, a strict REST v1 contract, host and native token-store administration, a static PPC32 big-endian adapter, and a responsive dependency-free Web UI. Nothing has been installed on a PM3000, and the legacy UI remains the required deployment fallback.
 
 Confirmed architecture:
 
@@ -13,7 +13,7 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The design keeps Apache and the vendor backend. The active device-facing REST scope remains deliberately narrow: read-only outlet inventory/status. Stage 3 adds closed `admin`-only token-management routes and a host-side token-store implementation; those operations are local to the token store and never reach Avtrans. The `on`, `off`, and `cycle` request shape is reserved, but it remains rejected without sending a backend request. Exact action templates remain deferred until separately approved hardware evidence exists.
+The design keeps Apache and the vendor backend. The native adapter exposes strict read-only outlet projections and local token administration. The Stage 5 browser uses only REST v1, stores its bearer token only in memory, and contains no outlet-action control. The `on`, `off`, and `cycle` request shape remains reserved and always returns `503 action_disabled` without an Avtrans request. Exact action templates remain deferred until separately approved hardware evidence exists.
 
 ## Documents
 
@@ -22,6 +22,8 @@ The design keeps Apache and the vendor backend. The active device-facing REST sc
 - [Protocol boundary](docs/PROTOCOL.md)
 - [REST API v1 contract](docs/REST-V1.md)
 - [Bearer-token store and host administration](docs/TOKEN-STORE.md)
+- [Native REST v1 adapter build, operation, and rollback](docs/NATIVE-ADAPTER.md)
+- [Stage 5 Web UI and local browser verification](web/README.md)
 - [Machine-readable OpenAPI v1 contract](api/openapi-v1.json)
 - [Manual Avtrans capture procedure](docs/CAPTURE.md)
 - [Reported device storage baseline](docs/DEVICE-STORAGE.md)
