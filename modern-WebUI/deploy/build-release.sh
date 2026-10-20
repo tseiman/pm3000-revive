@@ -18,7 +18,7 @@ compiler=$REPOSITORY/components/dropbear/output-buildroot/host/bin/powerpc-build
 
 [ -x "$compiler" ] || {
     echo "PPC toolchain missing: $compiler" >&2
-    echo "On Linux run components/dropbear/fetch-sources.sh and components/dropbear/build-toolchain.sh first, or use the pm3000-v* GitHub workflow." >&2
+    echo "On Linux run components/dropbear/fetch-sources.sh and components/dropbear/build-toolchain.sh first, or use the modern-webui-v* GitHub workflow." >&2
     exit 1
 }
 command -v python3 >/dev/null 2>&1 || { echo "python3 missing" >&2; exit 1; }

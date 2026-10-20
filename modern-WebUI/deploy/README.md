@@ -60,9 +60,9 @@ modern-WebUI/deploy/build-release.sh 2026-10-21.1
 
 This uses the shared toolchain under `components/dropbear/output-buildroot/host`.
 If it is absent, the script prints the commands needed to create it. macOS hosts
-should use the `Build modern PM3000 release` GitHub Actions workflow rather than
+should use the `Build modern WebUI release` GitHub Actions workflow rather than
 trying to run the Linux Buildroot toolchain locally. Tags named
-`pm3000-v<release-id>` publish `pm3000-release-<release-id>.tar` and its checksum;
+`modern-webui-v<release-id>` publish `pm3000-release-<release-id>.tar` and its checksum;
 Dropbear remains independently versioned under `dropbear-v*`.
 
 The lower-level package-only command is:

@@ -1,10 +1,10 @@
-name: Build modern PM3000 release
+name: Build modern WebUI release
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing pm3000-v* tag to rebuild and populate; leave empty for a test build"
+        description: "Existing modern-webui-v* tag to rebuild and populate; leave empty for a test build"
         required: false
         type: string
       release_id:
@@ -13,7 +13,7 @@ on:
         type: string
   push:
     tags:
-      - "pm3000-v*"
+      - "modern-webui-v*"
 
 permissions:
   contents: read
@@ -60,7 +60,7 @@ jobs:
         run: |
           if [ -n "$RELEASE_TAG" ]; then
             case "$RELEASE_TAG" in
-              pm3000-v*) release_id=${RELEASE_TAG#pm3000-v} ;;
+              modern-webui-v*) release_id=${RELEASE_TAG#modern-webui-v} ;;
               *) echo "Refusing unexpected release tag: $RELEASE_TAG" >&2; exit 1 ;;
             esac
           else
@@ -84,7 +84,7 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/pm3000-v') || inputs.release_tag != ''
+    if: startsWith(github.ref, 'refs/tags/modern-webui-v') || inputs.release_tag != ''
     needs: build-test-package
     runs-on: ubuntu-24.04
     permissions:
@@ -102,7 +102,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           case "$RELEASE_TAG" in
-            pm3000-v*) ;;
+            modern-webui-v*) ;;
             *) echo "Refusing unexpected release tag: $RELEASE_TAG" >&2; exit 1 ;;
           esac
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

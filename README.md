@@ -54,7 +54,7 @@ modern-WebUI/deploy/build-release.sh 2026-10-21.1
 ```
 
 Outputs are written to `modern-WebUI/dist/`. A `dropbear-v*` tag builds only the
-Dropbear component; a `pm3000-v*` tag builds, QEMU-checks, and publishes the
+Dropbear component; a `modern-webui-v*` tag builds, QEMU-checks, and publishes the
 corresponding `pm3000-release-*.tar`. Both workflows reuse the same cached PPC
 cross-toolchain but do not couple their component versions.
 
