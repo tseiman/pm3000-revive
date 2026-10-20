@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stages 4 and 5 are implemented, locally verified, and independently reviewed with PASS. Stage 6 is implemented and locally verified as an isolated backup-first deployment simulation; its final independent re-review is the release gate. Nothing has been installed on a PM3000.
+Stages 4, 5, and 6 are implemented, locally verified, independently reviewed with PASS, and published. Stage 7 has a read-only stdout preflight script, but no device preflight or pilot has been run. Nothing has been installed on a PM3000.
 
 ## Completed through Stage 3
 
@@ -50,7 +50,7 @@ Stages 4 and 5 are implemented, locally verified, and independently reviewed wit
 
 ## Verified gates
 
-- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded Stage 6 repository suite passes all 123 tests.
+- The historical Stage 4/5 gate passed all 93 sanitizer, fixture, REST-contract, token-store, native-adapter, and UI-asset tests. The expanded repository suite passes all 126 tests, including the Stage 7 read-only preflight contract.
 - Two clean native target builds are byte-identical.
 - Target binary: stripped static ELF32, big-endian PowerPC, no dynamic interpreter.
 - Build uses `-mcpu=e300c3 -msoft-float`; disassembly contains no PPC floating-point instruction matches.

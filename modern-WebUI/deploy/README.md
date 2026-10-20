@@ -12,6 +12,8 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
   accept only a synthetic root in Stage 6; they are not generic SSH command proxies.
 - `device-install.sh`, `device-rollback.sh` — minimal POSIX `sh` privileged
   publication helpers for the later manually approved device pilot.
+- `device-preflight.sh` — read-only Stage 7 inventory; writes its report only to
+  standard output and never installs, reloads, restarts, or creates a device file.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -176,6 +178,19 @@ hashes. `ROLLBACK_COMPLETE` is structured and integrity-bound; an idempotent
 retry re-verifies the fully restored state instead of trusting marker presence.
 
 ## Stage 7 limitations
+
+Run the preflight from an existing device shell while iTerm terminal logging is
+enabled:
+
+```sh
+sh device-preflight.sh
+```
+
+Do not redirect its output on the appliance. The report begins with
+`pm3000_preflight.format=1` and is complete only when its final line is
+`pm3000_preflight.complete=yes`. It deliberately reports Authorization forwarding,
+CGI `PATH_INFO`, static-helper execution, directory `fsync`, and SCP transport as
+not tested because those checks require a later approved pilot action or write.
 
 No real appliance path, free-space value, owner/group IDs, BusyBox tar behavior,
 Apache `SetEnvIf`/Authorization forwarding, CGI `PATH_INFO`, HTTPS health

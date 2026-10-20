@@ -56,7 +56,7 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 6 — Backup-first deployment and rollback
 
-**Offline implementation status:** complete pending final independent re-review. The host entry points remain
+**Status:** complete, independently reviewed, committed, and published. The host entry points remain
 simulation-only and fail closed for remote targets. Live SSH/SCP and appliance
 installation remain blocked on the Stage 7 observations below.
 
@@ -68,6 +68,9 @@ installation remain blocked on the Stage 7 observations below.
 - **Gate:** isolated failure-injection simulation proves no install write before backup, exact release-tree validation, recovery from real process exits at publication boundaries, and byte-identical rollback.
 
 ## Stage 7 — Manual read-only device pilot
+
+**Status:** read-only stdout preflight script prepared; no device connection or
+pilot action has been performed.
 
 - User runs preflight, backup, `/modern/` pilot installation, status checks, and one rollback.
 - Preserve the legacy UI at `/`.
