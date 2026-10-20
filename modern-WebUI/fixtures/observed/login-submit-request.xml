@@ -1,0 +1,21 @@
+<avtrans>
+  <sid />
+  <action>login</action>
+  <agents>
+    <src>wmi</src>
+    <dest>controller</dest>
+  </agents>
+  <paths>
+    <path>units.topology</path>
+  </paths>
+  <payload>
+    <section structure="login">
+      <parameter id="username" structure="RWtext">
+        <value>[REDACTED-USERNAME]</value>
+      </parameter>
+      <parameter id="password" structure="password">
+        <value>[REDACTED]</value>
+      </parameter>
+    </section>
+  </payload>
+</avtrans>

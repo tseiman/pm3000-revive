@@ -1,0 +1,94 @@
+<avtrans>
+  <identity version="7" />
+  <sid dirty="[REDACTED-SID]">[REDACTED-SID]</sid>
+  <alarm>0</alarm>
+  <action>navigation</action>
+  <agents>
+    <src>controller</src>
+    <dest>wmi</dest>
+  </agents>
+  <paths>
+    <path>units</path>
+    <pathvar />
+  </paths>
+  <payload options="cache" structure="navigation">
+    <section id="units" structure="nav" path="units" label="Expert">
+      <section id="topology" structure="nav" path="units.topology" label="Access" />
+      <section id="overview" structure="nav" accessPath="management.system.reboot,management.firmware,management.appliance.saveconf-local,management.appliance.restoreconf-local" accessRights="r" path="units.overview" label="System Tools" />
+      <section id="powermanagement" structure="nav" path="units.powermanagement" label="Power Management">
+        <section id="pdu_management" structure="nav" accessPath="management.power" accessRights="r" path="units.powermanagement.pdu_management" label="PDUs" />
+        <section id="powerprofile_login" structure="nav" accessPath="configuration.power.global" accessRights="w" path="units.powermanagement.powerprofile_login" label="Settings" />
+        <section id="outlet_groups" structure="nav" accessPath="management.power" accessRights="r" path="units.powermanagement.outlet_groups" label="Outlet Groups" />
+        <section id="data_logging" structure="nav" accessPath="management.power-data-logging" accessRights="x" path="units.powermanagement.data_logging" label="Data Logging" />
+      </section>
+      <section id="applianceSettings" structure="nav" accessPath="configuration.bootconf,management.bdinfo, management.firmware.version, management.system" accessRights="r" path="units.applianceSettings" label="System">
+        <section id="security" structure="nav" accessPath="configuration.security.profile" accessRights="w" path="units.applianceSettings.security" label="Security">
+          <section id="SecurityProfileNav" structure="nav" path="units.applianceSettings.security.SecurityProfileNav" label="Security Profile" />
+          <section id="SecurityDSView" structure="nav" path="units.applianceSettings.security.SecurityDSView" label="DSView" />
+        </section>
+        <section id="date_and_time" structure="nav" accessPath="management.date" accessRights="w" path="units.applianceSettings.date_and_time" label="Date and Time">
+          <section id="date_time" structure="nav" path="units.applianceSettings.date_and_time.date_time" label="Date and Time" />
+          <section id="time_zone" structure="nav" path="units.applianceSettings.date_and_time.time_zone" label="Time Zone" />
+        </section>
+        <section id="help" structure="nav" accessPath="configuration.appliance.language" accessRights="w" path="units.applianceSettings.help" label="Help and Language" />
+        <section id="bootconfiguration" structure="nav" accessPath="configuration.bootconf.bootcmd" accessRights="w" path="units.applianceSettings.bootconfiguration" label="Boot Configuration" />
+        <section id="information" structure="nav" accessPath="management.bdinfo, management.firmware.version, management.system" accessRights="r" path="units.applianceSettings.information" label="Information" />
+        <section id="usage" structure="nav" accessPath="management.system" accessRights="r" path="units.applianceSettings.usage" label="Usage">
+          <section id="memory" structure="nav" accessPath="management.system" accessRights="r" path="units.applianceSettings.usage.memory" label="Memory" />
+          <section id="flashUsage" structure="nav" accessPath="management.system" accessRights="r" path="units.applianceSettings.usage.flashUsage" label="Flash Usage" />
+        </section>
+      </section>
+      <section id="network" structure="nav" accessPath="configuration.network" accessRights="w" path="units.network" label="Network">
+        <section id="networkSettings" structure="nav" path="units.network.networkSettings" label="Settings" />
+        <section id="devices" structure="nav" path="units.network.devices" label="Devices" />
+        <section id="ipv4_st_routes" structure="nav" path="units.network.ipv4_st_routes" label="IPv4 Static Routes" />
+        <section id="ipv6_st_routes" structure="nav" path="units.network.ipv6_st_routes" label="IPv6 Static Routes" />
+        <section id="hosts" structure="nav" path="units.network.hosts" label="Hosts" />
+        <section id="firewall" structure="nav" path="units.network.firewall" label="Firewall">
+          <section id="filter4Table" structure="nav" path="units.network.firewall.filter4Table" label="IPv4 Filter Table" />
+          <section id="filter6Table" structure="nav" path="units.network.firewall.filter6Table" label="IPv6 Filter Table" />
+        </section>
+        <section id="SNMP" structure="nav" path="units.network.SNMP" label="SNMP" />
+      </section>
+      <section id="authentication" structure="nav" accessPath="configuration.auth.type" accessRights="w" path="units.authentication" label="Authentication">
+        <section id="unit_authentication" structure="nav" path="units.authentication.unit_authentication" label="Appliance Authentication" />
+        <section id="authenticationservers" structure="nav" path="units.authentication.authenticationservers" label="Authentication Servers">
+          <section id="radius" structure="nav" path="units.authentication.authenticationservers.radius" label="RADIUS" />
+          <section id="Tacacsplus" structure="nav" path="units.authentication.authenticationservers.Tacacsplus" label="TACACS+" />
+          <section id="ldap_ad" structure="nav" path="units.authentication.authenticationservers.ldap_ad" label="LDAP(S)|AD" />
+          <section id="kerberos" structure="nav" path="units.authentication.authenticationservers.kerberos" label="Kerberos" />
+          <section id="nis" structure="nav" path="units.authentication.authenticationservers.nis" label="NIS" />
+          <section id="dsviewsrv" structure="nav" path="units.authentication.authenticationservers.dsviewsrv" label="DSView" />
+        </section>
+      </section>
+      <section id="users" structure="nav" accessPath="configuration.authorization, configuration.user, configuration.userdefaults" accessRights="r" path="units.users" label="Users">
+        <section id="local_accounts" structure="nav" accessPath="configuration.user, configuration.userdefaults" accessRights="r" path="units.users.local_accounts" label="Local Accounts">
+          <section id="user_names" structure="nav" accessPath="configuration.user" accessRights="r" rightsRule="avctUnitAdministerLocalAccts" path="units.users.local_accounts.user_names" label="User Names" />
+          <section id="password_rules" structure="nav" path="units.users.local_accounts.password_rules" label="Password Rules" />
+        </section>
+        <section id="authorization" structure="nav" accessPath="configuration.authorization" accessRights="r" options="childOrder:local_accounts" path="units.users.authorization" label="Authorization">
+          <section id="authorgroups" structure="nav" path="units.users.authorization.authorgroups" label="Groups" />
+        </section>
+      </section>
+      <section id="event_notification" structure="nav" accessPath="configuration.event-notify" accessRights="w" path="units.event_notification" label="Events and Logs">
+        <section id="events" structure="nav" path="units.event_notification.events" label="Event List" />
+        <section id="settings" structure="nav" path="units.event_notification.settings" label="Event Destinations" />
+        <section id="global_settings_databuffering" structure="nav" path="units.event_notification.global_settings_databuffering" label="Data Buffering" />
+        <section id="sessions" structure="nav" path="units.event_notification.sessions" label="Appliance Logging" />
+      </section>
+      <section id="activeSessions" structure="nav" accessPath="management.session" accessRights="r" path="units.activeSessions" label="Active Sessions" />
+      <section id="monitoring" structure="nav" accessPath="management.network, management.port.serial.*.status" accessRights="r" path="units.monitoring" label="Monitoring">
+        <section id="networkmon" structure="nav" accessPath="management.network" accessRights="r" path="units.monitoring.networkmon" label="Network">
+          <section id="monitoringDevice" structure="nav" path="units.monitoring.networkmon.monitoringDevice" label="Devices" />
+          <section id="monitoringIpv4RouteTable" structure="nav" path="units.monitoring.networkmon.monitoringIpv4RouteTable" label="IPv4 Routing Table" />
+          <section id="monitoringIpv6RouteTable" structure="nav" path="units.monitoring.networkmon.monitoringIpv6RouteTable" label="IPv6 Routing Table" />
+        </section>
+        <section id="serialstatistics" structure="nav" accessPath="management.port.serial.*.status" accessRights="r" path="units.monitoring.serialstatistics" label="Serial Ports" />
+      </section>
+      <section id="change_password" structure="nav" path="units.change_password" label="Change Password" />
+    </section>
+    <section id="wizard" structure="nav" accessPath="configuration.bootconf" accessRights="r" path="wizard" label="Wizard">
+      <section id="wizardsection" structure="nav" path="wizard.wizardsection" label="Wizard" />
+    </section>
+  </payload>
+</avtrans>

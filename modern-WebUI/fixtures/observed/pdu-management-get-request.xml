@@ -1,0 +1,11 @@
+<avtrans>
+  <sid>[REDACTED-SID]</sid>
+  <action>get</action>
+  <agents>
+    <src>wmi</src>
+    <dest>controller</dest>
+  </agents>
+  <paths>
+    <path>units.powermanagement.pdu_management</path>
+  </paths>
+</avtrans>

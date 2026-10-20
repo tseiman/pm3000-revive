@@ -21,6 +21,20 @@ The legacy client sends XML to `POST /appliance/avtrans` using the historical co
 
 The payload is omitted for actions that do not require form/table data. Login uses a `section` with structure `login` and username/password parameters. Real credentials and session identifiers are never fixtures.
 
+## Observed firmware 2.0.1.23 flow
+
+The reviewed fixtures in [`../fixtures/observed/`](../fixtures/observed/) confirm this read-only browser sequence:
+
+1. `action=get`, `path=login` returns `action=login`, identity version `7`, and a login control whose post-login path is `units.topology`.
+2. Login submits `action=login`, `path=units.topology`, and a `section structure="login"` containing `username` and `password` parameters.
+3. Successful authentication returns `action=header`, `path=units`, and the Avtrans SID. The fixture redacts the SID and operator/appliance labels.
+4. `action=navigation`, `path=units` returns the backend-described navigation and authorization metadata.
+5. `action=get`, `path=units.topology` returns `action=content` with table `topologyTable`. It contains the appliance/PDU/outlet hierarchy, current status fields, and passive control descriptors.
+6. `action=get`, `path=units.powermanagement.pdu_management` returns table `pdu_devices_table` with model, position, status, current, power, alarm, and threshold fields.
+7. `action=logout`, `path=login` invalidates the browser session and returns the unauthenticated login model.
+
+Only the read requests and logout were transmitted. Control descriptors such as `targPowerOn`, `targPowerOff`, `targCycle`, `on`, `off`, `cycle`, `rebootPDU`, `resetHW`, `factorydef`, and `upgradeFirmware` were observed in responses but never invoked. Their state-changing request payloads remain unknown.
+
 ## Confirmed server flow
 
 1. Apache maps `/appliance/avtrans` to `mod_avtrans.so`.
@@ -56,14 +70,11 @@ Concrete browser paths, action IDs, controls, dependencies, and confirmation met
 - `cycle` is never retried automatically.
 - Session IDs, credentials, raw Authorization values, and full XML documents are not logged.
 
-## Evidence required
+## Remaining evidence
 
-Sanitized fixtures are still required for:
+Observed sanitized fixtures now cover successful login/header, root navigation, topology, PDU/outlet inventory, read-only status, and logout. Evidence is still required for:
 
-- login success/failure and session expiry;
-- topology/navigation;
-- PDU/outlet inventory;
-- outlet status;
+- login failure and session expiry;
 - authorization denial;
 - exact individual `on`, `off`, and `cycle` request/response shapes;
 - malformed and timeout behavior.
@@ -74,13 +85,15 @@ The framing between `mod_avtrans` and `/dev/avtrans_socket` must be proven befor
 
 [`../fixtures/synthetic/`](../fixtures/synthetic/) contains only clean-room schema examples. Its manifest marks every XML file as `synthetic`; these files do not establish concrete device paths, action IDs, controls, row IDs, or complete responses.
 
+[`../fixtures/observed/`](../fixtures/observed/) contains the manually reviewed `observed-sanitized` read-only evidence from firmware 2.0.1.23. Its manifest records the collection boundary. Response control definitions are evidence of available metadata, not evidence that any state-changing request was transmitted.
+
 [`CAPTURE.md`](CAPTURE.md) defines the short operator-run procedure for obtaining request and response bodies without replaying requests. Raw captures remain outside Git. Only manually reviewed sanitizer output can be promoted to observed protocol evidence.
 
 The sanitizer at `../tools/sanitize_avtrans.py`:
 
 - requires an `<avtrans>` root;
 - rejects DTD/entity declarations through the XML parser regardless of source encoding, input over 1 MiB, and XML deeper than 32 levels;
-- redacts SID, login, credential, token, certificate, common network fields, RFC1918 addresses, and private hostname suffixes across namespaced elements, attributes, and mixed content;
+- redacts SID, login, credential, token, certificate, common network fields, operator-assigned `name`/`serialnumber` parameters, RFC1918 addresses, and private hostname suffixes across namespaced elements, attributes, and mixed content;
 - supports explicit literal replacement for device labels or serials;
 - opens raw input with no-follow and nonblocking semantics, then accepts only a regular file;
 - writes a separate output atomically with mode `0600`.

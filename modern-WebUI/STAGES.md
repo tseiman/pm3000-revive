@@ -10,7 +10,7 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 1 — Sanitized protocol evidence
 
-**Status:** sanitizer, tests, synthetic fixtures, and capture guide complete; operator-run sanitized captures pending.
+**Status:** complete for the read-only contract. Reviewed `observed-sanitized` firmware 2.0.1.23 fixtures cover login/header, navigation, topology, PDU/outlet inventory, status, and logout. State-changing captures remain deferred to Stage 8 and require explicit hardware approval.
 
 - Build a local Avtrans sanitizer.
 - Add synthetic fixtures for login, navigation, inventory, status, errors, and authorization denial.

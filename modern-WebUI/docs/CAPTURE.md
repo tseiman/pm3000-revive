@@ -40,10 +40,11 @@ The sanitizer automatically replaces:
 - Avtrans session IDs;
 - login usernames and passwords;
 - credential-, token-, certificate-, and common network-configuration fields;
+- operator-assigned values in `name` and `serialnumber` parameters;
 - RFC1918 IPv4 addresses;
 - hostnames ending in `.local`, `.lan`, `.internal`, `.home`, or `.mdn`.
 
-For an additional device label or serial number, add one or more literal replacements:
+For any additional site-specific label outside those structures, add one or more literal replacements:
 
 ```bash
 python3 modern-WebUI/tools/sanitize_avtrans.py \

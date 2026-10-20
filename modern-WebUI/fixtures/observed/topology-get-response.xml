@@ -1,0 +1,425 @@
+<avtrans>
+  <identity version="7" />
+  <sid dirty="[REDACTED-SID]">[REDACTED-SID]</sid>
+  <alarm>0</alarm>
+  <action>content</action>
+  <agents>
+    <src>controller</src>
+    <dest>wmi</dest>
+  </agents>
+  <paths>
+    <path>units.topology</path>
+    <pathvar />
+  </paths>
+  <payload structure="content" label="Access">
+    <section id="topologyTable" structure="table" options="blockRefresh;skipInDump;rowName:name;showColumn:name,port,type,status;sortable:false">
+      <controls>
+        <control id="targPowerOn" structure="button" options="static;complValidate" minSelected="1" rightsRule="avctUnitControlTdPower" accessPath="management.power" accessRights="r" path="units.topology" label="On">
+          <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+        </control>
+        <control id="targPowerOff" structure="button" options="static;complValidate" minSelected="1" rightsRule="avctUnitControlTdPower" accessPath="management.power" accessRights="r" path="units.topology" label="Off">
+          <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+        </control>
+        <control id="targCycle" structure="button" options="static;complValidate" minSelected="1" rightsRule="avctUnitControlTdPower" accessPath="management.power" accessRights="r" path="units.topology" label="Cycle">
+          <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+        </control>
+        <control id="targLock" structure="button" visible="$lock_able" options="static;complValidate" minSelected="1" rightsRule="avctUnitControlTdPower" accessPath="management.power" accessRights="r" path="units.topology" label="Lock" />
+        <control id="targUnLock" structure="button" visible="$lock_able" options="static;complValidate" minSelected="1" rightsRule="avctUnitControlTdPower" accessPath="management.power" accessRights="r" path="units.topology" label="Unlock" />
+      </controls>
+      <array id="nosel|[REDACTED]">
+        <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+          <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+        </parameter>
+        <parameter id="port" structure="ROtext" label="Port">
+          <value label="" />
+        </parameter>
+        <parameter id="type" structure="ROtext" label="Type">
+          <value label="" />
+        </parameter>
+        <parameter id="status" structure="ROtext" label="Status">
+          <value label="" />
+        </parameter>
+        <parameter id="action" structure="ROtext" label="Action">
+          <controls>
+            <control id="applianceSession" options="notTextClient,static" structure="newwindow" path="units.topology.serialViewer" label="Appliance Viewer" />
+          </controls>
+          <value label="" />
+        </parameter>
+        <array id="pdu.[REDACTED]">
+          <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" path="[REDACTED-NAME]" label="[REDACTED-NAME]">
+            <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+          </parameter>
+          <parameter id="port" structure="ROtext" label="Port">
+            <value label="1/1">1/1</value>
+          </parameter>
+          <parameter id="type" structure="ROtext" label="Type">
+            <value label="PM3000/10/16A">PM3000/10/16A</value>
+          </parameter>
+          <parameter id="status" structure="ROtext" label="Status">
+            <value label="1/10">1/10</value>
+          </parameter>
+          <parameter id="action" structure="ROtext" label="Action">
+            <controls>
+              <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                <script id="confirmation" label="Are you sure you want to turn on all outlets of the selected PDU(s)?" />
+              </control>
+              <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                <script id="confirmation" label="Are you sure you want to turn off all outlets of the selected PDU(s)?" />
+              </control>
+              <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                <script id="confirmation" label="For the selected PDU(s), all outlets will be switched ON after this operation.\nAre you sure you want to proceed?" />
+              </control>
+              <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                <script id="confirmation" label="" />
+              </control>
+              <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                <script id="confirmation" label="" />
+              </control>
+            </controls>
+            <value label="" />
+          </parameter>
+          <array id="pdu.[REDACTED].1">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="1">1</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="ON">ON</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].2">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="2">2</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].3">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="3">3</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].4">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="4">4</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].5">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="5">5</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].6">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="6">6</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].7">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="7">7</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].8">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="8">8</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].9">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="9">9</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+          <array id="pdu.[REDACTED].10">
+            <parameter id="name" icon="[REDACTED-NAME]" structure="ROtext" label="[REDACTED-NAME]">
+              <value label="[REDACTED-NAME]">[REDACTED-NAME]</value>
+            </parameter>
+            <parameter id="port" structure="ROtext" label="Port">
+              <value label="10">10</value>
+            </parameter>
+            <parameter id="type" structure="ROtext" label="Type">
+              <value label="Outlet">outlet</value>
+            </parameter>
+            <parameter id="status" structure="ROtext" label="Status">
+              <value label="OFF">OFF</value>
+            </parameter>
+            <parameter id="action" structure="ROtext" label="Action">
+              <controls>
+                <control id="targPowerOn" structure="button" options="static" path="units.topology" label="Power On">
+                  <script id="confirmation" label="Are you sure you want to turn on the outlet(s)?" />
+                </control>
+                <control id="targPowerOff" structure="button" options="static" path="units.topology" label="Power Off">
+                  <script id="confirmation" label="Are you sure you want to turn off the outlet(s)?" />
+                </control>
+                <control id="targCycle" structure="button" options="static" path="units.topology" label="Power Cycle">
+                  <script id="confirmation" label="Selected outlet(s) will be switched ON after this operation.\nAre you sure you want to power cycle the selected outlet(s)?" />
+                </control>
+                <control id="targLock" structure="button" options="static" path="units.topology" label="Lock">
+                  <script id="confirmation" label="" />
+                </control>
+                <control id="targUnLock" structure="button" options="static" path="units.topology" label="Unlock">
+                  <script id="confirmation" label="" />
+                </control>
+              </controls>
+              <value label="" />
+            </parameter>
+          </array>
+        </array>
+      </array>
+    </section>
+  </payload>
+</avtrans>

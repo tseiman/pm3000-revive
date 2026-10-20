@@ -1,0 +1,29 @@
+<avtrans>
+  <identity version="7" />
+  <sid dirty="[REDACTED-SID]" />
+  <action>login</action>
+  <agents>
+    <src>controller</src>
+    <dest>wmi</dest>
+  </agents>
+  <paths>
+    <path>login</path>
+    <pathvar />
+  </paths>
+  <payload structure="login">
+    <section id="login" structure="login" label="User Login">
+      <controls>
+        <control id="login" structure="button" path="units.topology" label="Login" />
+      </controls>
+      <parameter id="username" structure="RWtext" maxlength="[REDACTED-USERNAME]" label="[REDACTED-USERNAME]">
+        <value label="[REDACTED-USERNAME]" />
+      </parameter>
+      <parameter id="password" structure="password" label="[REDACTED]">
+        <value label="[REDACTED]" />
+      </parameter>
+      <parameter id="requestMsg" structure="ROtext" label="[REDACTED]">
+        <value label="[REDACTED]" />
+      </parameter>
+    </section>
+  </payload>
+</avtrans>

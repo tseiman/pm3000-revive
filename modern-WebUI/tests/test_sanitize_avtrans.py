@@ -15,6 +15,7 @@ from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "synthetic"
+OBSERVED_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "observed"
 sys.path.insert(0, str(TOOLS))
 
 import sanitize_avtrans  # noqa: E402
@@ -151,6 +152,25 @@ class SanitizeAvtransTests(unittest.TestCase):
             self.assertNotIn(secret, sanitized)
         self.assertIn("8.8.8.8", sanitized)
 
+    def test_redacts_operator_assigned_name_parameter_values(self) -> None:
+        source = b"""<avtrans><payload><section structure="table"><array id="SYNTHETIC_OUTLET_1">
+          <parameter id="name" icon="outlet" structure="ROtext" label="Name">
+            <value label="private-rack-device">private-rack-device</value>
+          </parameter>
+          <parameter id="serialnumber" structure="ROtext" label="Serial Number">
+            <value label="private-device-serial">private-device-serial</value>
+          </parameter>
+        </array></section></payload></avtrans>"""
+
+        sanitized = sanitize_avtrans.sanitize_xml(source)
+
+        self.assertNotIn("private-rack-device", sanitized)
+        self.assertNotIn("private-device-serial", sanitized)
+        self.assertIn('parameter id="name"', sanitized)
+        self.assertIn('parameter id="serialnumber"', sanitized)
+        self.assertIn('structure="ROtext"', sanitized)
+        self.assertGreaterEqual(sanitized.count("[REDACTED-NAME]"), 2)
+
     def test_rejects_input_larger_than_one_mebibyte(self) -> None:
         source = b"<avtrans>" + (b" " * (1024 * 1024)) + b"</avtrans>"
         with self.assertRaisesRegex(ValueError, "size"):
@@ -246,6 +266,53 @@ class SyntheticFixtureTests(unittest.TestCase):
         self.assertEqual(actual, declared)
         self.assertTrue(all(entry["evidence"] == "synthetic" for entry in manifest["fixtures"]))
         self.assertEqual("no-response", manifest["transport_timeout"]["representation"])
+
+
+class ObservedFixtureTests(unittest.TestCase):
+    def test_observed_fixture_allowlist_is_parseable_and_redacted(self) -> None:
+        expected = {
+            "initial-login-request.xml",
+            "initial-login-response.xml",
+            "login-submit-request.xml",
+            "login-submit-response.xml",
+            "navigation-request.xml",
+            "navigation-response.xml",
+            "topology-get-request.xml",
+            "topology-get-response.xml",
+            "pdu-management-get-request.xml",
+            "pdu-management-get-response.xml",
+            "logout-request.xml",
+            "logout-response.xml",
+        }
+        actual = {path.name for path in OBSERVED_FIXTURES.glob("*.xml")}
+        self.assertEqual(expected, actual)
+
+        forbidden = re.compile(
+            r"(?:BEGIN [A-Z ]*PRIVATE KEY|(?:10|127)\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+|(?:[A-Za-z0-9_-]+\.)+(?:local|lan|internal|home|mdn)\b)",
+            re.IGNORECASE,
+        )
+        for path in sorted(OBSERVED_FIXTURES.glob("*.xml")):
+            with self.subTest(path=path.name):
+                content = path.read_text()
+                root = ET.fromstring(content)
+                self.assertEqual("avtrans", root.tag)
+                self.assertIsNone(forbidden.search(content))
+                for element in root.iter():
+                    tag = element.tag.rsplit("}", 1)[-1]
+                    if tag == "sid" and "".join(element.itertext()).strip():
+                        self.assertIn("[REDACTED-SID]", ET.tostring(element, encoding="unicode"))
+                    normalized_id = "".join(character for character in element.get("id", "").lower() if character.isalnum())
+                    if tag == "parameter" and normalized_id in {"name", "serialnumber"}:
+                        self.assertIn("[REDACTED-NAME]", ET.tostring(element, encoding="unicode"))
+
+    def test_observed_manifest_covers_every_fixture(self) -> None:
+        manifest = json.loads((OBSERVED_FIXTURES / "manifest.json").read_text())
+        declared = {entry["file"] for entry in manifest["fixtures"]}
+        actual = {path.name for path in OBSERVED_FIXTURES.glob("*.xml")}
+
+        self.assertEqual(actual, declared)
+        self.assertEqual("2.0.1.23", manifest["source_firmware"])
+        self.assertTrue(all(entry["evidence"] == "observed-sanitized" for entry in manifest["fixtures"]))
 
 
 if __name__ == "__main__":

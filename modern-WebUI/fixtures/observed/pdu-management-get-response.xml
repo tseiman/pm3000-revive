@@ -1,0 +1,69 @@
+<avtrans>
+  <identity version="7" />
+  <sid dirty="[REDACTED-SID]">[REDACTED-SID]</sid>
+  <alarm>0</alarm>
+  <action>content</action>
+  <agents>
+    <src>controller</src>
+    <dest>wmi</dest>
+  </agents>
+  <paths>
+    <path>units.powermanagement.pdu_management</path>
+    <pathvar />
+  </paths>
+  <payload structure="content" label="PDUs">
+    <section id="pdu_devices_table" structure="table" options="rowName:pduId_Index">
+      <controls>
+        <control id="on" structure="button" options="static" minSelected="1" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="On">
+          <script id="confirmation" label="Are you sure you want to turn on all outlets of the selected PDU(s)?" />
+        </control>
+        <control id="off" structure="button" options="static" minSelected="1" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Off">
+          <script id="confirmation" label="Are you sure you want to turn off all outlets of the selected PDU(s)?" />
+        </control>
+        <control id="cycle" structure="button" options="static" maxSelected="1" minSelected="1" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Cycle">
+          <script id="confirmation" label="For the selected PDU(s), all outlets will be switched ON after this operation.\nAre you sure you want to proceed?" />
+        </control>
+        <control id="rebootPDU" structure="button" minSelected="1" maxSelected="1" options="renewSection,static" accessPath="management.power" accessRights="w" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Reboot PDU">
+          <script id="confirmation" label="Are you sure you want to reboot the PDU?" />
+        </control>
+        <control id="resetHW" structure="button" options="static" minSelected="1" maxSelected="1" accessPath="management.power" accessRights="w" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Reset HW Overcurrent Protection">
+          <script id="confirmation" label="Are you sure you want to reset HW Overcurrent protection for the selected PDU(s)?" />
+        </control>
+        <control id="factorydef" structure="button" minSelected="1" maxSelected="1" options="renewSection,static" accessPath="management.power" accessRights="w" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Factory Defaults">
+          <script id="confirmation" label="Are you sure you want to reset the PDU configuration to factory default?" />
+        </control>
+        <control id="rename" structure="button" options="renewSection,static" minSelected="1" maxSelected="1" accessPath="management.power" accessRights="w" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Rename" />
+        <control id="upgradeFirmware" structure="button" options="renewSection,static" minSelected="1" accessPath="management.power" accessRights="w" rightsRule="avctUnitControlTdPower" path="units.powermanagement.pdu_management" label="Upgrade Firmware" />
+      </controls>
+      <array id="[REDACTED]">
+        <parameter id="pduId_Index" structure="ROtext" path="units.powermanagement.pdu_management.pduDevicesDetails" label="PDU ID">
+          <value label="[REDACTED]">[REDACTED]</value>
+        </parameter>
+        <parameter id="pdu_vendor" structure="ROtext" label="Vendor">
+          <value label="Avocent">Avocent</value>
+        </parameter>
+        <parameter id="pdu_model" structure="ROtext" label="Model">
+          <value label="PM3000/10/16A">PM3000/10/16A</value>
+        </parameter>
+        <parameter id="pdu_pos" structure="ROtext" label="Position">
+          <value label="1">1</value>
+        </parameter>
+        <parameter id="pdu_status" structure="ROtext" label="Status (On/Total)">
+          <value label="1/10">1/10</value>
+        </parameter>
+        <parameter id="pdu_current" icon="current" structure="ROtext" label="Current (A)">
+          <value label="0.0">0.0</value>
+        </parameter>
+        <parameter id="pdu_power" structure="ROtext" label="Power (W)">
+          <value label="0.0">0.0</value>
+        </parameter>
+        <parameter id="pdu_alarm" icon="alarm" structure="ROtext" label="Alarm">
+          <value label="Normal">NORMAL</value>
+        </parameter>
+        <parameter id="thresholds" structure="hidden" options="webonly">
+          <value>16,12.8,9.6,0.0,0.0</value>
+        </parameter>
+      </array>
+    </section>
+  </payload>
+</avtrans>

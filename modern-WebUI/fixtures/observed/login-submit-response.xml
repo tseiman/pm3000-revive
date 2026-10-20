@@ -1,0 +1,49 @@
+<avtrans>
+  <identity version="7" />
+  <sid dirty="[REDACTED-SID]">[REDACTED-SID]</sid>
+  <alarm>0</alarm>
+  <action>header</action>
+  <agents>
+    <src>controller</src>
+    <dest>wmi</dest>
+  </agents>
+  <paths>
+    <path>units</path>
+    <pathvar />
+  </paths>
+  <payload structure="header">
+    <section id="welcome" structure="header">
+      <controls>
+        <control id="bookmark" structure="button" path="header" label="Bookmark" />
+        <control id="refresh" structure="button" path="header" label="Refresh" />
+        <control id="print" structure="button" path="header" label="Print" />
+        <control id="logout" structure="button" path="login" label="Logout" />
+        <control id="help" structure="button" path="header.help" label="Help" />
+      </controls>
+      <parameter id="welcome" structure="ROtext">
+        <value label="[REDACTED] - Welcome [REDACTED]!">[REDACTED] - Welcome [REDACTED]!</value>
+      </parameter>
+      <parameter id="ip" structure="ROtext">
+        <value label="" />
+      </parameter>
+      <parameter id="product" structure="ROtext">
+        <value label="Avocent PM">Avocent PM</value>
+      </parameter>
+      <parameter id="warning" structure="ROtext" label="By leaving this page you will lose any changes you have made.\nTo continue leaving this page press OK.">
+        <value label="" />
+      </parameter>
+      <parameter id="pduAlarm" structure="ROtext" label="PDU Alarm">
+        <value label="" />
+      </parameter>
+      <parameter id="membershipAdd" structure="ROtext" label="Add">
+        <value label="" />
+      </parameter>
+      <parameter id="membershipRemove" structure="ROtext" label="Remove">
+        <value label="" />
+      </parameter>
+      <parameter id="requestMsg" structure="ROtext" label="Request in Progress">
+        <value label="" />
+      </parameter>
+    </section>
+  </payload>
+</avtrans>

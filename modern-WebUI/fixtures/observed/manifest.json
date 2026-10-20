@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "source_product": "Avocent PM3000",
+  "source_firmware": "2.0.1.23",
+  "collection_mode": "authenticated read-only HTTPS requests with certificate verification",
+  "evidence_boundary": "No configuration write, outlet action, PDU action, reboot, reset, or firmware operation was sent.",
+  "fixtures": [
+    {
+      "file": "initial-login-request.xml",
+      "direction": "request",
+      "purpose": "Observed unauthenticated login-form read",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "initial-login-response.xml",
+      "direction": "response",
+      "purpose": "Observed login-form schema and initial control path",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "login-submit-request.xml",
+      "direction": "request",
+      "purpose": "Observed login submission with credentials redacted",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "login-submit-response.xml",
+      "direction": "response",
+      "purpose": "Observed authenticated header response with SID and operator labels redacted",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "navigation-request.xml",
+      "direction": "request",
+      "purpose": "Observed authenticated root navigation request",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "navigation-response.xml",
+      "direction": "response",
+      "purpose": "Observed backend-described navigation and authorization metadata",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "topology-get-request.xml",
+      "direction": "request",
+      "purpose": "Observed read-only topology request",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "topology-get-response.xml",
+      "direction": "response",
+      "purpose": "Observed PDU/outlet inventory, status, and uninvoked control descriptors",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "pdu-management-get-request.xml",
+      "direction": "request",
+      "purpose": "Observed read-only PDU status request",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "pdu-management-get-response.xml",
+      "direction": "response",
+      "purpose": "Observed PDU status and uninvoked management control descriptors",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "logout-request.xml",
+      "direction": "request",
+      "purpose": "Observed authenticated session logout",
+      "evidence": "observed-sanitized"
+    },
+    {
+      "file": "logout-response.xml",
+      "direction": "response",
+      "purpose": "Observed return to the unauthenticated login model",
+      "evidence": "observed-sanitized"
+    }
+  ]
+}

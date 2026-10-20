@@ -28,6 +28,7 @@ SECRET_HINTS = (
     "community",
 )
 NETWORK_HINTS = ("hostname", "server", "ipaddress", "address", "domain", "gateway", "nameserver", "dns")
+OPERATOR_ASSIGNED_PARAMETER_IDS = {"name", "serialnumber"}
 PRIVATE_IPV4 = re.compile(
     r"\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b"
 )
@@ -151,7 +152,10 @@ def sanitize_xml(source: bytes, explicit_values: Iterable[str] = ()) -> str:
                 _redact_subtree(element, replacement, preserve_root_attributes=False)
             continue
 
-        replacement = _replacement_for_identifier(_attribute_by_local_name(element, "id"))
+        parameter_id = _normalized_identifier(_attribute_by_local_name(element, "id"))
+        replacement = _replacement_for_identifier(parameter_id)
+        if replacement is None and parameter_id in OPERATOR_ASSIGNED_PARAMETER_IDS:
+            replacement = "[REDACTED-NAME]"
         if replacement is None:
             replacement = _replacement_for_identifier(_attribute_by_local_name(element, "structure"))
         if replacement is None and id(element) in login_parameters:

@@ -1,0 +1,11 @@
+<avtrans>
+  <sid />
+  <action>get</action>
+  <agents>
+    <src>wmi</src>
+    <dest>controller</dest>
+  </agents>
+  <paths>
+    <path>login</path>
+  </paths>
+</avtrans>
