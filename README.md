@@ -2,7 +2,7 @@
 
 Independent community project for incrementally modernizing Avocent PM3000 PDUs. The long-term scope includes updated remote access, firmware analysis and packaging, a modern web UI, ACME certificate handling, and RPC-based automation integrations. This project is not affiliated with Avocent or Vertiv.
 
-> **Current milestone:** a tested static Dropbear build plus a documented compatibility patch for the legacy Web UI. No complete firmware image or replacement UI is provided yet.
+> **Current milestone:** a tested static Dropbear build, a documented compatibility patch for the legacy Web UI, and a verified architecture/stage plan for its compact modern replacement. No complete firmware image or replacement UI is provided yet.
 
 ## Firmware baseline
 
@@ -26,8 +26,9 @@ The stripped binaries total about 643 KiB. The binaries alone do not replace or 
 
 - [`components/dropbear/`](components/dropbear/) — static Dropbear server, build environment, tests, and device-test procedure.
 - [`fix-WebUI/`](fix-WebUI/) — firmware `2.0.1.23` compatibility patch, hashes, installation limits, and investigation notes for the legacy browser UI.
+- [`modern-WebUI/`](modern-WebUI/) — clean-room architecture analysis and resumable stages for a compact modern UI, bearer-token REST facade, and backup-first deployment.
 
-A separate `modern-WebUI/` component may be added later for a clean replacement interface over the existing backend. The compatibility patch is reference material for that work, not its architecture.
+The modern component is currently analysis and planning only. The compatibility patch is reference material and a recovery aid, not the architecture of the replacement UI.
 
 ## Reproduce on Linux
 

@@ -18,13 +18,13 @@ Development proceeds in small, independently testable milestones.
 2. **Firmware inventory**
    - Document boot flow, partitions, root filesystem, update container, checksums/signatures, persistent data, and recovery paths.
    - Build read-only extraction and inspection tools before any image writer.
-3. **RPC and automation**
-   - Document the existing RPC protocol from authorized captures.
-   - Implement a read-only client and test fixtures.
-   - Add an external REST/MQTT bridge suitable for openHAB before considering an on-device service.
-4. **Web UI modernization**
-   - Build a modern UI against the documented bridge/API.
-   - Run it externally first; assess on-device deployment only after resource and security testing.
+3. **Web UI and REST evidence**
+   - Continue the verified [`modern-WebUI/`](modern-WebUI/) stages with sanitized Avtrans fixtures and strict read-only contracts.
+   - Preserve Apache and the vendor `mod_avtrans -> uicontrold -> GSP/CACPD -> power API` authorization path.
+4. **Compact Web UI and automation facade**
+   - Build a dependency-free modern UI and small native bearer-token CGI adapter, starting read-only.
+   - Add multiple scoped tokens and individual outlet actions only after exact contracts, backup/rollback, and manual device acceptance are proven.
+   - Add an external MQTT/openHAB integration after the narrow REST contract is stable.
 5. **ACME certificates**
    - Start with off-device issuance and controlled certificate deployment.
    - Evaluate a native `lego` build only after kernel, storage, memory, clock, and key-protection checks.
