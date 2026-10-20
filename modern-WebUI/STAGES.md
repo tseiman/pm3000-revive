@@ -20,10 +20,12 @@ Each stage is a separate resumable milestone. Finish, verify, commit, and push o
 
 ## Stage 2 — Strict REST contract
 
+**Status:** complete. The tested OpenAPI contract exposes local health, fixed read-only outlet list/detail projections, and a closed individual-action request shape that Stage 2 always rejects without constructing or sending Avtrans XML.
+
 - Define health, outlet list/detail, and individual outlet actions.
 - Reject arbitrary backend paths, unknown fields/actions, malformed JSON/XML, and oversized input.
 - Explicitly exclude PDU-wide actions, reboot, firmware, factory default, and generic configuration.
-- **Gate:** every accepted REST request maps to one fixed backend template.
+- **Gate:** every read request maps to one fixed backend template; health is local-only; Stage 2 actions have no backend template and no success response.
 
 ## Stage 3 — Multiple bearer tokens
 

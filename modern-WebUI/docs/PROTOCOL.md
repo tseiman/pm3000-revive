@@ -54,7 +54,7 @@ Backend feature definitions distinguish:
 - PDU-wide actions;
 - configuration, reset, reboot, factory-default, and firmware operations.
 
-The initial REST contract allows only status/inventory and individual `on`, `off`, and `cycle`. All other categories and operations are excluded. Backend authorization remains authoritative.
+The [REST v1 contract](REST-V1.md) allows status/inventory reads. It reserves a closed individual `on`, `off`, and `cycle` request shape, but Stage 2 rejects every such request without constructing or sending backend XML. All other categories and operations are excluded. Backend authorization remains authoritative.
 
 Concrete browser paths, action IDs, controls, dependencies, and confirmation metadata are supplied by the backend response. The original frontend does not provide a safe hard-coded power-path table. Display labels and numeric positions must not be treated as protocol identifiers.
 

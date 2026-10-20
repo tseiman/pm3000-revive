@@ -1,0 +1,633 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PM3000 Modern Web UI REST API",
+    "version": "1.0.0-stage2",
+    "description": "Strict Stage 2 contract. Inventory and status reads use fixed Avtrans templates. Outlet actions are shape-validated but never dispatched in this stage."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "x-request-policy": {
+    "unknownPaths": "reject",
+    "unknownMethods": "reject",
+    "unknownFields": "reject",
+    "duplicateJsonNames": "reject",
+    "contentEncoding": "reject",
+    "backendXmlMaxBytes": 1048576,
+    "backendXmlMaxDepth": 32
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Return process liveness without contacting the backend",
+        "security": [],
+        "x-handler": "local-liveness-only",
+        "responses": {
+          "200": {
+            "description": "The REST process can parse and answer requests.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/outlets": {
+      "get": {
+        "operationId": "listOutlets",
+        "summary": "List the current outlet inventory and normalized status",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-backend-template": "action=get;path=units.topology;projection=outlet-list",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/OutletCollection"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/outlets/{outletId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OutletId"
+        }
+      ],
+      "get": {
+        "operationId": "getOutlet",
+        "summary": "Return one outlet from a fresh inventory read",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-backend-template": "action=get;path=units.topology;projection=outlet-detail",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Outlet"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/outlets/{outletId}/actions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/OutletId"
+        }
+      ],
+      "post": {
+        "operationId": "requestOutletAction",
+        "summary": "Validate the reserved individual-outlet action shape without dispatching it",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-stage2-behavior": "reject-without-backend-request",
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutletActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/InventoryStale"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "description": "Stage 2 never dispatches an outlet action.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                },
+                "example": {
+                  "code": "action_disabled",
+                  "message": "Outlet actions are disabled."
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque"
+      }
+    },
+    "parameters": {
+      "OutletId": {
+        "name": "outletId",
+        "in": "path",
+        "required": true,
+        "description": "Project-owned opaque identifier resolved only through the current inventory.",
+        "schema": {
+          "$ref": "#/components/schemas/OutletId"
+        }
+      }
+    },
+    "schemas": {
+      "OutletId": {
+        "type": "string",
+        "minLength": 22,
+        "maxLength": 22,
+        "pattern": "^[A-Za-z0-9_-]{22}$",
+        "description": "Base64url prefix of SHA-256 over the versioned backend row identity; collisions fail closed."
+      },
+      "InventoryRevision": {
+        "type": "string",
+        "minLength": 22,
+        "maxLength": 22,
+        "pattern": "^[A-Za-z0-9_-]{22}$",
+        "description": "Opaque digest of the complete validated inventory used to detect stale action mappings."
+      },
+      "OutletState": {
+        "type": "string",
+        "enum": [
+          "on",
+          "off",
+          "unknown"
+        ]
+      },
+      "OutletAction": {
+        "type": "string",
+        "enum": [
+          "on",
+          "off",
+          "cycle"
+        ]
+      },
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "apiVersion",
+          "status"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "v1"
+          },
+          "status": {
+            "type": "string",
+            "const": "live"
+          }
+        }
+      },
+      "Outlet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "pduId",
+          "position",
+          "name",
+          "state",
+          "availableActions"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/OutletId"
+          },
+          "pduId": {
+            "$ref": "#/components/schemas/PduId"
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "name": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 128
+          },
+          "state": {
+            "$ref": "#/components/schemas/OutletState"
+          },
+          "availableActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutletAction"
+            },
+            "maxItems": 3,
+            "uniqueItems": true,
+            "description": "Always empty in Stage 2. Later stages may expose only independently authorized actions."
+          }
+        }
+      },
+      "OutletCollection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "apiVersion",
+          "inventoryRevision",
+          "outlets"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "v1"
+          },
+          "inventoryRevision": {
+            "$ref": "#/components/schemas/InventoryRevision"
+          },
+          "outlets": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "$ref": "#/components/schemas/Outlet"
+            }
+          }
+        }
+      },
+      "OutletActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 2,
+        "required": [
+          "action",
+          "inventoryRevision"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "on",
+              "off",
+              "cycle"
+            ]
+          },
+          "inventoryRevision": {
+            "$ref": "#/components/schemas/InventoryRevision"
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "bad_request",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "not_acceptable",
+          "unsupported_media_type",
+          "payload_too_large",
+          "inventory_stale",
+          "backend_unavailable",
+          "backend_protocol_error",
+          "action_disabled",
+          "action_outcome_unknown",
+          "internal_error"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "PduId": {
+        "type": "string",
+        "minLength": 22,
+        "maxLength": 22,
+        "pattern": "^[A-Za-z0-9_-]{22}$",
+        "description": "Domain-separated opaque identifier derived from the validated backend PDU row identity; collisions fail closed."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The JSON body is malformed, duplicated, or violates the closed schema.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The raw request body exceeds 1,024 bytes.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "The request is not unencoded UTF-8 application/json.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "InventoryStale": {
+        "description": "The supplied inventory revision does not match the current validated identity mapping.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "OutletCollection": {
+        "description": "Current validated outlet inventory.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OutletCollection"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "Outlet": {
+        "description": "One outlet resolved from the current inventory.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Outlet"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "A valid bearer token is required.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The authenticated principal lacks the required scope or outlet permission.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The outlet identifier is not present in the current validated inventory.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "BackendProtocolError": {
+        "description": "The backend returned missing, duplicate, ambiguous, oversized, or malformed data.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "BackendUnavailable": {
+        "description": "The fixed read operation could not complete.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      }
+    },
+    "headers": {
+      "CacheControlNoStore": {
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      },
+      "ContentTypeOptionsNoSniff": {
+        "schema": {
+          "type": "string",
+          "const": "nosniff"
+        }
+      }
+    }
+  },
+  "x-identifier-derivation": {
+    "algorithm": "sha256-base64url-prefix",
+    "outputCharacters": 22,
+    "textEncoding": "utf-8",
+    "base64Padding": "omitted",
+    "inventoryOrdering": "unsigned-byte-lexicographic",
+    "inventoryLengthEncoding": "unsigned-big-endian-32-bit-length",
+    "testVectors": {
+      "outlet:SYNTHETIC_OUTLET_1": "XDmSGmQaZ6o7iRBWKUnpVg",
+      "pdu:SYNTHETIC_PDU_1": "niRcjzKfdPHmzgYMv2BzfB",
+      "inventory:SYNTHETIC_OUTLET_1,SYNTHETIC_OUTLET_2": "3Nsqnx4t6hGoJs5d-ahRdd"
+    },
+    "domainPrefixHex": {
+      "outlet": "706d333030302d726573742d7631006f75746c657400",
+      "pdu": "706d333030302d726573742d76310070647500",
+      "inventory": "706d333030302d726573742d763100696e76656e746f727900"
+    }
+  }
+}

@@ -4,7 +4,7 @@ This directory contains the clean-room design and future implementation of a com
 
 ## Current status
 
-**Analysis and staged planning only.** No replacement UI, REST adapter, or device installer is provided yet.
+**Stages 0 through 2 are complete.** The repository contains reviewed protocol evidence and a strict REST v1 contract, but no replacement UI, REST adapter, or device installer yet.
 
 Confirmed architecture:
 
@@ -13,16 +13,19 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The design keeps Apache and the vendor backend. The first REST scope is deliberately narrow: outlet inventory/status and individual `on`, `off`, or `cycle` actions after their exact Avtrans contracts have been captured and approved.
+The design keeps Apache and the vendor backend. The active REST scope is deliberately narrow: read-only outlet inventory/status. The `on`, `off`, and `cycle` request shape is reserved, but Stage 2 always rejects it without sending a backend request. Exact action templates remain deferred until separately approved hardware evidence exists.
 
 ## Documents
 
 - [Architecture and security analysis](ANALYSIS.md)
 - [Implementation stages](STAGES.md)
 - [Protocol boundary](docs/PROTOCOL.md)
+- [REST API v1 contract](docs/REST-V1.md)
+- [Machine-readable OpenAPI v1 contract](api/openapi-v1.json)
 - [Manual Avtrans capture procedure](docs/CAPTURE.md)
 - [Reported device storage baseline](docs/DEVICE-STORAGE.md)
 - [Synthetic fixture notes](fixtures/synthetic/README.md)
+- [Observed sanitized fixture notes](fixtures/observed/README.md)
 - [Resume status](STATUS.md)
 - [Legacy compatibility patch](../fix-WebUI/README.md)
 
