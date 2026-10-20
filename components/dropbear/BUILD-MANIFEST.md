@@ -46,3 +46,9 @@ Generated: 2026-10-19T22:23:45Z
 ```
 
 The build/debug archive receives the actual `output-buildroot/.config` used by that build as `configs/buildroot-resolved.config`; the version-controlled minimal input is `configs/buildroot-pm3000_defconfig`.
+
+## Runtime installer payload
+
+The runtime archive includes `01-prepare.sh`, `02-activate.sh`, `rollback.sh`, `common.sh`, `service/sshd`, and `PAYLOAD.sha256`. `package.sh` generates the payload manifest from the exact scripts, service file, and stripped binaries copied into the archive. The full archive tree is independently covered by `CHECKSUMS.sha256`.
+
+Installer scripts are POSIX `sh` and target the observed BusyBox 1.5.0 environment. Automated installer tests use isolated filesystem roots and fake listener processes; they do not contact a PM3000 or modify host services.

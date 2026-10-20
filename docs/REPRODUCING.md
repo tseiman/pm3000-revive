@@ -51,7 +51,7 @@ artifacts/debug/dropbearkey
 ./verify.sh
 ```
 
-This verifies ELF32 PowerPC big-endian/static properties and runs the target binaries under QEMU user mode. It generates an Ed25519 host key, starts isolated servers, verifies public-key login, confirms PTY allocation, executes commands, and reconnects. It also checks `--login-shell` startup validation, unchanged default shell behavior, Bash remote-command execution, forced-command precedence and `SSH_ORIGINAL_COMMAND`, rejection of an invalid account shell, and preservation of root/group restrictions.
+This verifies ELF32 PowerPC big-endian/static properties and runs the target binaries under QEMU user mode. It generates an Ed25519 host key, starts isolated servers, verifies public-key login, confirms PTY allocation, executes commands, and reconnects. It also checks `--login-shell` startup validation, unchanged default shell behavior, Bash remote-command execution, forced-command precedence and `SSH_ORIGINAL_COMMAND`, rejection of an invalid account shell, and preservation of root/group restrictions. A separate isolated filesystem/process simulation exercises installer integrity rejection, idempotency, port collision handling, both activation gates, recovery, and rollback without touching host services.
 
 QEMU user mode does not emulate the PM3000's actual Linux 2.6.23 kernel. A successful device test remains mandatory.
 
@@ -63,7 +63,7 @@ cd dist
 sha256sum -c SHA256SUMS
 ```
 
-Expected result: both archives report `OK`. The runtime archive contains only the target binaries, licenses, checksums, and operator documentation. The build/debug archive contains sources, configs, patches, logs, and unstripped binaries.
+Expected result: both archives report `OK`. The runtime archive contains the target binaries, two-phase installer, SysV service, rollback tool, licenses, checksums, and operator documentation. The build/debug archive contains sources, configs, patches, installer sources/tests, logs, and unstripped binaries.
 
 ## Pinned inputs and evidence
 
