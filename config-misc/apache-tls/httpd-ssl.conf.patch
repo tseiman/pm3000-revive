@@ -1,0 +1,15 @@
+--- a/etc/apache2/extra/httpd-ssl.conf
++++ b/etc/apache2/extra/httpd-ssl.conf
+@@ -94,9 +94,9 @@
+ #   SSL Cipher Suite:
+ #   List the ciphers that the client is permitted to negotiate.
+ #   See the mod_ssl documentation for a complete list.
+-#   Commented out will be configured from listen.conf.
+-#SSLCipherSuite ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+SSLv2:+EXP:+eNULL
+-
++#   Keep this override scoped to the HTTPS virtual host; port 3502 retains the vendor default.
++SSLCipherSuite AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA
++
+ #   Server Certificate:
+ #   Point SSLCertificateFile at a PEM encoded certificate.  If
+ #   the certificate is encrypted, then you will be prompted for a
