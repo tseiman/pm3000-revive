@@ -559,6 +559,7 @@ class ScriptStructureTests(unittest.TestCase):
         apache = (DEPLOY / "pm3000-revive.conf").read_text()
         self.assertIn("ScriptAlias /api/v1 ", apache)
         self.assertIn("AcceptPathInfo On", apache)
+        self.assertIn("DirectoryIndex index.html", apache)
         self.assertNotIn("ScriptAlias /modern/api/v1/", apache)
 
     def test_atomic_helper_replaces_symlink_to_directory_without_following_it(self):
