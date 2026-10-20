@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stages 4, 5, and 6 are implemented, locally verified, independently reviewed with PASS, and published. The operator-provided Stage 7 preflight confirmed the initial managed paths are absent and identified OpenSSL as the device SHA-256 provider. A Mac-side first-install backup recorder is ready; no upload or installation has run. Nothing has been installed on a PM3000.
+Stages 4, 5, and 6 are implemented, locally verified, independently reviewed with PASS, and published. The operator-provided Stage 7 preflight confirmed the initial managed paths are absent and identified OpenSSL as the device SHA-256 provider. A macOS/Linux full-device SSH backup streamer is ready; no upload or installation has run. Nothing has been installed on a PM3000.
 
 ## Completed through Stage 3
 

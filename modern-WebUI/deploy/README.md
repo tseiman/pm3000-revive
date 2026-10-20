@@ -14,8 +14,8 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
   publication helpers for the later manually approved device pilot.
 - `device-preflight.sh` — read-only Stage 7 inventory; writes its report only to
   standard output and never installs, reloads, restarts, or creates a device file.
-- `stage7-first-backup.sh` — Mac/Linux host command that uses fixed read-only SSH
-  probes and durably records an initial absent-state backup locally before SCP.
+- `stage7-first-backup.sh` — macOS/Linux host command that streams a full device
+  filesystem backup over SSH and validates it locally before any deployment SCP.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -205,12 +205,14 @@ modern-WebUI/deploy/stage7-first-backup.sh \
 ```
 
 The host requires Bash, Python 3, OpenSSH, and `tar`; it does not depend on GNU
-Coreutils or `shasum`. The remote SSH program only reads kernel, firmware hash, and the two managed
-paths. The script refuses to continue unless both managed paths are absent. It
-creates `REMOTE_INVENTORY.txt`, `BACKUP_ARCHIVE.tar`, `BACKUP_MANIFEST.json`, and
-`BACKUP_COMPLETE` privately on the Mac, flushes them to disk, and prints their
-directory and hashes to standard output. No SCP or remote write occurs in this
-step.
+Coreutils or `shasum`. The appliance streams every root entry, including
+configuration, Web UI, persistent user storage, runtime files, and secrets.
+Only the virtual kernel filesystems `/dev`, `/proc`, and `/sys` are not traversed;
+their exclusion is recorded in the manifest. The script creates
+`REMOTE_INVENTORY.txt`, `BACKUP_ARCHIVE.tar`, `BACKUP_MANIFEST.json`, and
+`BACKUP_COMPLETE` privately on the host, validates every archive member, flushes
+the files to disk, and prints their directory, hashes, and archive size. No
+remote file is created and no deployment SCP occurs in this step.
 
 No real appliance path, free-space value, owner/group IDs, BusyBox tar behavior,
 Apache `SetEnvIf`/Authorization forwarding, CGI `PATH_INFO`, HTTPS health
