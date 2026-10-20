@@ -59,14 +59,15 @@ for digest in "$backup_archive_hash" "$backup_manifest_hash" "$expected"; do
     case "$digest" in *[!0-9a-f]*|'') echo "invalid digest" >&2; exit 1;; esac
     [ "${#digest}" -eq 64 ] || { echo "invalid digest length" >&2; exit 1; }
 done
-base=/mnt/hdUser/pm3000-revive/webui
+root=/mnt/hdUser/pm3000-revive
+base=$root/webui
 releases=$base/releases
 release=$releases/$release_id
 tmp=$releases/.$release_id.stage6-tmp
 config_dir=/etc/apache2/conf.d
 config=$config_dir/pm3000-revive.conf
 work=/tmp/stage6-install-$$
-for parent in /mnt /mnt/hdUser /mnt/hdUser/pm3000-revive "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
+for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
     [ ! -L "$parent" ] || { echo "unsafe parent symlink: $parent" >&2; exit 1; }
 done
 [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { echo "transaction temporary exists" >&2; exit 1; }
@@ -151,7 +152,7 @@ trap 'exit 130' 2
 trap 'exit 143' 15
 
 mkdir -p "$releases"
-chmod 755 "$base" "$releases"
+chmod 755 "$root" "$base" "$releases"
 mkdir -m 700 "$tmp"
 (cd "$tmp" && tar xf "$package_snapshot")
 packaged_helper=$tmp/bin/pm3000-atomic-publish
