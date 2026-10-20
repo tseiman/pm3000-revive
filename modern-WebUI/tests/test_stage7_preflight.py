@@ -25,6 +25,9 @@ class Stage7PreflightTests(unittest.TestCase):
         self.assertIn("probe.directory_fsync=not_tested_requires_write_probe", lines)
         self.assertIn("path.root.type=directory", lines)
         self.assertFalse(any(line.startswith("path.path.") for line in lines))
+        source = PREFLIGHT.read_text(encoding="utf-8")
+        self.assertIn("/dev/avtrans_socket", source)
+        self.assertNotIn("/var/run/avtrans.socket", source)
         self.assertEqual(lines[-1], "pm3000_preflight.complete=yes")
 
     def test_preflight_source_contains_no_mutating_or_service_control_commands(self):

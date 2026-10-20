@@ -143,15 +143,15 @@ for candidate in /etc/apache2/conf.d/*; do
 done
 emit apache.conf_d.entries "$config_count"
 
-if [ -S /var/run/avtrans.socket ]; then
+if [ -S /dev/avtrans_socket ]; then
     emit backend.avtrans_socket.type socket
-elif [ -e /var/run/avtrans.socket ]; then
+elif [ -e /dev/avtrans_socket ]; then
     emit backend.avtrans_socket.type non_socket
 else
     emit backend.avtrans_socket.type missing
 fi
-if [ -e /var/run/avtrans.socket ] && command -v stat >/dev/null 2>&1; then
-    emit backend.avtrans_socket.mode_uid_gid "$(stat -c '%a:%u:%g' /var/run/avtrans.socket 2>&1)"
+if [ -e /dev/avtrans_socket ] && command -v stat >/dev/null 2>&1; then
+    emit backend.avtrans_socket.mode_uid_gid "$(stat -c '%a:%u:%g' /dev/avtrans_socket 2>&1)"
 fi
 
 printf '%s\n' 'probe.authorization_forwarding=not_tested_requires_pilot'
