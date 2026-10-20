@@ -25,7 +25,7 @@ Host backup directories are forced to mode `0700`; backup files are `0600` and
 must remain outside Git.
 
 A future device pilot additionally requires BusyBox/POSIX `sh`, `tar`,
-`sha256sum`, `cat`, `wc`, `cut`, `cp`, `cmp`, `sed`, `id`, `readlink`, `ln`,
+`openssl` with `dgst -sha256`, `cat`, `wc`, `cut`, `cp`, `cmp`, `sed`, `id`, `readlink`, `ln`,
 `chmod`, `mkdir`, `mktemp`, `dirname`, `pwd`, `rm`, and `sync`, plus the
 packaged atomic helper and sufficient space under `/mnt/hdUser` and `/tmp`.
 The following Apache commands come from repository evidence but remain

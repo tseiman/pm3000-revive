@@ -69,8 +69,13 @@ installation remain blocked on the Stage 7 observations below.
 
 ## Stage 7 — Manual read-only device pilot
 
-**Status:** read-only stdout preflight script prepared; no device connection or
-pilot action has been performed.
+**Status:** operator-provided read-only stdout preflight completed; no upload,
+installation, service reload, setting change, or outlet action has been performed.
+
+The operator-provided preflight confirms PPC Linux 2.6.23, BusyBox 1.5.0,
+Apache 2.2.23 with CGI/SSL/Alias support, valid Apache syntax, writable `/etc`
+and `/mnt/hdUser` mounts, and `/dev/avtrans_socket`. Device integrity checks use
+the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 
 - User runs preflight, backup, `/modern/` pilot installation, status checks, and one rollback.
 - Preserve the legacy UI at `/`.

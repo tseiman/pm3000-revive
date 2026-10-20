@@ -5,6 +5,38 @@ umask 077
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH
 
+sha256_file()
+{
+    _sha_output=$(openssl dgst -sha256 "$1") || return 1
+    _sha_digest=${_sha_output##*= }
+    case "$_sha_digest" in *[!0-9a-f]*|'') return 1;; esac
+    [ "${#_sha_digest}" -eq 64 ] || return 1
+    printf '%s\n' "$_sha_digest"
+}
+
+verify_release_sums()
+{
+    _sum_root=$1
+    _sum_list=$2
+    _sum_count=0
+    while IFS= read -r _sum_line; do
+        _sum_expected=${_sum_line%%  *}
+        _sum_path=${_sum_line#*  }
+        [ "$_sum_line" = "$_sum_expected  $_sum_path" ] || return 1
+        case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
+        [ "${#_sum_expected}" -eq 64 ] || return 1
+        case "$_sum_path" in
+            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            *) return 1;;
+        esac
+        [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
+        _sum_actual=$(sha256_file "$_sum_root/$_sum_path") || return 1
+        [ "$_sum_actual" = "$_sum_expected" ] || return 1
+        _sum_count=$((_sum_count + 1))
+    done <"$_sum_list"
+    [ "$_sum_count" -eq 6 ]
+}
+
 [ "$#" -eq 4 ] || {
     echo "usage: device-install.sh RELEASE.tar PACKAGE_SHA256 RELEASE_ID BACKUP_COMPLETE" >&2
     exit 2
@@ -14,6 +46,7 @@ expected=$2
 release_id=$3
 backup_complete=$4
 [ "$(id -u)" = 0 ] || { echo "installer must run as root" >&2; exit 1; }
+command -v openssl >/dev/null 2>&1 || { echo "openssl missing" >&2; exit 1; }
 case "$release_id" in ''|*[!A-Za-z0-9._-]*|.|..) echo "unsafe release id" >&2; exit 2;; esac
 case "$package" in /*) :;; *) echo "package path must be absolute" >&2; exit 2;; esac
 [ -f "$package" ] && [ ! -L "$package" ] || { echo "unsafe package" >&2; exit 1; }
@@ -48,7 +81,7 @@ mkdir -m 700 "$work"
 package_snapshot=$work/release.tar
 cp "$package" "$package_snapshot"
 chmod 600 "$package_snapshot"
-actual=$(sha256sum "$package_snapshot" | cut -d ' ' -f 1)
+actual=$(sha256_file "$package_snapshot")
 [ "$actual" = "$expected" ] || { echo "package digest mismatch" >&2; rm -rf "$work"; exit 1; }
 members=$work/archive-members
 expected_members=$work/expected-members
@@ -135,7 +168,7 @@ for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf
         exit 1
     }
 done
-(cd "$tmp" && sha256sum -c RELEASE_SHA256SUMS)
+verify_release_sums "$tmp" "$tmp/RELEASE_SHA256SUMS"
 approved_manifest=$work/RELEASE_MANIFEST.json
 approved_sums=$work/RELEASE_SHA256SUMS
 cp "$tmp/RELEASE_MANIFEST.json" "$approved_manifest"
@@ -160,7 +193,7 @@ if [ ! -e "$release" ]; then
             "$atomic_helper" --verify-release "$release" &&
             cmp "$approved_manifest" "$release/RELEASE_MANIFEST.json" >/dev/null 2>&1 &&
             cmp "$approved_sums" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1 &&
-            (cd "$release" && sha256sum -c RELEASE_SHA256SUMS >/dev/null 2>&1); then
+            verify_release_sums "$release" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1; then
             created_release=yes
             committed=yes
         elif [ ! -e "$tmp" ]; then
@@ -173,7 +206,7 @@ else
     "$atomic_helper" --verify-release "$release" || { echo "unsafe existing release tree" >&2; exit 1; }
     cmp "$tmp/RELEASE_MANIFEST.json" "$release/RELEASE_MANIFEST.json" >/dev/null 2>&1 || { echo "release id collision" >&2; exit 1; }
     cmp "$tmp/RELEASE_SHA256SUMS" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1 || { echo "release checksum-list collision" >&2; exit 1; }
-    (cd "$release" && sha256sum -c RELEASE_SHA256SUMS)
+    verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"
     rm -rf "$tmp"
 fi
 committed=yes

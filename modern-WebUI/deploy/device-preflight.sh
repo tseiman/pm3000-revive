@@ -53,7 +53,7 @@ fi
 
 old_ifs=$IFS
 IFS=:
-tools='sh:tar:sha256sum:cat:wc:cut:cp:cmp:sed:id:readlink:ln:chmod:mkdir:mktemp:dirname:pwd:rm:sync:stat:df:grep:httpd:wget:curl'
+tools='sh:tar:openssl:cat:wc:cut:cp:cmp:sed:id:readlink:ln:chmod:mkdir:mktemp:dirname:pwd:rm:sync:stat:df:grep:httpd:wget:curl'
 for tool in $tools; do
     if command -v "$tool" >/dev/null 2>&1; then
         emit "tool.$tool" "$(command -v "$tool")"
