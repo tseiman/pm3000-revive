@@ -4,6 +4,10 @@ Independent community project for incrementally modernizing Avocent PM3000 PDUs.
 
 > **Current milestone:** a tested static Dropbear build plus a documented compatibility patch for the legacy Web UI. No complete firmware image or replacement UI is provided yet.
 
+## Firmware baseline
+
+This project assumes Avocent PM3000 firmware `2.0.1.23`, the final firmware release before the product reached end of life. Unless stated otherwise, documented paths, hashes, ABI assumptions, and Web UI compatibility work refer to this baseline.
+
 ## Current result
 
 The first component provides:
