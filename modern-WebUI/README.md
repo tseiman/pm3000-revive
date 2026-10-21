@@ -4,7 +4,7 @@ This directory contains the clean-room implementation of a compact modern Web UI
 
 ## Current status
 
-The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, and outlet `on`, `off`, and `cycle` paths are implemented and verified offline. Release `0.1` was previously installed as a read-only pilot; the current write-capable candidate has not been installed or exercised on a PM3000. The vendor UI at `/` remains the fallback.
+The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, and outlet inventory are implemented and verified offline. Outlet `on`, `off`, and `cycle` input is validated but backend dispatch is disabled: observed topology controls use `targPowerOn`, `targPowerOff`, and `targCycle`, while plain action names belong to detail tables. Release `0.1` remains the installed read-only pilot. The vendor UI at `/` remains the fallback.
 
 Confirmed architecture:
 
@@ -13,13 +13,14 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients continue to use scoped REST bearer tokens. Outlet actions resolve a fresh topology identity and inventory revision before sending a fixed `on`, `off`, or `cycle` request. Writable settings remain on the legacy UI until each closed form contract has a sanitized real request/response fixture; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
+The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients continue to use scoped REST bearer tokens. Outlet-action input, authentication, authorization, and CSRF are validated, but dispatch is disabled before any Avtrans socket access until an observed action contract exists. Writable settings remain on the legacy UI until each closed form contract has a sanitized real request/response fixture; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
 
 ## Documents
 
 - [Architecture and security analysis](ANALYSIS.md)
 - [Implementation stages](STAGES.md)
 - [Protocol boundary](docs/PROTOCOL.md)
+- [Legacy menu capability cross-check](docs/MENU-CAPABILITY-CROSSCHECK.md)
 - [REST API v1 contract](docs/REST-V1.md)
 - [Bearer-token store and host administration](docs/TOKEN-STORE.md)
 - [Native REST v1 adapter build, operation, and rollback](docs/NATIVE-ADAPTER.md)

@@ -73,7 +73,7 @@ The digest above is a format illustration, not a usable credential. Unknown or d
 Scopes form this hierarchy:
 
 - `read`: health-independent inventory and status reads;
-- `control`: `read` plus individual-outlet `on`, `off`, and `cycle` actions;
+- `control`: reserved authorization for individual-outlet actions; dispatch remains disabled until the controller contract is observed;
 - `admin`: `control` plus token list/create/enable/disable/revoke operations.
 
 `outlets` applies to every outlet-scoped read or action:

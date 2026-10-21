@@ -1,5 +1,6 @@
 const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, tokenRequest: 0, outlets: [], tokens: [], inventoryRevision: "" };
 const $ = (id) => document.getElementById(id);
+const powerActionsEnabled = false;
 let transitionTail = Promise.resolve();
 let loginPending = false;
 let logoutPending = false;
@@ -174,7 +175,7 @@ function renderOutlets(collection) {
     const title = document.createElement("h3"); title.textContent = outlet.name || `Outlet ${outlet.position}`;
     const identifier = document.createElement("p"); identifier.textContent = outlet.id;
     header.append(position, status); article.append(header, title, identifier);
-    if (state.session.navigation.canControlPower) { const actions = document.createElement("div"); actions.className = "row-actions"; actions.append(actionButton(outlet, "on"), actionButton(outlet, "off"), actionButton(outlet, "cycle")); article.appendChild(actions); }
+    if (powerActionsEnabled && state.session.navigation.canControlPower) { const actions = document.createElement("div"); actions.className = "row-actions"; actions.append(actionButton(outlet, "on"), actionButton(outlet, "off"), actionButton(outlet, "cycle")); article.appendChild(actions); }
     grid.appendChild(article);
   }
   setText("total-count", outlets.length); setText("on-count", outlets.filter((item) => item.state === "on").length); setText("unknown-count", outlets.filter((item) => item.state === "unknown").length);

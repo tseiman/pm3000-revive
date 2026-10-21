@@ -43,6 +43,8 @@ PDU and inventory revisions use separate domain prefixes. Every detail lookup an
 
 ## Outlet actions
 
+Backend dispatch is currently disabled. The route retains its closed input, authentication, authorization, and CSRF boundary, but every otherwise valid request returns `503 action_contract_unverified` before opening the Avtrans socket.
+
 The only request shape is:
 
 ```json
@@ -59,11 +61,10 @@ Rules:
 - body limit is 1,024 bytes of UTF-8 JSON;
 - bearer callers require `control` scope and allowlist membership;
 - browser callers require a valid session, PM3000-derived power capability, and CSRF;
-- the supplied inventory revision must match a fresh topology;
-- the device row identity is resolved server-side and is never accepted from the client;
-- the adapter sends only the fixed `units.topology`/`topologyTable` form and accepts success only when the response confirms the requested action;
-- GSP logout runs during cleanup;
-- actions are never retried automatically, especially `cycle`.
+- no controller request is sent;
+- observed topology controls use `targPowerOn`, `targPowerOff`, and `targCycle`, while plain `on`, `off`, and `cycle` belong to PDU/outlet detail tables;
+- a sanitized browser-generated action request plus success/error responses must resolve path, table, action, row identity, and confirmation semantics before dispatch can be implemented;
+- future actions must never be retried automatically, especially `cycle`.
 
 ## Token administration
 

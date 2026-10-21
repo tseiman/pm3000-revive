@@ -153,15 +153,16 @@ class RestV1ContractTests(unittest.TestCase):
             derivation["testVectors"],
         )
 
-    def test_action_shape_is_closed_and_uses_only_the_fixed_backend_template(self) -> None:
+    def test_action_shape_is_closed_but_backend_dispatch_is_disabled(self) -> None:
         operation = self.contract["paths"]["/api/v1/outlets/{outletId}/actions"]["post"]
         self.assertEqual(1024, operation["x-max-body-bytes"])
         self.assertEqual(
-            "fresh topology; resolve opaque ID; action=on|off|cycle; path=units.topology; table=topologyTable",
+            "disabled: topology uses targPowerOn|targPowerOff|targCycle while the observed PDU page and firmware detail tables use on|off|cycle",
             operation["x-backend-template"],
         )
+        self.assertEqual("unverified-no-dispatch", operation["x-action-contract-status"])
         self.assertEqual(
-            {"204", "400", "401", "403", "404", "409", "413", "415", "503"},
+            {"400", "401", "403", "404", "413", "415", "503"},
             set(operation["responses"]),
         )
 
@@ -202,6 +203,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "inventory_stale",
                 "backend_unavailable",
                 "backend_protocol_error",
+                "action_contract_unverified",
                 "action_outcome_unknown",
                 "internal_error",
                 "last_administrator",

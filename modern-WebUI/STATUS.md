@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-The compact write-capable candidate is complete offline and awaits controlled device validation. The previously installed `0.1` pilot remains the live baseline; no current session, token-admin, or outlet-action code has been installed or executed on the appliance.
+The compact session, token-administration, and read-only inventory candidate is complete offline. The previously installed `0.1` pilot remains the live baseline; no current session, token-admin, or outlet-action code has been installed or executed on the appliance. Outlet action dispatch is fail-closed pending observed action request/response fixtures.
 
 ## Implemented
 
@@ -11,7 +11,7 @@ The compact write-capable candidate is complete offline and awaits controlled de
 - Server-derived, fixed-allowlist navigation and conservative rights gates.
 - External REST bearer authentication with `read`, `control`, and `admin` scopes and optional outlet allowlists.
 - Token list/create/enable/disable/revoke; digest-only persistence, one-time secret output, final-administrator protection, and preserved production store at `/mnt/hdUser/pm3000-revive/rest/tokens.json`.
-- Outlet inventory plus `on`, `off`, and `cycle`: closed JSON input, stale-inventory check, fresh topology read, server-side row resolution, fixed Avtrans shape, exact action confirmation, and logout cleanup.
+- Outlet inventory plus authenticated validation of `on`, `off`, and `cycle` JSON requests. No action reaches Avtrans: the available evidence exposes conflicting action families and does not prove a response contract.
 - Dependency-free browser UI using PM3000 sessions rather than bearer-token login.
 - Full rights-filtered observed navigation; non-migrated pages continue through the legacy UI.
 - Backup-first one-command host installer using a temporary OpenSSH ControlMaster; manual rollback remains separate.
@@ -19,7 +19,7 @@ The compact write-capable candidate is complete offline and awaits controlled de
 
 ## Current verification
 
-- Repository suite: 148 tests passing.
+- Repository suite: 156 tests passing.
 - Host C99 build: `-Wall -Wextra -Werror -pedantic` passing.
 - Static PPC target build and QEMU `-cpu e300c3` health/utility checks passing.
 - PPC REST binary: 197,876 bytes.
@@ -36,7 +36,7 @@ The next operation is not automatic. It requires an approved maintenance window 
 2. Verify Apache syntax, `/`, `/modern/`, and `/api/v1/health` without changing settings.
 3. Verify login/logout and navigation first with an administrator, then a restricted PM3000 account.
 4. Verify token create/list/disable/enable/revoke and confirm the secret is shown once.
-5. On one designated test outlet only, verify `on`, `off`, and `cycle` separately with physical confirmation.
+5. Capture and sanitize the legacy browser-generated request and response for one explicitly approved action without replaying it. Only after the topology/detail action contract is resolved may a separately reviewed test build enable one designated test outlet.
 
 No writable modern settings form is enabled yet. Firmware evidence proves the Network Settings `save` path and primary fields, but checkbox sections contain additional server-generated parameters. A sanitized real `get` response and matching `save` request are required before implementing a closed serializer; partial saves are intentionally rejected rather than risk network loss. See `DEFERRED-IMPROVEMENTS.md`.
 

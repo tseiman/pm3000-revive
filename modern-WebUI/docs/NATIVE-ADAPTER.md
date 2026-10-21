@@ -6,7 +6,7 @@ This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contrac
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-The current write-capable candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution.
+The current session/token/read-only candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution. Outlet action dispatch is disabled.
 
 ## Implemented routes
 
@@ -17,9 +17,9 @@ The current write-capable candidate has not been installed on a device. Developm
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
-  - closed `on`, `off`, and `cycle` actions only
-  - resolves the current controller row from a fresh topology response
-  - rejects stale inventory revisions and ambiguous/missing identities
+  - validates closed `on`, `off`, and `cycle` input
+  - validates authentication, authorization, and browser CSRF
+  - returns `503 action_contract_unverified` without controller access
 - `GET /api/v1/tokens`
 - `POST /api/v1/tokens`
 - `POST /api/v1/tokens/{tokenId}/enable`
@@ -108,7 +108,7 @@ Status: 200 OK
 
 ### Backend projection
 
-The Avtrans client has no generic proxy or free-form command interface. It emits only closed, observed login, navigation, topology, logout, and outlet `on`/`off`/`cycle` requests. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. The topology projector maps only approved fields to REST v1.
+The Avtrans client has no generic proxy or free-form command interface. Active routes emit only closed, observed login, navigation, topology, and logout requests. Both retained outlet-action helpers return before login or socket access, and the HTTP route is separately fail-closed. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. The topology projector maps only approved fields to REST v1.
 
 Malformed, oversized, ambiguous, duplicate, or unexpected backend data fails closed. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
 
@@ -132,9 +132,9 @@ A created bearer value appears only in its one-time `201` response. While the ex
 
 ### Power actions
 
-The action route validates HTTPS, session or bearer authorization, scope/right, outlet permission, route shape, and inventory revision. It logs in through the closed controller request, retrieves fresh topology, resolves the opaque outlet ID to exactly one current controller row, sends only `on`, `off`, or `cycle`, validates the structural confirmation, and logs out.
+The action route validates HTTPS, session or bearer authorization, scope/right, outlet permission, route shape, and CSRF, then returns `503 action_contract_unverified` without opening the controller socket. The observed topology page defines `targPowerOn`, `targPowerOff`, and `targCycle`; `on`, `off`, and `cycle` are defined for PDU/outlet detail tables. Existing read-only fixtures do not prove which full request/response contract should back the REST action.
 
-Failure after dispatch is reported as `action_outcome_unknown`, not as a safe pre-dispatch failure; clients must not retry automatically. No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed.
+No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed. A future implementation requires sanitized browser-generated action and response fixtures and must preserve the existing no-retry/unknown-outcome safety model.
 
 ## Deployment preconditions
 

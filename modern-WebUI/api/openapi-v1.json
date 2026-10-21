@@ -138,7 +138,7 @@
       ],
       "post": {
         "operationId": "requestOutletAction",
-        "summary": "Apply a rights-gated action to an outlet resolved through a fresh inventory read",
+        "summary": "Validate an outlet action request without dispatching it",
         "security": [
           {
             "bearerAuth": []
@@ -171,9 +171,7 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "$ref": "#/components/responses/InventoryStale"
-          },
+
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
@@ -181,7 +179,7 @@
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "503": {
-            "description": "The controller action was not confirmed.",
+            "description": "Outlet dispatch is disabled because the controller action contract is unverified.",
             "content": {
               "application/json": {
                 "schema": {
@@ -203,28 +201,12 @@
                 }
               }
             }
-          },
-          "204": {
-            "description": "The controller confirmed the outlet action.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
           }
         },
         "x-required-scope": "control",
         "x-outlet-allowlist-behavior": "require-membership",
-        "x-backend-template": "fresh topology; resolve opaque ID; action=on|off|cycle; path=units.topology; table=topologyTable",
+        "x-backend-template": "disabled: topology uses targPowerOn|targPowerOff|targCycle while the observed PDU page and firmware detail tables use on|off|cycle",
+        "x-action-contract-status": "unverified-no-dispatch",
         "x-csrf-required-for-cookie-auth": true
       }
     },
@@ -770,6 +752,7 @@
           "inventory_stale",
           "backend_unavailable",
           "backend_protocol_error",
+          "action_contract_unverified",
           "action_outcome_unknown",
           "internal_error",
           "last_administrator",

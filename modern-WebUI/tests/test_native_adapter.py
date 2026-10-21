@@ -851,100 +851,31 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIsNone(store.authenticate(delivered["token"]))
             self.assertEqual([], list(store_path.parent.glob(".tokens.*")))
 
-    def test_outlet_action_uses_fresh_topology_identity_and_logs_out(self) -> None:
+    def test_outlet_action_is_authenticated_then_disabled_without_backend_contact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
-            socket_path = root / "avtrans.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
-            projected = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
-            outlet_id = projected["outlets"][0]["id"]
-            revision = projected["inventoryRevision"]
+            outlet_id = "A" * 22
             controller = store.create_token(
-                administrator.plaintext,
-                label="Controller",
-                scope="control",
-                outlets=[outlet_id],
+                administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
             )
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
-            action_response = b"<avtrans><action>on</action><paths><path>units.topology</path></paths></avtrans>"
-            with FakeAvtransController(
-                socket_path,
-                [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), action_response, LOGOUT_RESPONSE.read_bytes()],
-            ) as controller_backend:
-                result = self.run_cgi(
-                    "POST",
-                    f"/api/v1/outlets/{outlet_id}/actions",
-                    authorization=f"Bearer {controller.plaintext}",
-                    body=json.dumps({"action": "on", "inventoryRevision": revision}).encode(),
-                    content_type="application/json",
-                    extra_environment={
-                        "PM3000_TOKEN_STORE": str(store_path),
-                        "PM3000_CREDENTIALS": str(credentials_path),
-                        "PM3000_AVTRANS_SOCKET": str(socket_path),
-                    },
-                )
-
-            self.assertEqual(0, result.returncode, result.stderr)
-            self.assertIn(b"Status: 204", result.stdout)
-            self.assertEqual(4, len(controller_backend.requests))
-            action_request = controller_backend.requests[2][1]
-            raw_identity = next(
-                row.attrib["id"]
-                for row in ET.parse(OBSERVED).iter("array")
-                if any(parameter.attrib.get("id") == "type" and
-                       (parameter.findtext("value") or "") == "outlet"
-                       for parameter in row.findall("parameter"))
+            socket_path = root / "must-not-open.sock"
+            result = self.run_cgi(
+                "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                authorization=f"Bearer {controller.plaintext}",
+                body=b'{"action":"on","inventoryRevision":"AAAAAAAAAAAAAAAAAAAAAA"}',
+                content_type="application/json",
+                extra_environment={
+                    "PM3000_TOKEN_STORE": str(store_path),
+                    "PM3000_AVTRANS_SOCKET": str(socket_path),
+                },
             )
-            self.assertIn(b"<action>on</action>", action_request)
-            self.assertIn(b"<path>units.topology</path>", action_request)
-            self.assertIn(b'<section structure="table" id="topologyTable">', action_request)
-            self.assertIn(f'<array id="{raw_identity}"></array>'.encode(), action_request)
-            self.assertIn(b"<action>logout</action>", controller_backend.requests[3][1])
-
-    def test_power_action_requires_exact_structural_confirmation(self) -> None:
-        confirmations = (
-            b"<avtrans><!-- <action>on</action> --><action>off</action><paths><path>units.topology</path></paths></avtrans>",
-            b"<avtrans><action>on</action><action>on</action><paths><path>units.topology</path></paths></avtrans>",
-            b"<avtrans><action>on</action><paths><path>wrong</path></paths></avtrans>",
-            b"<avtrans><action>on</action><paths><path>units.topology</path></paths><error>denied</error></avtrans>",
-            b"<avtrans><action>on</action><paths><path>units.topology</path></paths></avtrans><trailing />",
-        )
-        for confirmation in confirmations:
-            with self.subTest(confirmation=confirmation), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                store_path = root / "rest" / "tokens.json"
-                credentials_path = root / "service.credentials"
-                socket_path = root / "avtrans.sock"
-                store = token_store.TokenStore(store_path)
-                administrator = store.bootstrap("Administrator")
-                projected = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
-                outlet_id = projected["outlets"][0]["id"]
-                controller = store.create_token(
-                    administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
-                )
-                credentials_path.write_text("service-user\nservice-password\n")
-                credentials_path.chmod(0o600)
-                with FakeAvtransController(
-                    socket_path,
-                    [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), confirmation, LOGOUT_RESPONSE.read_bytes()],
-                ):
-                    result = self.run_cgi(
-                        "POST", f"/api/v1/outlets/{outlet_id}/actions",
-                        authorization=f"Bearer {controller.plaintext}",
-                        body=json.dumps({"action": "on", "inventoryRevision": projected["inventoryRevision"]}).encode(),
-                        content_type="application/json",
-                        extra_environment={
-                            "PM3000_TOKEN_STORE": str(store_path),
-                            "PM3000_CREDENTIALS": str(credentials_path),
-                            "PM3000_AVTRANS_SOCKET": str(socket_path),
-                        },
-                    )
-                _headers, response = self.cgi_json(result)
-                self.assertEqual("action_outcome_unknown", response["code"])
+            _headers, response = self.cgi_json(result)
+            self.assertIn(b"Status: 503", result.stdout)
+            self.assertEqual("action_contract_unverified", response["code"])
+            self.assertFalse(socket_path.exists())
 
     def test_action_request_is_validated_before_disabled_response_without_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

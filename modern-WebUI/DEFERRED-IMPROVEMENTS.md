@@ -4,9 +4,10 @@ This file records deliberately deferred work that is not required for the compac
 
 ## Requires controlled PM3000 fixtures
 
+- **Legacy menu modernization:** the complete 43-page leaf-menu cross-check, current implementation status, static read/write evidence, and prioritized safe expansion are documented in [`docs/MENU-CAPABILITY-CROSSCHECK.md`](docs/MENU-CAPABILITY-CROSSCHECK.md).
 - **Writable Network Settings page:** firmware evidence proves the `save` action, path `units.network.networkSettings`, and primary fields (`hostname`, `primarydns`, `secondarydns`, `domain`, `enableIpv6`, `dhcpv6-dns`, `dhcpv6-domain`). A sanitized real `get` response and matching browser `save` request are still required because checkbox sections contain additional server-generated parameters. Do not issue a partial save: it may remove hidden state or make the appliance unreachable.
 - **Additional writable settings:** capture one sanitized `get`/`save` pair per page before implementing a closed serializer. Never add a generic Avtrans proxy.
-- **Power action confirmation:** offline fixtures prove the path, table, row resolution, actions, CSRF and rights gates. Confirm `on`, `off`, and `cycle` one at a time on a designated test outlet before production use.
+- **Power action contract:** backend dispatch is disabled. The observed topology page exposes `targPowerOn`, `targPowerOff`, and `targCycle`; plain `on`, `off`, and `cycle` belong to PDU/outlet detail tables. Capture sanitized browser-generated action requests and success/error responses before selecting a path/table/action tuple or enabling a designated test outlet.
 - **Navigation capability comparison:** compare the modern fixed allowlist with at least one administrator and one restricted PM3000 account.
 
 ## Non-critical UI improvements

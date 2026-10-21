@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum { ACTION_CONTRACT_UNVERIFIED = 4 };
+
 static void cgi_headers_extra(unsigned int status, const char *reason,
                               const char *cookie) {
     printf("Status: %u %s\r\nContent-Type: application/json\r\n"
@@ -620,10 +622,7 @@ static int run_cgi(void) {
             if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
             if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
             if (!authorization.authorized) return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet action.");
-            auth_result = pm3000_apply_outlet_action(
-                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-                configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
-                outlet_id, revision, action, error, sizeof(error));
+            auth_result = ACTION_CONTRACT_UNVERIFIED;
         } else {
             if (load_request_session(
                     configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
@@ -634,10 +633,11 @@ static int run_cgi(void) {
                 return cgi_error(403U, "Forbidden", "forbidden", "Power control is not permitted.");
             if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
                 return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
-            auth_result = pm3000_apply_outlet_action_session(
-                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-                gui_session.sid, outlet_id, revision, action, error, sizeof(error));
+            auth_result = ACTION_CONTRACT_UNVERIFIED;
         }
+        if (auth_result == ACTION_CONTRACT_UNVERIFIED)
+            return cgi_error(503U, "Service Unavailable", "action_contract_unverified",
+                             "Outlet actions are disabled until an observed controller contract is available.");
         if (auth_result == 1) return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
         if (auth_result == 2) return cgi_error(409U, "Conflict", "inventory_changed", "Refresh the outlet inventory and retry.");
         if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The outlet action may have been dispatched; do not retry automatically.");

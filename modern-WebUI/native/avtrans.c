@@ -212,6 +212,8 @@ int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_
     size_t login_length = 0, topology_length = 0, action_length = 0, logout_length = 0;
     int result = -1, resolution;
     error[0] = '\0';
+    set_error(error, error_size, "outlet action contract unverified");
+    return -1;
     if ((strcmp(action, "on") != 0 && strcmp(action, "off") != 0 && strcmp(action, "cycle") != 0) ||
         read_credentials(credentials_path, username, password, error, error_size) != 0 ||
         xml_escape(username, escaped_user, sizeof(escaped_user)) != 0 ||
@@ -365,6 +367,8 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
     size_t topology_length = 0U, response_length = 0U;
     int resolution, result = -1;
     error[0] = '\0';
+    set_error(error, error_size, "outlet action contract unverified");
+    return -1;
     if ((strcmp(action, "on") != 0 && strcmp(action, "off") != 0 && strcmp(action, "cycle") != 0) ||
         pm3000_fetch_topology_session(socket_path, sid, &topology, &topology_length,
                                       error, error_size) != 0) goto done;
