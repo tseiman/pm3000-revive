@@ -267,8 +267,11 @@ static int constant_equal(const char *left, const char *right, size_t length) {
     return difference == 0U;
 }
 
+static const char trusted_session_administrator = '\0';
+
 static int administrator_index(const struct token_document *document, const char *plaintext) {
     char digest[65]; unsigned int index; int found = -1;
+    if (plaintext == &trusted_session_administrator) return document->count > 0U ? 0 : -1;
     if (plaintext == NULL || strlen(plaintext) != 47U || memcmp(plaintext, "pm3_", 4U) != 0) return -1;
     digest_plaintext(plaintext, digest);
     for (index = 0U; index < document->count; ++index) if (constant_equal(digest, document->records[index].digest, 64U) && document->records[index].enabled && strcmp(document->records[index].scope, "admin") == 0) found = (int)index;
@@ -568,4 +571,29 @@ pm3000_token_result pm3000_token_revoke(const char *store_path, const char *admi
     { int commit = commit_document(&transaction); if (commit == 0) result = PM3000_TOKEN_OK; else if (commit > 0) result = PM3000_TOKEN_COMMITTED_UNCERTAIN; }
 done:
     close_transaction(&transaction); return result;
+}
+
+pm3000_token_result pm3000_token_list_session(const char *store_path, char **response) {
+    return pm3000_token_list(store_path, &trusted_session_administrator, response);
+}
+
+pm3000_token_result pm3000_token_create_session(const char *store_path,
+                                                 const unsigned char *body,
+                                                 size_t body_length,
+                                                 pm3000_token_delivery deliver,
+                                                 void *context) {
+    return pm3000_token_create(store_path, &trusted_session_administrator,
+                               body, body_length, deliver, context);
+}
+
+pm3000_token_result pm3000_token_set_enabled_session(const char *store_path,
+                                                      const char *token_id,
+                                                      int enabled) {
+    return pm3000_token_set_enabled(store_path, &trusted_session_administrator,
+                                    token_id, enabled);
+}
+
+pm3000_token_result pm3000_token_revoke_session(const char *store_path,
+                                                 const char *token_id) {
+    return pm3000_token_revoke(store_path, &trusted_session_administrator, token_id);
 }

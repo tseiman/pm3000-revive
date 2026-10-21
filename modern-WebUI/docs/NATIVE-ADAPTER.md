@@ -1,28 +1,32 @@
 # Native REST v1 adapter
 
-Stage 4 provides a bounded C99 CGI runtime for the PM3000 REST v1 contract. It is designed for the existing PowerPC e300c3, big-endian, soft-float firmware environment and preserves the vendor backend chain:
+This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contract. It is designed for the existing PowerPC e300c3, big-endian, soft-float firmware environment and preserves the vendor backend chain:
 
 ```text
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-The runtime has not been installed on a device. All development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution.
+The current write-capable candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution.
 
 ## Implemented routes
 
 - `GET /api/v1/health`
+- `POST /api/v1/session`
+- `GET /api/v1/session`
+- `DELETE /api/v1/session`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
-  - always returns `503 action_disabled` after authorization
-  - never opens the Avtrans socket
+  - closed `on`, `off`, and `cycle` actions only
+  - resolves the current controller row from a fresh topology response
+  - rejects stale inventory revisions and ambiguous/missing identities
 - `GET /api/v1/tokens`
 - `POST /api/v1/tokens`
 - `POST /api/v1/tokens/{tokenId}/enable`
 - `POST /api/v1/tokens/{tokenId}/disable`
 - `DELETE /api/v1/tokens/{tokenId}`
 
-Every route requires `HTTPS=on` except no route is exposed over plain HTTP. The health route is unauthenticated after the HTTPS gate. Outlet and token routes require bearer authorization according to `api/openapi-v1.json`.
+Every route requires `HTTPS=on`; no route is exposed over plain HTTP. The health route is unauthenticated after the HTTPS gate. Browser requests use PM3000-backed server-side sessions and CSRF protection. External clients use bearer authorization according to `api/openapi-v1.json`.
 
 ## Fixed production paths
 
@@ -32,6 +36,7 @@ Production builds do not accept environment overrides:
 - Token lock: `/mnt/hdUser/pm3000-revive/rest/tokens.json.lock`
 - Avtrans socket: `/dev/avtrans_socket`
 - Controller credentials: `/etc/pm3000-rest/controller.credentials`
+- Browser sessions: `/tmp/pm3000-modern-sessions`
 
 `PM3000_TESTING` host builds accept path overrides only for isolated tests. The target Makefile never defines `PM3000_TESTING`.
 
@@ -62,7 +67,7 @@ The target is stripped with the matching Buildroot `powerpc-buildroot-linux-musl
 modern-WebUI/native/build/pm3000-rest-ppc32
 ```
 
-The verified Stage 4 build is a stripped, statically linked ELF32 MSB PowerPC executable. Two clean builds were byte-identical. The final binary and Stage 5 production assets must remain below the combined 400 KiB release budget.
+The target is a stripped, statically linked ELF32 MSB PowerPC executable. The binary and production assets remain subject to the combined 400 KiB release budget.
 
 ## Verification
 
@@ -103,7 +108,7 @@ Status: 200 OK
 
 ### Backend projection
 
-The Avtrans client has no generic proxy or free-form command interface. It emits only the observed login, read-only `get units.topology`, and logout sequence. The XML projector accepts one bounded, observed topology shape and maps only approved fields to REST v1.
+The Avtrans client has no generic proxy or free-form command interface. It emits only closed, observed login, navigation, topology, logout, and outlet `on`/`off`/`cycle` requests. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. The topology projector maps only approved fields to REST v1.
 
 Malformed, oversized, ambiguous, duplicate, or unexpected backend data fails closed. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
 
@@ -125,19 +130,15 @@ The native reader and writer enforce the Stage 3 canonical store contract:
 
 A created bearer value appears only in its one-time `201` response. While the exclusive lock is held, the candidate store is first written and `fsync`ed to a same-directory temporary file. The response is then written and flushed before the atomic rename. A response-delivery failure removes the candidate and preserves the old store byte-for-byte. A subsequent pre-rename failure can leave the client with an inactive credential, but cannot leave an active credential whose plaintext was not delivered. Once rename succeeds, directory-`fsync` uncertainty is reported locally and never rolled back; the already delivered credential remains the authoritative result. List responses contain metadata only. Error responses and tests must not contain token plaintext or digests.
 
-### Disabled power actions
+### Power actions
 
-The action route validates HTTPS, bearer authorization, scope, outlet permission, and route shape, then returns:
+The action route validates HTTPS, session or bearer authorization, scope/right, outlet permission, route shape, and inventory revision. It logs in through the closed controller request, retrieves fresh topology, resolves the opaque outlet ID to exactly one current controller row, sends only `on`, `off`, or `cycle`, validates the structural confirmation, and logs out.
 
-```json
-{"code":"action_disabled","message":"Outlet actions are disabled."}
-```
-
-It does not open `/dev/avtrans_socket`, emit XML, change settings, reboot the device, or switch an outlet.
+Failure after dispatch is reported as `action_outcome_unknown`, not as a safe pre-dispatch failure; clients must not retry automatically. No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed.
 
 ## Deployment preconditions
 
-No deployment is part of Stage 4. Before a later deployment stage, the installer must independently provide and verify:
+Before installing a write-capable candidate, the installer must independently provide and verify:
 
 1. an owner-only persistent directory at `/mnt/hdUser/pm3000-revive/rest/` with mode `0700`;
 2. the canonical token store and lock file with mode `0600`;

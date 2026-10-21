@@ -27,5 +27,17 @@ pm3000_token_result pm3000_token_set_enabled(const char *store_path, const char 
                                               const char *token_id, int enabled);
 pm3000_token_result pm3000_token_revoke(const char *store_path, const char *administrator,
                                          const char *token_id);
+/* Trusted entry points are for a separately authenticated, rights-gated WebUI session. */
+pm3000_token_result pm3000_token_list_session(const char *store_path, char **response);
+pm3000_token_result pm3000_token_create_session(const char *store_path,
+                                                 const unsigned char *body,
+                                                 size_t body_length,
+                                                 pm3000_token_delivery deliver,
+                                                 void *context);
+pm3000_token_result pm3000_token_set_enabled_session(const char *store_path,
+                                                      const char *token_id,
+                                                      int enabled);
+pm3000_token_result pm3000_token_revoke_session(const char *store_path,
+                                                 const char *token_id);
 
 #endif

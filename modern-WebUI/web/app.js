@@ -1,24 +1,66 @@
-const state = { token: "", view: "outlets", generation: 0, tokenRequest: 0, outlets: [], tokens: [] };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, tokenRequest: 0, outlets: [], tokens: [], inventoryRevision: "" };
 const $ = (id) => document.getElementById(id);
+let transitionTail = Promise.resolve();
+let loginPending = false;
+let logoutPending = false;
+let bootstrapPending = true;
+let tokenIssuancePending = false;
+
+function serializeTransition(operation) {
+  const current = transitionTail.then(operation, operation);
+  transitionTail = current.catch(() => {});
+  return current;
+}
+
+const menu = [
+  ["units.topology", "Access"], ["units.overview", "System Tools"],
+  ["units.powermanagement", "Power Management"], ["units.powermanagement.pdu_management", "PDUs"],
+  ["units.powermanagement.powerprofile_login", "Settings"], ["units.powermanagement.outlet_groups", "Outlet Groups"],
+  ["units.powermanagement.data_logging", "Data Logging"], ["units.applianceSettings", "System"],
+  ["units.applianceSettings.security", "Security"], ["units.applianceSettings.security.SecurityProfileNav", "Security Profile"],
+  ["units.applianceSettings.security.SecurityDSView", "DSView"], ["units.applianceSettings.date_and_time", "Date and Time"],
+  ["units.applianceSettings.date_and_time.date_time", "Date and Time"], ["units.applianceSettings.date_and_time.time_zone", "Time Zone"],
+  ["units.applianceSettings.help", "Help and Language"], ["units.applianceSettings.bootconfiguration", "Boot Configuration"],
+  ["units.applianceSettings.information", "Information"], ["units.applianceSettings.usage", "Usage"],
+  ["units.applianceSettings.usage.memory", "Memory"], ["units.applianceSettings.usage.flashUsage", "Flash Usage"],
+  ["units.network", "Network"], ["units.network.networkSettings", "Settings"], ["units.network.devices", "Devices"],
+  ["units.network.ipv4_st_routes", "IPv4 Static Routes"], ["units.network.ipv6_st_routes", "IPv6 Static Routes"],
+  ["units.network.hosts", "Hosts"], ["units.network.firewall", "Firewall"],
+  ["units.network.firewall.filter4Table", "IPv4 Filter Table"], ["units.network.firewall.filter6Table", "IPv6 Filter Table"],
+  ["units.network.SNMP", "SNMP"], ["units.authentication", "Authentication"],
+  ["units.authentication.unit_authentication", "Appliance Authentication"], ["units.authentication.authenticationservers", "Authentication Servers"],
+  ["units.authentication.authenticationservers.radius", "RADIUS"], ["units.authentication.authenticationservers.Tacacsplus", "TACACS+"],
+  ["units.authentication.authenticationservers.ldap_ad", "LDAP(S) / AD"], ["units.authentication.authenticationservers.kerberos", "Kerberos"],
+  ["units.authentication.authenticationservers.nis", "NIS"], ["units.authentication.authenticationservers.dsviewsrv", "DSView"],
+  ["units.users", "Users"], ["units.users.local_accounts", "Local Accounts"],
+  ["units.users.local_accounts.user_names", "User Names"], ["units.users.local_accounts.password_rules", "Password Rules"],
+  ["units.users.authorization", "Authorization"], ["units.users.authorization.authorgroups", "Groups"],
+  ["units.event_notification", "Events and Logs"], ["units.event_notification.events", "Event List"],
+  ["units.event_notification.settings", "Event Destinations"], ["units.event_notification.global_settings_databuffering", "Data Buffering"],
+  ["units.event_notification.sessions", "Appliance Logging"], ["units.activeSessions", "Active Sessions"],
+  ["units.monitoring", "Monitoring"], ["units.monitoring.networkmon", "Network"],
+  ["units.monitoring.networkmon.monitoringDevice", "Devices"], ["units.monitoring.networkmon.monitoringIpv4RouteTable", "IPv4 Routing Table"],
+  ["units.monitoring.networkmon.monitoringIpv6RouteTable", "IPv6 Routing Table"], ["units.monitoring.serialstatistics", "Serial Ports"],
+  ["units.change_password", "Change Password"]
+];
 
 function apiErrorMessage(payload, fallback) {
-  if (payload && typeof payload.message === "string") return payload.message;
-  if (payload && payload.error && typeof payload.error.message === "string") return payload.error.message;
-  return fallback;
+  return payload && typeof payload.message === "string" ? payload.message : fallback;
 }
 
 async function api(path, options = {}) {
   const generation = state.generation;
   const headers = new Headers(options.headers || {});
-  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
+  const method = options.method || "GET";
   if (options.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...options, headers, cache: "no-store" });
+  if (method !== "GET" && options.csrf !== false && state.csrf) headers.set("X-CSRF-Token", state.csrf);
+  const response = await fetch(path, { ...options, method, headers, cache: "no-store", credentials: "same-origin" });
   let payload = null;
-  try { payload = await response.json(); } catch { /* closed below */ }
-  if (generation !== state.generation) throw new Error("Session changed.");
-  if (response.status === 401) {
-    disconnect("The token is no longer authorized.");
-    throw new Error("Unauthorized.");
+  if (response.status !== 204) { try { payload = await response.json(); } catch { /* handled below */ } }
+  if (generation !== state.generation && !options.deliverAfterSessionChange) throw new Error("Session changed.");
+  if (response.status === 401 && path !== "/api/v1/session") {
+    disconnectLocal("Your PM3000 session has expired.");
+    throw new Error("Session expired.");
   }
   if (!response.ok) throw new Error(apiErrorMessage(payload, `Request failed (${response.status}).`));
   return payload;
@@ -28,160 +70,213 @@ function setText(id, value) { $(id).textContent = String(value); }
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 function toast(message) {
   const node = $("toast"); node.textContent = message; node.hidden = false;
-  window.clearTimeout(toast.timer); toast.timer = window.setTimeout(() => { node.hidden = true; }, 2600);
+  window.clearTimeout(toast.timer); toast.timer = window.setTimeout(() => { node.hidden = true; }, 2800);
+}
+function clearOneTimeSecret() { setText("new-token-secret", ""); setText("copy-state", ""); }
+
+function setLoginDisabled(disabled) {
+  $("username-input").disabled = disabled; $("password-input").disabled = disabled;
+  $("connect-form").querySelector('button[type="submit"]').disabled = disabled;
 }
 
-function disconnect(message = "") {
-  state.generation += 1; state.token = ""; state.outlets = []; state.tokens = [];
+function disconnectLocal(message = "", enableLogin = true) {
+  state.generation += 1; state.outletRequest += 1; state.tokenRequest += 1;
+  state.session = null; state.csrf = ""; state.outlets = []; state.tokens = []; state.inventoryRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
-  clearOneTimeSecret();
-  clear($("outlet-grid")); clear($("token-rows")); $("authenticated").hidden = true;
-  $("login-view").hidden = false; $("token-input").value = ""; $("login-error").textContent = message;
-  $("token-input").focus();
+  clearOneTimeSecret(); clear($("outlet-grid")); clear($("token-rows")); clear($("navigation"));
+  $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
+  setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
+  const allowLogin = enableLogin && !tokenIssuancePending;
+  setLoginDisabled(!allowLogin);
+  if (allowLogin) $("username-input").focus();
 }
 
-function statusLabel(value) {
-  if (value === "on") return "On";
-  if (value === "off") return "Off";
-  return "Unknown";
+async function logoutTransition() {
+  state.generation += 1;
+  const csrf = state.csrf;
+  const request = fetch("/api/v1/session", {
+    method: "DELETE", headers: { "X-CSRF-Token": csrf }, cache: "no-store", credentials: "same-origin"
+  });
+  disconnectLocal("", false);
+  try {
+    const response = await request;
+    let payload = null;
+    if (response.status !== 204) { try { payload = await response.json(); } catch { /* handled below */ } }
+    if (!response.ok) throw new Error(apiErrorMessage(payload, `Request failed (${response.status}).`));
+    state.generation += 1;
+  } catch (error) { toast(error.message); }
+  finally { logoutPending = false; setLoginDisabled(false); $("username-input").focus(); }
 }
 
-function renderOutlets(collection) {
-  const outlets = Array.isArray(collection.outlets) ? collection.outlets : [];
-  state.outlets = outlets;
-  const grid = $("outlet-grid"); clear(grid);
-  for (const outlet of outlets) {
-    const article = document.createElement("article"); article.className = "outlet-card";
-    const header = document.createElement("div"); header.className = "outlet-card-header";
-    const position = document.createElement("span"); position.className = "outlet-position";
-    position.textContent = `OUTLET ${String(outlet.position).padStart(2, "0")}`;
-    const status = document.createElement("span"); status.className = `status-chip${outlet.state === "unknown" ? " unknown" : ""}`;
-    status.textContent = statusLabel(outlet.state);
-    const title = document.createElement("h3"); title.textContent = outlet.name || `Outlet ${outlet.position}`;
-    const identifier = document.createElement("p"); identifier.textContent = outlet.id;
-    header.append(position, status); article.append(header, title, identifier); grid.appendChild(article);
+function showAuthenticated(session) {
+  state.session = session; state.csrf = session.csrfToken;
+  $("login-view").hidden = true; $("authenticated").hidden = false; $("disconnect").hidden = false;
+  setText("signed-in-user", session.identity.username); renderNavigation(); switchView("outlets"); loadOutlets();
+}
+
+function renderNavigation() {
+  const node = $("navigation"); clear(node);
+  const allowed = new Set(state.session.navigation.paths || []);
+  const label = document.createElement("p"); label.className = "nav-label"; label.textContent = "Authorized features"; node.appendChild(label);
+  for (const [path, text] of menu) {
+    if (!allowed.has(path)) continue;
+    const button = document.createElement("button"); button.type = "button"; button.className = "nav-item legacy-nav";
+    button.style.paddingLeft = `${12 + Math.min(path.split(".").length - 2, 3) * 13}px`;
+    button.dataset.path = path; button.textContent = text;
+    button.addEventListener("click", () => switchView(path === "units.topology" || path === "units.powermanagement.pdu_management" ? "outlets" : "legacy", path, text));
+    node.appendChild(button);
   }
-  const onCount = outlets.filter((item) => item.state === "on").length;
-  const unknownCount = outlets.filter((item) => item.state === "unknown").length;
-  setText("total-count", outlets.length); setText("on-count", onCount); setText("unknown-count", unknownCount);
-  setText("inventory-revision", `Inventory revision ${collection.inventoryRevision || "—"}`);
-  setText("updated-at", `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date())}`);
-  $("outlet-empty").hidden = outlets.length !== 0;
+  if (state.session.navigation.canManageTokens) {
+    const heading = document.createElement("p"); heading.className = "nav-label"; heading.textContent = "REST API"; node.appendChild(heading);
+    const button = document.createElement("button"); button.type = "button"; button.className = "nav-item"; button.dataset.view = "tokens"; button.textContent = "Bearer tokens";
+    button.addEventListener("click", () => switchView("tokens")); node.appendChild(button);
+  }
 }
 
-async function loadOutlets() {
-  $("refresh-outlets").disabled = true;
-  try { renderOutlets(await api("/api/v1/outlets")); }
-  catch (error) { if (state.token) toast(error.message); }
-  finally { $("refresh-outlets").disabled = false; }
+function switchView(view, path = "", label = "") {
+  state.view = view;
+  $("outlets-view").hidden = view !== "outlets"; $("tokens-view").hidden = view !== "tokens"; $("legacy-view").hidden = view !== "legacy";
+  for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
+  let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
+  if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
+  if (!active && view === "outlets") active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === "units.topology");
+  if (active) active.setAttribute("aria-current", "page");
+  if (view === "tokens") loadTokens();
+  if (view === "legacy") { setText("legacy-title", label); setText("legacy-path", path); }
 }
 
-function tokenActionButton(record, action) {
-  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "revoke" ? " danger" : ""}`;
-  button.textContent = action === "revoke" ? "Revoke" : record.enabled ? "Disable" : "Enable";
+function statusLabel(value) { return value === "on" ? "On" : value === "off" ? "Off" : "Unknown"; }
+
+function actionButton(outlet, action) {
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
+  if ((action === "on" && outlet.state === "on") || (action === "off" && outlet.state === "off")) button.disabled = true;
   button.addEventListener("click", async () => {
+    if (!window.confirm(`${button.textContent} ${outlet.name || `outlet ${outlet.position}`}?`)) return;
     button.disabled = true;
     try {
-      const method = action === "revoke" ? "DELETE" : "POST";
-      const operation = action === "revoke" ? "" : `/${record.enabled ? "disable" : "enable"}`;
-      await api(`/api/v1/tokens/${encodeURIComponent(record.id)}${operation}`, { method });
-      toast(action === "revoke" ? "Token revoked." : `Token ${record.enabled ? "disabled" : "enabled"}.`);
-      await loadTokens();
+      await api(`/api/v1/outlets/${encodeURIComponent(outlet.id)}/actions`, { method: "POST", body: JSON.stringify({ action, inventoryRevision: state.inventoryRevision }) });
+      toast(`Outlet action ${action} accepted.`); await loadOutlets();
     } catch (error) { toast(error.message); button.disabled = false; }
   });
   return button;
 }
 
+function renderOutlets(collection) {
+  const outlets = Array.isArray(collection.outlets) ? collection.outlets : [];
+  state.outlets = outlets; state.inventoryRevision = collection.inventoryRevision || "";
+  const grid = $("outlet-grid"); clear(grid);
+  for (const outlet of outlets) {
+    const article = document.createElement("article"); article.className = "outlet-card";
+    const header = document.createElement("div"); header.className = "outlet-card-header";
+    const position = document.createElement("span"); position.className = "outlet-position"; position.textContent = `OUTLET ${String(outlet.position).padStart(2, "0")}`;
+    const status = document.createElement("span"); status.className = `status-chip${outlet.state === "unknown" ? " unknown" : ""}`; status.textContent = statusLabel(outlet.state);
+    const title = document.createElement("h3"); title.textContent = outlet.name || `Outlet ${outlet.position}`;
+    const identifier = document.createElement("p"); identifier.textContent = outlet.id;
+    header.append(position, status); article.append(header, title, identifier);
+    if (state.session.navigation.canControlPower) { const actions = document.createElement("div"); actions.className = "row-actions"; actions.append(actionButton(outlet, "on"), actionButton(outlet, "off"), actionButton(outlet, "cycle")); article.appendChild(actions); }
+    grid.appendChild(article);
+  }
+  setText("total-count", outlets.length); setText("on-count", outlets.filter((item) => item.state === "on").length); setText("unknown-count", outlets.filter((item) => item.state === "unknown").length);
+  setText("inventory-revision", `Inventory revision ${state.inventoryRevision || "—"}`);
+  setText("updated-at", `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date())}`);
+  $("outlet-empty").hidden = outlets.length !== 0;
+}
+
+async function loadOutlets() {
+  const request = ++state.outletRequest;
+  $("refresh-outlets").disabled = true;
+  try { const payload = await api("/api/v1/outlets"); if (request === state.outletRequest) renderOutlets(payload); }
+  catch (error) { if (request === state.outletRequest && state.session) toast(error.message); }
+  finally { if (request === state.outletRequest) $("refresh-outlets").disabled = false; }
+}
+
+function tokenActionButton(record, action) {
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "revoke" ? " danger" : ""}`; button.textContent = action === "revoke" ? "Revoke" : record.enabled ? "Disable" : "Enable";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { const method = action === "revoke" ? "DELETE" : "POST"; const operation = action === "revoke" ? "" : `/${record.enabled ? "disable" : "enable"}`; await api(`/api/v1/tokens/${encodeURIComponent(record.id)}${operation}`, { method }); toast(action === "revoke" ? "Token revoked." : `Token ${record.enabled ? "disabled" : "enabled"}.`); await loadTokens(); }
+    catch (error) { toast(error.message); button.disabled = false; }
+  });
+  return button;
+}
+
 function renderTokens(payload) {
-  const records = Array.isArray(payload.tokens) ? payload.tokens : [];
-  state.tokens = records; const body = $("token-rows"); clear(body);
+  const records = Array.isArray(payload.tokens) ? payload.tokens : []; state.tokens = records; const body = $("token-rows"); clear(body);
   for (const record of records) {
-    const row = document.createElement("tr");
-    const label = document.createElement("td"); label.textContent = record.label;
+    const row = document.createElement("tr"); const label = document.createElement("td"); label.textContent = record.label;
     const scopeCell = document.createElement("td"); const scope = document.createElement("span"); scope.className = "scope-badge"; scope.textContent = record.scope; scopeCell.appendChild(scope);
     const access = document.createElement("td"); access.textContent = record.outlets === null ? "All outlets" : `${record.outlets.length} selected`;
     const statusCell = document.createElement("td"); const enabled = document.createElement("span"); enabled.className = `enabled-badge${record.enabled ? "" : " disabled"}`; enabled.textContent = record.enabled ? "Enabled" : "Disabled"; statusCell.appendChild(enabled);
-    const id = document.createElement("td"); id.textContent = record.id;
-    const actions = document.createElement("td"); const group = document.createElement("div"); group.className = "row-actions"; group.append(tokenActionButton(record, "toggle"), tokenActionButton(record, "revoke")); actions.appendChild(group);
+    const id = document.createElement("td"); id.textContent = record.id; const actions = document.createElement("td"); const group = document.createElement("div"); group.className = "row-actions"; group.append(tokenActionButton(record, "toggle"), tokenActionButton(record, "revoke")); actions.appendChild(group);
     row.append(label, scopeCell, access, statusCell, id, actions); body.appendChild(row);
   }
   $("token-empty").hidden = records.length !== 0;
 }
 
 async function loadTokens() {
-  const request = ++state.tokenRequest;
-  $("refresh-tokens").disabled = true;
+  const request = ++state.tokenRequest; $("refresh-tokens").disabled = true;
   try { const payload = await api("/api/v1/tokens"); if (request === state.tokenRequest) renderTokens(payload); }
   catch (error) { if (request === state.tokenRequest) toast(error.message); }
   finally { if (request === state.tokenRequest) $("refresh-tokens").disabled = false; }
 }
 
-function switchView(view) {
-  state.view = view;
-  for (const button of document.querySelectorAll("[data-view]")) {
-    const active = button.dataset.view === view; button.classList.toggle("active", active);
-    if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
-  }
-  $("outlets-view").hidden = view !== "outlets"; $("tokens-view").hidden = view !== "tokens";
-  if (view === "tokens") loadTokens();
+async function loginTransition() {
+  $("login-error").textContent = ""; state.generation += 1;
+  const username = $("username-input").value; let password = $("password-input").value;
+  const requestBody = JSON.stringify({ username, password });
+  password = "";
+  $("password-input").value = "";
+  const session = await api("/api/v1/session", { method: "POST", csrf: false, body: requestBody });
+  showAuthenticated(session);
 }
 
-$("connect-form").addEventListener("submit", async (event) => {
-  event.preventDefault(); const button = event.submitter; button.disabled = true; $("login-error").textContent = "";
-  state.generation += 1; state.token = $("token-input").value;
-  try {
-    const collection = await api("/api/v1/outlets");
-    $("login-view").hidden = true; $("authenticated").hidden = false; renderOutlets(collection); switchView("outlets");
-  } catch (error) { if (state.token) { state.token = ""; $("login-error").textContent = error.message; } }
-  finally { button.disabled = false; }
-});
-
-$("disconnect").addEventListener("click", () => disconnect());
-$("refresh-outlets").addEventListener("click", loadOutlets);
-$("refresh-tokens").addEventListener("click", loadTokens);
-for (const button of document.querySelectorAll("[data-view]")) button.addEventListener("click", () => switchView(button.dataset.view));
-
-$("open-create-token").addEventListener("click", () => { $("create-error").textContent = ""; $("create-token-dialog").showModal(); $("token-label").focus(); });
-$("cancel-create").addEventListener("click", () => $("create-token-dialog").close());
-$("close-create-title").addEventListener("click", () => $("create-token-dialog").close());
-$("all-outlets").addEventListener("change", () => {
-  $("token-outlets").disabled = $("all-outlets").checked;
-  if (!$("token-outlets").disabled) $("token-outlets").focus();
-});
-$("create-token-form").addEventListener("submit", async (event) => {
+$("connect-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  const button = event.submitter;
-  if (!button || button.type !== "submit" || button.disabled) return;
-  button.disabled = true;
+  if (bootstrapPending || tokenIssuancePending || loginPending || logoutPending) return;
+  loginPending = true; setLoginDisabled(true);
+  serializeTransition(loginTransition).catch((error) => {
+    $("login-error").textContent = error.message;
+  }).finally(() => {
+    loginPending = false;
+    if (!logoutPending && !state.session) setLoginDisabled(false);
+  });
+});
+
+$("disconnect").addEventListener("click", () => {
+  if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
+  if (bootstrapPending || logoutPending || loginPending || !state.session) return;
+  logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);
+}); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-tokens").addEventListener("click", loadTokens);
+$("open-create-token").addEventListener("click", () => { $("create-error").textContent = ""; $("create-token-dialog").showModal(); $("token-label").focus(); });
+$("cancel-create").addEventListener("click", () => $("create-token-dialog").close()); $("close-create-title").addEventListener("click", () => $("create-token-dialog").close());
+$("all-outlets").addEventListener("change", () => { $("token-outlets").disabled = $("all-outlets").checked; if (!$("token-outlets").disabled) $("token-outlets").focus(); });
+$("create-token-form").addEventListener("submit", async (event) => {
+  event.preventDefault(); const button = event.submitter; if (!button || button.type !== "submit" || button.disabled) return; button.disabled = true;
   let outlets = null;
-  if (!$("all-outlets").checked) {
-    outlets = $("token-outlets").value.split(/\s+/u).filter(Boolean);
-    if (outlets.length > 256 || new Set(outlets).size !== outlets.length || outlets.some((id) => !/^[A-Za-z0-9_-]{22}$/u.test(id))) {
-      $("create-error").textContent = "Use at most 256 unique, 22-character opaque outlet IDs.";
-      button.disabled = false;
-      return;
-    }
-    outlets.sort();
-  }
-  const payload = { label: $("token-label").value, scope: $("token-scope").value };
-  if (outlets !== null) payload.outlets = outlets;
-  try {
-    const created = await api("/api/v1/tokens", { method: "POST", body: JSON.stringify(payload) });
-    $("create-token-dialog").close(); $("create-token-form").reset(); $("token-outlets").disabled = true; $("token-outlets").value = ""; setText("new-token-secret", created.token); $("copy-state").textContent = ""; $("token-secret-dialog").showModal(); await loadTokens();
-  } catch (error) { $("create-error").textContent = error.message; }
-  finally { button.disabled = false; }
+  if (!$("all-outlets").checked) { outlets = $("token-outlets").value.split(/\s+/u).filter(Boolean); if (outlets.length > 256 || new Set(outlets).size !== outlets.length || outlets.some((id) => !/^[A-Za-z0-9_-]{22}$/u.test(id))) { $("create-error").textContent = "Use at most 256 unique, 22-character opaque outlet IDs."; button.disabled = false; return; } outlets.sort(); }
+  const payload = { label: $("token-label").value, scope: $("token-scope").value }; if (outlets !== null) payload.outlets = outlets;
+  tokenIssuancePending = true; $("disconnect").disabled = true;
+  try { const created = await api("/api/v1/tokens", { method: "POST", body: JSON.stringify(payload), deliverAfterSessionChange: true }); $("create-token-dialog").close(); $("create-token-form").reset(); $("token-outlets").disabled = true; $("token-outlets").value = ""; setText("new-token-secret", created.token); $("copy-state").textContent = ""; $("token-secret-dialog").showModal(); if (state.session) await loadTokens(); }
+  catch (error) { $("create-error").textContent = error.message; } finally { tokenIssuancePending = false; $("disconnect").disabled = false; button.disabled = false; if (!state.session) { setLoginDisabled(false); $("username-input").focus(); } }
 });
-$("copy-secret").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("new-token-secret").textContent); setText("copy-state", "Copied to clipboard."); }
-  catch { setText("copy-state", "Copy was blocked. Select and copy the value manually."); }
-});
-function clearOneTimeSecret() {
-  setText("new-token-secret", "");
-  setText("copy-state", "");
-}
-$("token-secret-dialog").addEventListener("close", clearOneTimeSecret);
-$("close-secret").addEventListener("click", () => $("token-secret-dialog").close());
-window.addEventListener("pagehide", () => { state.token = ""; $("token-input").value = ""; clearOneTimeSecret(); });
+$("copy-secret").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("new-token-secret").textContent); setText("copy-state", "Copied to clipboard."); } catch { setText("copy-state", "Copy was blocked. Select and copy the value manually."); } });
+$("token-secret-dialog").addEventListener("close", clearOneTimeSecret); $("close-secret").addEventListener("click", () => $("token-secret-dialog").close());
 
 fetch("/api/v1/health", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setText("health-label", "Adapter ready"); }).catch(() => setText("health-label", "Adapter unavailable"));
+async function bootstrapTransition() {
+  const generation = state.generation;
+  try {
+    const session = await api("/api/v1/session");
+    if (generation !== state.generation) return;
+    showAuthenticated(session);
+  } catch {
+    if (generation !== state.generation) return;
+    disconnectLocal();
+  }
+}
+setLoginDisabled(true);
+serializeTransition(bootstrapTransition).finally(() => {
+  bootstrapPending = false;
+  if (!state.session) setLoginDisabled(false);
+});

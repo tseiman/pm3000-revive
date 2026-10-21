@@ -1,6 +1,7 @@
 #include "avtrans.h"
 #include "identifiers.h"
 #include "projector.h"
+#include "session.h"
 #include "token_admin.h"
 #include "token_auth.h"
 
@@ -9,17 +10,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void cgi_headers(unsigned int status, const char *reason) {
+static void cgi_headers_extra(unsigned int status, const char *reason,
+                              const char *cookie) {
     printf("Status: %u %s\r\nContent-Type: application/json\r\n"
-           "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n",
+           "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n",
            status, reason);
+    if (cookie != NULL) printf("Set-Cookie: %s\r\n", cookie);
+    fputs("\r\n", stdout);
+}
+
+static void cgi_headers(unsigned int status, const char *reason) {
+    cgi_headers_extra(status, reason, NULL);
+}
+
+static int cgi_error_extra(unsigned int status, const char *reason, const char *code,
+                           const char *message, const char *cookie) {
+    cgi_headers_extra(status, reason, cookie);
+    printf("{\"code\":\"%s\",\"message\":\"%s\"}\n", code, message);
+    return 0;
 }
 
 static int cgi_error(unsigned int status, const char *reason, const char *code,
                      const char *message) {
-    cgi_headers(status, reason);
-    printf("{\"code\":\"%s\",\"message\":\"%s\"}\n", code, message);
-    return 0;
+    return cgi_error_extra(status, reason, code, message, NULL);
 }
 
 static const char *configured_path(const char *name, const char *production) {
@@ -101,7 +114,40 @@ static int json_ascii_string(struct json_cursor *cursor, char *output, size_t ca
     return -1;
 }
 
-static int parse_action_request(const unsigned char *body, size_t length) {
+static int parse_session_request(const unsigned char *body, size_t length,
+                                 char username[129], char password[257]) {
+    struct json_cursor cursor = {body, length, 0U};
+    int first = 1, have_username = 0, have_password = 0;
+    if (length == 0U || json_character(&cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[32];
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset;
+            break;
+        }
+        if (!first && json_character(&cursor, ',') != 0) return -1;
+        first = 0;
+        json_space(&cursor);
+        if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+            json_character(&cursor, ':') != 0) return -1;
+        json_space(&cursor);
+        if (strcmp(key, "username") == 0) {
+            if (have_username || json_ascii_string(&cursor, username, 129U) != 0 ||
+                username[0] == '\0') return -1;
+            have_username = 1;
+        } else if (strcmp(key, "password") == 0) {
+            if (have_password || json_ascii_string(&cursor, password, 257U) != 0 ||
+                password[0] == '\0') return -1;
+            have_password = 1;
+        } else return -1;
+    }
+    json_space(&cursor);
+    return cursor.offset == cursor.length && have_username && have_password ? 0 : -1;
+}
+
+static int parse_action_request(const unsigned char *body, size_t length,
+                                char action[6], char revision[23]) {
     struct json_cursor cursor = {body, length, 0U};
     int first = 1, have_action = 0, have_revision = 0;
     if (length == 0U || json_character(&cursor, '{') != 0) return -1;
@@ -116,9 +162,11 @@ static int parse_action_request(const unsigned char *body, size_t length) {
         if (json_ascii_string(&cursor, value, sizeof(value)) != 0) return -1;
         if (strcmp(key, "action") == 0) {
             if (have_action || (strcmp(value, "on") != 0 && strcmp(value, "off") != 0 && strcmp(value, "cycle") != 0)) return -1;
+            strcpy(action, value);
             have_action = 1;
         } else if (strcmp(key, "inventoryRevision") == 0) {
             char opaque[23]; if (have_revision || strlen(value) != 22U || !opaque_outlet_id(value, opaque)) return -1;
+            strcpy(revision, value);
             have_revision = 1;
         } else return -1;
     }
@@ -256,6 +304,155 @@ static int read_json_body(unsigned char *body, size_t limit, size_t *body_length
     return 0;
 }
 
+static int session_identifier_from_cookie(char identifier[PM3000_SESSION_ID_LENGTH + 1U]) {
+    const char *header = getenv("HTTP_COOKIE");
+    const char *cursor;
+    int found = 0;
+    if (header == NULL) return -1;
+    cursor = header;
+    while (*cursor != '\0') {
+        const char *end = strchr(cursor, ';');
+        const char *equals;
+        const char *name_end;
+        const char *value;
+        size_t name_length, value_length;
+        if (end == NULL) end = cursor + strlen(cursor);
+        while (cursor < end && (*cursor == ' ' || *cursor == '\t')) ++cursor;
+        while (end > cursor && (end[-1] == ' ' || end[-1] == '\t')) --end;
+        equals = memchr(cursor, '=', (size_t)(end - cursor));
+        if (equals != NULL) {
+            name_end = equals;
+            while (name_end > cursor && (name_end[-1] == ' ' || name_end[-1] == '\t')) --name_end;
+            name_length = (size_t)(name_end - cursor);
+            value = equals + 1;
+            value_length = (size_t)(end - value);
+            if (name_length == strlen("pm3000_session") &&
+                memcmp(cursor, "pm3000_session", name_length) == 0) {
+                if (found || value_length != PM3000_SESSION_ID_LENGTH) return -1;
+                memcpy(identifier, value, value_length);
+                identifier[value_length] = '\0';
+                found = 1;
+            }
+        }
+        cursor = *end == ';' ? end + 1 : end;
+    }
+    return found ? 0 : -1;
+}
+
+static int load_request_session(const char *directory, int refresh,
+                                pm3000_session *session) {
+    char identifier[PM3000_SESSION_ID_LENGTH + 1U];
+    char error[80] = {0};
+    if (session_identifier_from_cookie(identifier) != 0) return -1;
+    return pm3000_session_load(directory, identifier, refresh, session,
+                               error, sizeof(error));
+}
+
+static void session_cookie_value(const char *identifier, int expire,
+                                 char output[160]) {
+    if (expire) {
+        (void)snprintf(output, 160U,
+                       "pm3000_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0");
+    } else {
+        (void)snprintf(output, 160U,
+                       "pm3000_session=%s; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900",
+                       identifier);
+    }
+}
+
+static int run_session_route(const char *method, const char *session_directory,
+                             const char *socket_path) {
+    char error[160] = {0};
+    char cookie[160];
+    pm3000_session session;
+    if (getenv("HTTP_AUTHORIZATION") != NULL)
+        return cgi_error(401U, "Unauthorized", "unauthorized",
+                         "Authorization is not accepted for browser sessions.");
+    if (strcmp(method, "POST") == 0) {
+        unsigned char body[1025];
+        char username[129] = {0}, password[257] = {0}, sid[129] = {0};
+        unsigned char *navigation = NULL;
+        unsigned char *topology = NULL;
+        size_t body_length = 0U, navigation_length = 0U, topology_length = 0U;
+        int body_result = read_json_body(body, 1024U, &body_length);
+        int result;
+        if (body_result == 415) {
+            memset(body, 0, sizeof(body));
+            return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                             "Content-Type must be application/json without content encoding.");
+        }
+        if (body_result == 413) {
+            memset(body, 0, sizeof(body));
+            return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                             "The request body is too large.");
+        }
+        if (body_result != 0 ||
+            parse_session_request(body, body_length, username, password) != 0) {
+            memset(body, 0, sizeof(body));
+            memset(password, 0, sizeof(password));
+            return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
+        }
+        result = pm3000_login_session(socket_path, username, password, sid,
+                                      &navigation, &navigation_length,
+                                      error, sizeof(error));
+        memset(password, 0, sizeof(password));
+        memset(body, 0, sizeof(body));
+        if (result != 0) {
+            free(navigation);
+            return cgi_error(401U, "Unauthorized", "unauthorized", "Controller login rejected.");
+        }
+        (void)pm3000_fetch_topology_session(socket_path, sid, &topology,
+                                             &topology_length, error,
+                                             sizeof(error));
+        result = pm3000_session_create(session_directory, username, sid,
+                                       navigation, navigation_length,
+                                       topology, topology_length, &session,
+                                       error, sizeof(error));
+        free(topology);
+        free(navigation);
+        if (result != 0) {
+            (void)pm3000_logout_session(socket_path, sid, error, sizeof(error));
+            memset(sid, 0, sizeof(sid));
+            return cgi_error(503U, "Service Unavailable", "session_store_unavailable",
+                             "Session storage is unavailable.");
+        }
+        memset(sid, 0, sizeof(sid));
+        session_cookie_value(session.id, 0, cookie);
+        cgi_headers_extra(201U, "Created", cookie);
+        return pm3000_session_write_json(stdout, &session) == 0 ? 0 : 1;
+    }
+    if (strcmp(method, "GET") == 0) {
+        if (load_request_session(session_directory, 1, &session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized", "A valid session is required.");
+        session_cookie_value(session.id, 0, cookie);
+        cgi_headers_extra(200U, "OK", cookie);
+        return pm3000_session_write_json(stdout, &session) == 0 ? 0 : 1;
+    }
+    if (strcmp(method, "DELETE") == 0) {
+        int local_result, logout_result;
+        if (load_request_session(session_directory, 0, &session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized", "A valid session is required.");
+        if (!pm3000_session_csrf_matches(&session, getenv("HTTP_X_CSRF_TOKEN")))
+            return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+        local_result = pm3000_session_delete(session_directory, session.id,
+                                             error, sizeof(error));
+        logout_result = pm3000_logout_session(socket_path, session.sid,
+                                              error, sizeof(error));
+        memset(session.sid, 0, sizeof(session.sid));
+        if (local_result != 0)
+            return cgi_error(503U, "Service Unavailable", "logout_incomplete",
+                             "Local session teardown could not be confirmed.");
+        session_cookie_value("", 1, cookie);
+        if (logout_result != 0)
+            return cgi_error_extra(503U, "Service Unavailable", "logout_incomplete",
+                                   "The local session ended; controller logout was not confirmed.",
+                                   cookie);
+        cgi_headers_extra(204U, "No Content", cookie);
+        return ferror(stdout) ? 1 : 0;
+    }
+    return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+}
+
 static int deliver_created(const char *response, void *context) {
     (void)context;
     cgi_headers(201U, "Created");
@@ -263,7 +460,8 @@ static int deliver_created(const char *response, void *context) {
     return 0;
 }
 
-static int run_token_route(const char *method, const char *path, const char *store_path) {
+static int run_token_route(const char *method, const char *path, const char *store_path,
+                           const pm3000_session *session) {
     const char *token = NULL;
     int auth;
     pm3000_token_result result;
@@ -279,13 +477,23 @@ static int run_token_route(const char *method, const char *path, const char *sto
              ((strcmp(suffix, "/disable") == 0 || strcmp(suffix, "/enable") == 0) && strcmp(method, "POST") != 0)))
             return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
     }
-    auth = admin_bearer(store_path, &token);
+    if (session != NULL) {
+        if (!session->can_manage_tokens)
+            return cgi_error(403U, "Forbidden", "forbidden", "Token administration is not permitted.");
+        if (strcmp(method, "GET") != 0 &&
+            !pm3000_session_csrf_matches(session, getenv("HTTP_X_CSRF_TOKEN")))
+            return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+        auth = 0;
+    } else {
+        auth = admin_bearer(store_path, &token);
+    }
     if (auth == 401) return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
     if (auth == 403) return cgi_error(403U, "Forbidden", "forbidden", "Administrator scope is required.");
     if (auth != 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Token administration is unavailable.");
     if (strcmp(path, "/api/v1/tokens") == 0) {
         if (strcmp(method, "GET") == 0) {
-            result = pm3000_token_list(store_path, token, &response);
+            result = session != NULL ? pm3000_token_list_session(store_path, &response) :
+                                       pm3000_token_list(store_path, token, &response);
             if (result != PM3000_TOKEN_OK) return admin_error(result);
             cgi_headers(200U, "OK"); fputs(response, stdout); free(response);
             return ferror(stdout) ? 1 : 0;
@@ -295,8 +503,9 @@ static int run_token_route(const char *method, const char *path, const char *sto
             if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type", "Content-Type must be application/json.");
             if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large", "The request body is too large.");
             if (body_result != 0) return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
-            result = pm3000_token_create(store_path, token, body, length,
-                                          deliver_created, NULL);
+            result = session != NULL ?
+                pm3000_token_create_session(store_path, body, length, deliver_created, NULL) :
+                pm3000_token_create(store_path, token, body, length, deliver_created, NULL);
             if (result == PM3000_TOKEN_DELIVERY_ERROR ||
                 result == PM3000_TOKEN_RESPONSE_SENT_ERROR ||
                 result == PM3000_TOKEN_COMMITTED_UNCERTAIN) {
@@ -318,10 +527,13 @@ static int run_token_route(const char *method, const char *path, const char *sto
         if (!valid_token_path_id(token_id)) return cgi_error(404U, "Not Found", "not_found", "Token not found.");
         if (suffix[0] == '\0') {
             if (strcmp(method, "DELETE") != 0) return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
-            result = pm3000_token_revoke(store_path, token, token_id);
+            result = session != NULL ? pm3000_token_revoke_session(store_path, token_id) :
+                                       pm3000_token_revoke(store_path, token, token_id);
         } else if (strcmp(suffix, "/disable") == 0 || strcmp(suffix, "/enable") == 0) {
             if (strcmp(method, "POST") != 0) return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
-            result = pm3000_token_set_enabled(store_path, token, token_id, strcmp(suffix, "/enable") == 0);
+            result = session != NULL ?
+                pm3000_token_set_enabled_session(store_path, token_id, strcmp(suffix, "/enable") == 0) :
+                pm3000_token_set_enabled(store_path, token, token_id, strcmp(suffix, "/enable") == 0);
         } else return cgi_error(404U, "Not Found", "not_found", "Route not found.");
         if (result != PM3000_TOKEN_OK) return admin_error(result);
         cgi_headers(204U, "No Content");
@@ -338,11 +550,13 @@ static int run_cgi(void) {
     const char *header;
     const char *token;
     pm3000_authorization authorization;
+    pm3000_session gui_session;
     unsigned char *response = NULL;
     size_t response_length = 0;
     char error[160] = {0};
     int auth_result;
     int detail_request = 0;
+    int using_session = 0;
     char requested_outlet[23] = {0};
     if (path != NULL && strncmp(path, "/api/v1", 7U) != 0 &&
         script_name != NULL && strcmp(script_name, "/api/v1") == 0 && path[0] == '/') {
@@ -362,34 +576,74 @@ static int run_cgi(void) {
         fputs("{\"apiVersion\":\"v1\",\"status\":\"live\"}\n", stdout);
         return ferror(stdout) ? 1 : 0;
     }
+    if (method != NULL && path != NULL && strcmp(path, "/api/v1/session") == 0) {
+        return run_session_route(
+            method,
+            configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+            configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"));
+    }
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/tokens") == 0 ||
          strncmp(path, "/api/v1/tokens/", 15U) == 0)) {
+        const pm3000_session *session = NULL;
+        if (getenv("HTTP_AUTHORIZATION") == NULL) {
+            if (load_request_session(
+                    configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                    1, &gui_session) != 0)
+                return cgi_error(401U, "Unauthorized", "unauthorized",
+                                 "Session or Bearer authentication required.");
+            session = &gui_session;
+        }
         return run_token_route(
             method, path,
-            configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"));
+            configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+            session);
     }
     if (method != NULL && path != NULL && strlen(path) == 46U &&
         memcmp(path, "/api/v1/outlets/", 16U) == 0 && memcmp(path + 38U, "/actions", 8U) == 0) {
-        char outlet_id[23]; unsigned char body[1025]; size_t body_length = 0U; int body_result;
+        char outlet_id[23], action[6], revision[23]; unsigned char body[1025]; size_t body_length = 0U; int body_result;
         if (!opaque_outlet_id(path + 16U, outlet_id)) return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
         if (strcmp(method, "POST") != 0) return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
         body_result = read_json_body(body, 1024U, &body_length);
         if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type", "Content-Type must be application/json without content encoding.");
         if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large", "The request body is too large.");
-        if (body_result != 0 || parse_action_request(body, body_length) != 0)
+        if (body_result != 0 || parse_action_request(body, body_length, action, revision) != 0)
             return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
         header = getenv("HTTP_AUTHORIZATION");
-        if (header == NULL || strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' || strchr(header + 7, ' ') != NULL) {
-            return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+        if (header != NULL) {
+            if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' ||
+                strchr(header + 7, ' ') != NULL)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+            auth_result = pm3000_authorize(
+                configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+                header + 7, "control", outlet_id, &authorization, error, sizeof(error));
+            if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
+            if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
+            if (!authorization.authorized) return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet action.");
+            auth_result = pm3000_apply_outlet_action(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
+                outlet_id, revision, action, error, sizeof(error));
+        } else {
+            if (load_request_session(
+                    configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                    1, &gui_session) != 0)
+                return cgi_error(401U, "Unauthorized", "unauthorized",
+                                 "Session or Bearer authentication required.");
+            if (!gui_session.can_control_power)
+                return cgi_error(403U, "Forbidden", "forbidden", "Power control is not permitted.");
+            if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+                return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+            auth_result = pm3000_apply_outlet_action_session(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                gui_session.sid, outlet_id, revision, action, error, sizeof(error));
         }
-        auth_result = pm3000_authorize(
-            configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
-            header + 7, "control", outlet_id, &authorization, error, sizeof(error));
-        if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
-        if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
-        if (!authorization.authorized) return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet action.");
-        return cgi_error(503U, "Service Unavailable", "action_disabled", "Outlet actions are disabled.");
+        if (auth_result == 1) return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
+        if (auth_result == 2) return cgi_error(409U, "Conflict", "inventory_changed", "Refresh the outlet inventory and retry.");
+        if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The outlet action may have been dispatched; do not retry automatically.");
+        if (auth_result != 0) return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Outlet action was not confirmed.");
+        cgi_headers(204U, "No Content");
+        return ferror(stdout) ? 1 : 0;
     }
     if (method == NULL || path == NULL) return cgi_error(404U, "Not Found", "not_found", "Route not found.");
     if (strcmp(path, "/api/v1/outlets") == 0) {
@@ -403,27 +657,41 @@ static int run_cgi(void) {
         detail_request = 1;
     }
     header = getenv("HTTP_AUTHORIZATION");
-    if (header == NULL || strncmp(header, "Bearer ", 7U) != 0 || strchr(header + 7, ' ') != NULL) {
-        return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+    if (header != NULL) {
+        if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' ||
+            strchr(header + 7, ' ') != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+        token = header + 7;
+        auth_result = pm3000_authorize(
+            configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+            token, "read", detail_request ? requested_outlet : NULL,
+            &authorization, error, sizeof(error));
+        if (auth_result < 0)
+            return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
+        if (!authorization.authenticated)
+            return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
+        if (!authorization.authorized)
+            return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet.");
+    } else {
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session or Bearer authentication required.");
+        memset(&authorization, 0, sizeof(authorization));
+        authorization.authenticated = 1;
+        authorization.authorized = 1;
+        authorization.unrestricted = 1;
+        using_session = 1;
     }
-    token = header + 7;
-    auth_result = pm3000_authorize(
-        configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
-        token, "read", detail_request ? requested_outlet : NULL,
-        &authorization, error, sizeof(error));
-    if (auth_result < 0) {
-        return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
-    }
-    if (!authorization.authenticated) {
-        return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
-    }
-    if (!authorization.authorized) {
-        return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet.");
-    }
-    if (pm3000_fetch_topology(
-            configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-            configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
-            &response, &response_length, error, sizeof(error)) != 0) {
+    if ((using_session ?
+         pm3000_fetch_topology_session(
+             configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+             gui_session.sid, &response, &response_length, error, sizeof(error)) :
+         pm3000_fetch_topology(
+             configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+             configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
+             &response, &response_length, error, sizeof(error))) != 0) {
         free(response);
         return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Read-only backend unavailable.");
     }

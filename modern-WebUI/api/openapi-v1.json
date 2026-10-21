@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.0.0-stage3",
-    "description": "Strict Stage 3 contract. Read-only inventory/status remain fixed-template operations; bearer-token administration is added with closed admin-only routes. Outlet actions remain shape-validated and are never dispatched."
+    "version": "1.1.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, read-only inventory, and rights-gated outlet actions."
   },
   "servers": [
     {
@@ -61,6 +61,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-backend-template": "action=get;path=units.topology;projection=outlet-list",
@@ -97,6 +100,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-backend-template": "action=get;path=units.topology;projection=outlet-detail",
@@ -132,13 +138,15 @@
       ],
       "post": {
         "operationId": "requestOutletAction",
-        "summary": "Validate the reserved individual-outlet action shape without dispatching it",
+        "summary": "Apply a rights-gated action to an outlet resolved through a fresh inventory read",
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
-        "x-stage2-behavior": "reject-without-backend-request",
         "x-max-body-bytes": 1024,
         "requestBody": {
           "required": true,
@@ -173,30 +181,51 @@
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "503": {
-            "description": "Stage 2 never dispatches an outlet action.",
+            "description": "The controller action was not confirmed.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
-                },
-                "example": {
-                  "code": "action_disabled",
-                  "message": "Outlet actions are disabled."
                 }
               }
             },
             "headers": {
               "Cache-Control": {
-                "$ref": "#/components/headers/CacheControlNoStore"
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               },
               "X-Content-Type-Options": {
-                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "The controller confirmed the outlet action.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
               }
             }
           }
         },
         "x-required-scope": "control",
-        "x-outlet-allowlist-behavior": "require-membership"
+        "x-outlet-allowlist-behavior": "require-membership",
+        "x-backend-template": "fresh topology; resolve opaque ID; action=on|off|cycle; path=units.topology; table=topologyTable",
+        "x-csrf-required-for-cookie-auth": true
       }
     },
     "/api/v1/tokens": {
@@ -206,6 +235,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-required-scope": "admin",
@@ -223,7 +255,8 @@
           "503": {
             "$ref": "#/components/responses/TokenStoreUnavailable"
           }
-        }
+        },
+        "x-csrf-required-for-cookie-auth": false
       },
       "post": {
         "operationId": "createToken",
@@ -231,6 +264,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-required-scope": "admin",
@@ -271,7 +307,8 @@
           "503": {
             "$ref": "#/components/responses/TokenStoreUnavailable"
           }
-        }
+        },
+        "x-csrf-required-for-cookie-auth": true
       }
     },
     "/api/v1/tokens/{tokenId}/disable": {
@@ -292,6 +329,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-required-scope": "admin",
@@ -323,7 +363,8 @@
           "503": {
             "$ref": "#/components/responses/TokenStoreUnavailable"
           }
-        }
+        },
+        "x-csrf-required-for-cookie-auth": true
       }
     },
     "/api/v1/tokens/{tokenId}/enable": {
@@ -344,6 +385,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-required-scope": "admin",
@@ -375,7 +419,8 @@
           "503": {
             "$ref": "#/components/responses/TokenStoreUnavailable"
           }
-        }
+        },
+        "x-csrf-required-for-cookie-auth": true
       }
     },
     "/api/v1/tokens/{tokenId}": {
@@ -396,6 +441,9 @@
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
           }
         ],
         "x-required-scope": "admin",
@@ -427,7 +475,120 @@
           "503": {
             "$ref": "#/components/responses/TokenStoreUnavailable"
           }
-        }
+        },
+        "x-csrf-required-for-cookie-auth": true
+      }
+    },
+    "/api/v1/session": {
+      "post": {
+        "summary": "Create a server-side WebUI session using an existing PM3000 account",
+        "security": [],
+        "responses": {
+          "201": {
+            "description": "Session created; the GSP SID remains server-side.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        },
+        "operationId": "createSession"
+      },
+      "get": {
+        "summary": "Restore and refresh a WebUI session",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public identity, CSRF token, and rights-filtered navigation.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        },
+        "operationId": "getSession"
+      },
+      "delete": {
+        "summary": "Log out and destroy the WebUI session",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Local session removed and controller logout confirmed.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "description": "Local session ended but controller logout was not confirmed.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string",
+                  "const": "nosniff"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "deleteSession",
+        "x-csrf-required": true
       }
     }
   },
@@ -437,6 +598,12 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "opaque"
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "pm3000_session",
+        "description": "Secure HttpOnly server-side WebUI session cookie. Browser mutations also require X-CSRF-Token."
       }
     },
     "parameters": {
@@ -537,7 +704,7 @@
             },
             "maxItems": 3,
             "uniqueItems": true,
-            "description": "Always empty in Stage 2. Later stages may expose only independently authorized actions."
+            "description": "Clients may request on, off, or cycle only when independently authorized."
           }
         }
       },
@@ -603,7 +770,6 @@
           "inventory_stale",
           "backend_unavailable",
           "backend_protocol_error",
-          "action_disabled",
           "action_outcome_unknown",
           "internal_error",
           "last_administrator",

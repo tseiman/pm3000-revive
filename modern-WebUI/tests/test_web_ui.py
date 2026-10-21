@@ -42,26 +42,66 @@ class WebUiTests(unittest.TestCase):
         self.assertNotRegex(self.javascript, r"https?://")
         self.assertNotIn("import ", self.javascript)
 
-    def test_api_values_use_safe_dom_sinks_and_token_is_volatile(self) -> None:
+    def test_api_values_use_safe_dom_sinks_and_browser_stores_no_credentials(self) -> None:
         for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(", "new Function"):
             self.assertNotIn(unsafe, self.javascript)
         self.assertIn("textContent", self.javascript)
         self.assertNotIn("localStorage", self.javascript)
         self.assertNotIn("sessionStorage", self.javascript)
-        self.assertIn('state.token = ""', self.javascript)
-        self.assertIn('autocomplete="off"', self.html)
+        self.assertNotRegex(self.javascript, r"state\.token\s*=")
+        self.assertNotIn('headers.set("Authorization"', self.javascript)
+        self.assertIn('autocomplete="current-password"', self.html)
+        self.assertIn('state.csrf = ""', self.javascript)
+        self.assertIn('credentials: "same-origin"', self.javascript)
 
-    def test_ui_uses_the_openapi_outlet_field_and_exposes_no_power_control(self) -> None:
+    def test_session_transitions_are_serialized_and_fail_closed(self) -> None:
+        self.assertIn("serializeTransition", self.javascript)
+        self.assertIn("loginPending", self.javascript)
+        self.assertIn("logoutPending", self.javascript)
+        self.assertIn("bootstrapPending", self.javascript)
+        self.assertIn("if (bootstrapPending || tokenIssuancePending || loginPending || logoutPending) return", self.javascript)
+        self.assertRegex(
+            self.javascript,
+            r"setLoginDisabled\(true\);\s*serializeTransition\(bootstrapTransition\)\.finally",
+        )
+        self.assertRegex(
+            self.javascript,
+            r'const requestBody = JSON\.stringify\(\{ username, password \}\);\s*'
+            r'password = "";\s*\$\("password-input"\)\.value = "";\s*'
+            r'const session = await api',
+        )
+        logout = re.search(r"async function logoutTransition\(\) \{(.+?)\n\}", self.javascript, re.S)
+        self.assertIsNotNone(logout)
+        assert logout is not None
+        self.assertLess(logout.group(1).index("disconnectLocal"), logout.group(1).index("await request"))
+        self.assertIn("const generation = state.generation", self.javascript)
+        self.assertIn("if (generation !== state.generation) return", self.javascript)
+
+    def test_outlet_refresh_and_one_time_token_delivery_are_race_safe(self) -> None:
+        self.assertIn("const request = ++state.outletRequest", self.javascript)
+        self.assertIn("if (request === state.outletRequest) renderOutlets(payload)", self.javascript)
+        self.assertIn("tokenIssuancePending = true", self.javascript)
+        self.assertIn("if (tokenIssuancePending)", self.javascript)
+        self.assertIn("enableLogin && !tokenIssuancePending", self.javascript)
+        self.assertRegex(
+            self.javascript,
+            r"tokenIssuancePending = false;.+if \(!state\.session\) \{ setLoginDisabled\(false\)",
+        )
+        self.assertIn("deliverAfterSessionChange: true", self.javascript)
+        self.assertIn("&& !options.deliverAfterSessionChange", self.javascript)
+
+    def test_ui_exposes_rights_gated_power_control_with_stale_revision_guard(self) -> None:
         self.assertIn("outlet.state", self.javascript)
         self.assertNotIn("outlet.status", self.javascript)
         self.assertIn('$("token-outlets").value.split', self.javascript)
         self.assertIn("outlets.sort()", self.javascript)
         self.assertIn("new Set(outlets).size", self.javascript)
-        self.assertNotIn("/actions", self.javascript)
-        self.assertIn("Outlet switching is disabled", self.html)
-        self.assertNotIn("Switch on", self.html)
-        self.assertNotIn("Switch off", self.html)
-        self.assertNotIn("Cycle outlet", self.html)
+        self.assertIn("/actions`,", self.javascript)
+        self.assertIn("inventoryRevision: state.inventoryRevision", self.javascript)
+        self.assertIn("canControlPower", self.javascript)
+        self.assertIn('actionButton(outlet, "on")', self.javascript)
+        self.assertIn('actionButton(outlet, "off")', self.javascript)
+        self.assertIn('actionButton(outlet, "cycle")', self.javascript)
 
     def test_navigation_and_dialog_controls_are_native_and_labelled(self) -> None:
         self.assertIn('aria-label="Primary navigation"', self.html)
@@ -71,6 +111,9 @@ class WebUiTests(unittest.TestCase):
         self.assertIn(':focus-visible', self.css)
         self.assertIn('@media(max-width:700px)', self.css)
         self.assertIn('#disconnect{display:inline-flex', self.css)
+        self.assertEqual(58, len(set(re.findall(r'\["(units\.[^"]+)",', self.javascript))))
+        self.assertIn("Legacy feature", self.html)
+        self.assertIn("canManageTokens", self.javascript)
 
     def test_token_create_cancel_payload_and_secret_cleanup_invariants(self) -> None:
         self.assertIn('id="close-create-title" class="icon-button" type="button"', self.html)

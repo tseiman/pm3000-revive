@@ -528,6 +528,37 @@ int pm3000_project_detail_bytes(const unsigned char *xml, unsigned long length,
     return 1;
 }
 
+int pm3000_resolve_outlet_identity(const unsigned char *xml, unsigned long length,
+                                   const char *outlet_id, const char *revision,
+                                   char *identity, size_t identity_size,
+                                   char *error, unsigned int error_size) {
+    struct parser parser;
+    char *identities[MAX_OUTLETS];
+    char actual_revision[PM3000_ID_LENGTH + 1U];
+    size_t index;
+    memset(&parser, 0, sizeof(parser));
+    if (length == 0UL || length > MAX_XML_BYTES || !valid_utf8(xml, (size_t)length) ||
+        strlen(outlet_id) != PM3000_ID_LENGTH || strlen(revision) != PM3000_ID_LENGTH) return -1;
+    parser.input = xml;
+    parser.length = (size_t)length;
+    if (parse_document(&parser) != 0) return -1;
+    for (index = 0; index < parser.outlet_count; ++index) identities[index] = parser.outlets[index].identity;
+    if (pm3000_inventory_revision(identities, parser.outlet_count, actual_revision) != 0) return -1;
+    if (strcmp(actual_revision, revision) != 0) {
+        (void)snprintf(error, error_size, "inventory revision changed");
+        return 2;
+    }
+    for (index = 0; index < parser.outlet_count; ++index) {
+        if (strcmp(parser.outlets[index].id, outlet_id) == 0) {
+            if (strlen(parser.outlets[index].identity) + 1U > identity_size) return -1;
+            strcpy(identity, parser.outlets[index].identity);
+            return 0;
+        }
+    }
+    (void)snprintf(error, error_size, "outlet not found");
+    return 1;
+}
+
 int pm3000_project_detail_file(const char *path, const char *outlet_id, FILE *output,
                                char *error, unsigned int error_size) {
     int descriptor;

@@ -21,6 +21,11 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
 - `stage7-device-compatibility.sh` — validates the completed backup and release,
   tests the two PPC binaries only from a private appliance `/tmp` directory, and
   removes that directory without installing or reloading anything.
+- `stage7-install.sh` — one-command macOS/Linux host installer. It opens one
+  temporary OpenSSH ControlMaster, requires the completed full backup, validates
+  the release and PPC compatibility, uploads the package, and invokes the fixed
+  device installer. OpenSSH owns password prompting; the script never reads or
+  stores a password. Rollback remains a separate operator command.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -44,9 +49,21 @@ unverified on the appliance:
 ```
 
 Do not run the device helpers until a host-verified `BACKUP_COMPLETE` exists.
-Stage 6 intentionally does not automate SSH/SCP against a live appliance; that
-transport and all observed path/ownership assumptions are a Stage 7 manual-pilot
-gate.
+The lower-level Stage 6 simulation remains offline-only. Live SSH/SCP is isolated
+in `stage7-install.sh` and requires the completed backup and explicit operator
+invocation.
+
+After building or downloading a release and completing the full backup, the
+host-side installation entry point is:
+
+```sh
+modern-WebUI/deploy/stage7-install.sh \
+  root@pm3000 \
+  /private/path/to/completed-backup \
+  /path/to/pm3000-release-<release-id>.tar
+```
+
+This is a write operation. Run it only during an approved maintenance window.
 
 ## Build the exact allowlist release
 

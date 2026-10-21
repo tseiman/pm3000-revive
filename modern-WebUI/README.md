@@ -1,10 +1,10 @@
 # PM3000 Modern Web UI
 
-This directory contains the clean-room design and future implementation of a compact modern Web UI and bearer-token REST facade for Avocent PM3000 firmware `2.0.1.23`.
+This directory contains the clean-room implementation of a compact modern Web UI and REST facade for Avocent PM3000 firmware `2.0.1.23`.
 
 ## Current status
 
-**Stages 4 and 5 are implemented, locally verified, and independently reviewed with PASS. Stage 6 is implemented as an offline-only backup-first deployment and rollback transaction and is awaiting its final release review.** Remote deployment remains disabled until the Stage 7 device preflight. Nothing has been installed on a PM3000, and the legacy UI remains the required fallback.
+The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, and outlet `on`, `off`, and `cycle` paths are implemented and verified offline. Release `0.1` was previously installed as a read-only pilot; the current write-capable candidate has not been installed or exercised on a PM3000. The vendor UI at `/` remains the fallback.
 
 Confirmed architecture:
 
@@ -13,7 +13,7 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The design keeps Apache and the vendor backend. The native adapter exposes strict read-only outlet projections and local token administration. The Stage 5 browser uses only REST v1, stores its bearer token only in memory, and contains no outlet-action control. The `on`, `off`, and `cycle` request shape remains reserved and always returns `503 action_disabled` without an Avtrans request. Exact action templates remain deferred until separately approved hardware evidence exists.
+The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients continue to use scoped REST bearer tokens. Outlet actions resolve a fresh topology identity and inventory revision before sending a fixed `on`, `off`, or `cycle` request. Writable settings remain on the legacy UI until each closed form contract has a sanitized real request/response fixture; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
 
 ## Documents
 

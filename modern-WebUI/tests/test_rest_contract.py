@@ -30,6 +30,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/tokens/{tokenId}",
                 "/api/v1/tokens/{tokenId}/disable",
                 "/api/v1/tokens/{tokenId}/enable",
+                "/api/v1/session",
             },
             set(paths),
         )
@@ -41,6 +42,7 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"delete", "parameters"}, set(paths["/api/v1/tokens/{tokenId}"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/disable"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/enable"]))
+        self.assertEqual({"post", "get", "delete"}, set(paths["/api/v1/session"]))
 
     def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
         paths = self.contract["paths"]
@@ -53,7 +55,7 @@ class RestV1ContractTests(unittest.TestCase):
         ]
         for operation in operations:
             with self.subTest(operation=operation["operationId"]):
-                self.assertEqual([{"bearerAuth": []}], operation["security"])
+                self.assertEqual([{"bearerAuth": []}, {"cookieAuth": []}], operation["security"])
                 self.assertEqual("admin", operation["x-required-scope"])
                 self.assertEqual(
                     "token-store-only-no-backend-request",
@@ -151,16 +153,17 @@ class RestV1ContractTests(unittest.TestCase):
             derivation["testVectors"],
         )
 
-    def test_action_shape_is_closed_and_stage2_never_dispatches_it(self) -> None:
+    def test_action_shape_is_closed_and_uses_only_the_fixed_backend_template(self) -> None:
         operation = self.contract["paths"]["/api/v1/outlets/{outletId}/actions"]["post"]
-        self.assertEqual("reject-without-backend-request", operation["x-stage2-behavior"])
         self.assertEqual(1024, operation["x-max-body-bytes"])
-        self.assertNotIn("x-backend-template", operation)
         self.assertEqual(
-            {"400", "401", "403", "404", "409", "413", "415", "503"},
+            "fresh topology; resolve opaque ID; action=on|off|cycle; path=units.topology; table=topologyTable",
+            operation["x-backend-template"],
+        )
+        self.assertEqual(
+            {"204", "400", "401", "403", "404", "409", "413", "415", "503"},
             set(operation["responses"]),
         )
-        self.assertFalse(any(status.startswith("2") for status in operation["responses"]))
 
         schema = self.contract["components"]["schemas"]["OutletActionRequest"]
         self.assertFalse(schema["additionalProperties"])
@@ -199,7 +202,6 @@ class RestV1ContractTests(unittest.TestCase):
                 "inventory_stale",
                 "backend_unavailable",
                 "backend_protocol_error",
-                "action_disabled",
                 "action_outcome_unknown",
                 "internal_error",
                 "last_administrator",
@@ -209,7 +211,7 @@ class RestV1ContractTests(unittest.TestCase):
             schemas["ErrorCode"]["enum"],
         )
 
-    def test_non_health_routes_require_bearer_authentication(self) -> None:
+    def test_api_supports_external_bearer_and_separate_web_sessions(self) -> None:
         self.assertEqual([], self.contract["paths"]["/api/v1/health"]["get"]["security"])
         for path, method in (
             ("/api/v1/outlets", "get"),
@@ -223,9 +225,13 @@ class RestV1ContractTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(
-                    [{"bearerAuth": []}],
+                    [{"bearerAuth": []}, {"cookieAuth": []}],
                     self.contract["paths"][path][method]["security"],
                 )
+        session = self.contract["paths"]["/api/v1/session"]
+        self.assertEqual([], session["post"]["security"])
+        self.assertEqual([{"cookieAuth": []}], session["get"]["security"])
+        self.assertEqual([{"cookieAuth": []}], session["delete"]["security"])
 
     def test_every_response_disables_caching_and_content_sniffing(self) -> None:
         responses = list(self.contract["components"]["responses"].items())

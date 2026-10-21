@@ -26,9 +26,9 @@ The stripped binaries total about 643 KiB. The binaries alone do not replace or 
 
 - [`components/dropbear/`](components/dropbear/) — static Dropbear server, build environment, tests, and device-test procedure.
 - [`fix-WebUI/`](fix-WebUI/) — firmware `2.0.1.23` compatibility patch, hashes, installation limits, and investigation notes for the legacy browser UI.
-- [`modern-WebUI/`](modern-WebUI/) — clean-room architecture analysis and resumable stages for a compact modern UI, bearer-token REST facade, and backup-first deployment.
+- [`modern-WebUI/`](modern-WebUI/) — compact modern UI, PM3000-backed browser sessions, scoped bearer-token REST API, outlet power control, and backup-first deployment.
 
-The modern component is currently analysis and planning only. The compatibility patch is reference material and a recovery aid, not the architecture of the replacement UI.
+The modern component is implemented and offline-tested; write-capable paths still require the documented controlled device validation. The compatibility patch is reference material and a recovery aid, not the architecture of the replacement UI.
 
 ## Reproduce on Linux
 

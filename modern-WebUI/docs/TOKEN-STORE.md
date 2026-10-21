@@ -73,12 +73,10 @@ The digest above is a format illustration, not a usable credential. Unknown or d
 Scopes form this hierarchy:
 
 - `read`: health-independent inventory and status reads;
-- `control`: `read` plus the reserved individual-outlet action route;
+- `control`: `read` plus individual-outlet `on`, `off`, and `cycle` actions;
 - `admin`: `control` plus token list/create/enable/disable/revoke operations.
 
-Stage 3 does not enable outlet actions. A `control` or `admin` token still receives `503 action_disabled` because no state-changing Avtrans template exists.
-
-`outlets` applies to every outlet-scoped read or future action:
+`outlets` applies to every outlet-scoped read or action:
 
 - `null`: unrestricted outlet set;
 - `[]`: no outlet is authorized;

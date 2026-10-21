@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host-side tests for the Stage 4 native read-only adapter."""
+"""Host-side tests for the native PM3000 REST adapter."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ NATIVE = ROOT / "native"
 BINARY = NATIVE / "build" / "pm3000-rest-host"
 OBSERVED = ROOT / "fixtures" / "observed" / "topology-get-response.xml"
 LOGIN_RESPONSE = ROOT / "fixtures" / "observed" / "login-submit-response.xml"
+NAVIGATION_RESPONSE = ROOT / "fixtures" / "observed" / "navigation-response.xml"
 LOGOUT_RESPONSE = ROOT / "fixtures" / "observed" / "logout-response.xml"
 sys.path.insert(0, str(ROOT / "tools"))
 import token_store  # noqa: E402
@@ -191,6 +193,8 @@ class NativeAdapterTests(unittest.TestCase):
         *,
         https: str = "on",
         authorization: str | None = None,
+        cookie: str | None = None,
+        csrf: str | None = None,
         body: bytes | None = None,
         content_type: str | None = None,
         extra_environment: dict[str, str] | None = None,
@@ -199,6 +203,10 @@ class NativeAdapterTests(unittest.TestCase):
         environment.update({"REQUEST_METHOD": method, "PATH_INFO": path, "HTTPS": https})
         if authorization is not None:
             environment["HTTP_AUTHORIZATION"] = authorization
+        if cookie is not None:
+            environment["HTTP_COOKIE"] = cookie
+        if csrf is not None:
+            environment["HTTP_X_CSRF_TOKEN"] = csrf
         if body is not None:
             environment["CONTENT_LENGTH"] = str(len(body))
         if content_type is not None:
@@ -226,6 +234,301 @@ class NativeAdapterTests(unittest.TestCase):
             "PM3000_CREDENTIALS": str(root / "must-not-open.credentials"),
             "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
         }
+
+    @staticmethod
+    def session_cookie(headers: bytes) -> tuple[str, str]:
+        line = next(item for item in headers.split(b"\r\n") if item.startswith(b"Set-Cookie: pm3000_session="))
+        value = line.decode().split(";", 1)[0].split("=", 1)[1]
+        return f"pm3000_session={value}", value
+
+    def login_session(
+        self,
+        root: Path,
+        navigation: bytes | None = None,
+        topology: bytes | None = None,
+    ) -> tuple[str, dict[str, object], FakeAvtransController, subprocess.CompletedProcess[bytes]]:
+        socket_path = root / "avtrans.sock"
+        session_dir = root / "sessions"
+        body = b'{"username":"operator","password":"p&<secret"}'
+        controller = FakeAvtransController(
+            socket_path,
+            [
+                LOGIN_RESPONSE.read_bytes(),
+                navigation or NAVIGATION_RESPONSE.read_bytes(),
+                topology if topology is not None else OBSERVED.read_bytes(),
+            ],
+        )
+        with controller:
+            result = self.run_cgi(
+                "POST", "/api/v1/session", body=body, content_type="application/json",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(session_dir),
+                    "PM3000_AVTRANS_SOCKET": str(socket_path),
+                },
+            )
+        headers, response = self.cgi_json(result)
+        cookie, _value = self.session_cookie(headers)
+        return cookie, response, controller, result
+
+    def test_session_login_sets_hardened_cookie_and_persists_only_server_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, response, controller, result = self.login_session(root)
+            headers = result.stdout.split(b"\r\n\r\n", 1)[0]
+            self.assertIn(b"Status: 201", headers)
+            self.assertIn(b"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900", headers)
+            self.assertEqual({"identity", "csrfToken", "navigation"}, set(response))
+            self.assertEqual({"username": "operator"}, response["identity"])
+            self.assertEqual(
+                {"paths", "canManageTokens", "canControlPower"},
+                set(response["navigation"]),
+            )
+            self.assertTrue(response["navigation"]["canManageTokens"])
+            self.assertTrue(response["navigation"]["canControlPower"])
+            self.assertIn("units.topology", response["navigation"]["paths"])
+            response_body = result.stdout.split(b"\r\n\r\n", 1)[1]
+            self.assertNotIn(b"pm3000_session", response_body)
+            self.assertNotIn(b"[REDACTED-SID]", response_body)
+            self.assertEqual(3, len(controller.requests))
+            self.assertIn(b"<action>login</action>", controller.requests[0][1])
+            self.assertIn(b"<value>p&amp;&lt;secret</value>", controller.requests[0][1])
+            self.assertIn(b"<action>navigation</action>", controller.requests[1][1])
+            self.assertIn(b"<action>get</action>", controller.requests[2][1])
+            self.assertIn(b"<path>units.topology</path>", controller.requests[2][1])
+            session_dir = root / "sessions"
+            self.assertEqual(0o700, session_dir.stat().st_mode & 0o777)
+            files = list(session_dir.iterdir())
+            self.assertEqual(1, len(files))
+            self.assertEqual(0o600, files[0].stat().st_mode & 0o777)
+            persisted = files[0].read_bytes()
+            self.assertNotIn(b"p&<secret", persisted)
+            self.assertNotIn(cookie.encode(), persisted)
+
+    def test_session_get_restores_public_metadata_and_refreshes_cookie(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, created, _controller, _result = self.login_session(root)
+            restored = self.run_cgi(
+                "GET", "/api/v1/session", cookie=cookie,
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions")},
+            )
+            headers, response = self.cgi_json(restored)
+            self.assertIn(b"Status: 200", headers)
+            self.assertIn(b"Max-Age=900", headers)
+            self.assertEqual(created, response)
+            self.assertNotIn("[REDACTED-SID]", restored.stdout.decode())
+
+    def test_session_route_rejects_explicit_authorization_even_with_valid_cookie(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions")}
+            for method, authorization, csrf in (
+                ("GET", "Basic Zm9vOmJhcg==", None),
+                ("GET", "malformed", None),
+                ("DELETE", "Bearer malformed", str(session["csrfToken"])),
+            ):
+                rejected = self.run_cgi(
+                    method, "/api/v1/session", cookie=cookie,
+                    authorization=authorization, csrf=csrf,
+                    extra_environment=environment,
+                )
+                headers, response = self.cgi_json(rejected)
+                self.assertIn(b"Status: 401", headers)
+                self.assertEqual("unauthorized", response["code"])
+            self.assertEqual(1, len(list((root / "sessions").iterdir())))
+
+    def test_login_rejects_comments_denials_duplicates_and_trailing_xml(self) -> None:
+        valid = LOGIN_RESPONSE.read_bytes()
+        attacks = (
+            b"<avtrans><action>login</action><paths><path>login</path></paths>"
+            b"<error>denied</error><!-- <action>header</action><sid>forged</sid> --></avtrans>",
+            b"<avtrans><action>header</action><paths><path>units</path></paths>"
+            b"<error>denied with SID-like text &lt;sid&gt;forged&lt;/sid&gt;</error></avtrans>",
+            valid.replace(b"</avtrans>", b"<sid>duplicate</sid></avtrans>", 1),
+            valid + b"<avtrans />",
+        )
+        for response in attacks:
+            with self.subTest(response=response[:80]), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                socket_path = root / "avtrans.sock"
+                with FakeAvtransController(socket_path, [response]):
+                    result = self.run_cgi(
+                        "POST", "/api/v1/session",
+                        body=b'{"username":"operator","password":"secret"}',
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_SESSION_DIR": str(root / "sessions"),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                self.assertIn(b"Status: 401", result.stdout)
+                self.assertFalse((root / "sessions").exists())
+
+    def test_navigation_and_control_capability_comments_are_rejected(self) -> None:
+        navigation = NAVIGATION_RESPONSE.read_bytes().replace(
+            b'path="units.users.local_accounts.user_names"',
+            b'path="units.users.local_accounts.denied"',
+        ).replace(b"</payload>", b'<!-- path="units.users.local_accounts.user_names" --></payload>')
+        topology = OBSERVED.read_bytes()
+        for control in (b"targPowerOn", b"targPowerOff", b"targCycle"):
+            topology = topology.replace(control, b"deniedPower")
+        topology = topology.replace(
+            b"</payload>",
+            b'<!-- id="targPowerOn" id="targPowerOff" id="targCycle" --></payload>',
+        )
+        for candidate_navigation, candidate_topology in (
+            (navigation, OBSERVED.read_bytes()),
+            (NAVIGATION_RESPONSE.read_bytes(), topology),
+        ):
+            with self.subTest(topology=candidate_topology is topology), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                socket_path = root / "avtrans.sock"
+                with FakeAvtransController(
+                    socket_path,
+                    [LOGIN_RESPONSE.read_bytes(), candidate_navigation, candidate_topology,
+                     LOGOUT_RESPONSE.read_bytes()],
+                ):
+                    result = self.run_cgi(
+                        "POST", "/api/v1/session",
+                        body=b'{"username":"operator","password":"secret"}',
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_SESSION_DIR": str(root / "sessions"),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                self.assertIn(b"Status: 503", result.stdout)
+                self.assertEqual([], list((root / "sessions").glob("*")))
+
+    def test_session_logout_requires_csrf_and_tears_down_locally_on_backend_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(root / "missing.sock"),
+            }
+            denied = self.run_cgi("DELETE", "/api/v1/session", cookie=cookie, extra_environment=environment)
+            self.assertIn(b"Status: 403", denied.stdout)
+            self.assertEqual(1, len(list((root / "sessions").iterdir())))
+            failed = self.run_cgi(
+                "DELETE", "/api/v1/session", cookie=cookie,
+                csrf=str(session["csrfToken"]), extra_environment=environment,
+            )
+            self.assertIn(b"Status: 503", failed.stdout)
+            self.assertIn(b"Set-Cookie: pm3000_session=;", failed.stdout)
+            self.assertIn(b"Max-Age=0", failed.stdout)
+            self.assertEqual([], list((root / "sessions").iterdir()))
+
+    def test_logout_does_not_claim_local_teardown_when_verified_delete_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            failed = self.run_cgi(
+                "DELETE", "/api/v1/session", cookie=cookie,
+                csrf=str(session["csrfToken"]),
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-contact.sock"),
+                    "PM3000_SESSION_FAULT": "replace_before_delete",
+                },
+            )
+            headers, response = self.cgi_json(failed)
+            self.assertIn(b"Status: 503", headers)
+            self.assertNotIn(b"Max-Age=0", headers)
+            self.assertEqual("logout_incomplete", response["code"])
+            self.assertNotIn("local session ended", response["message"].lower())
+            self.assertEqual(1, len(list((root / "sessions").glob("[A-Za-z0-9_-]" * 43))))
+
+    def test_refresh_rejects_a_path_replacement_without_overwriting_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            refreshed = self.run_cgi(
+                "GET", "/api/v1/session", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_SESSION_FAULT": "replace_before_refresh",
+                },
+            )
+            self.assertIn(b"Status: 401", refreshed.stdout)
+            records = list((root / "sessions").glob("[A-Za-z0-9_-]" * 43))
+            self.assertEqual(1, len(records))
+            self.assertEqual(b"replaced\n", records[0].read_bytes())
+
+    def test_logout_confirmation_is_structural(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            socket_path = root / "logout.sock"
+            forged = (
+                b"<avtrans><!-- <action>login</action><path>login</path> -->"
+                b"<action>logout</action><paths><path>login</path></paths></avtrans>"
+            )
+            with FakeAvtransController(socket_path, [forged]):
+                result = self.run_cgi(
+                    "DELETE", "/api/v1/session", cookie=cookie,
+                    csrf=str(session["csrfToken"]),
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            headers, response = self.cgi_json(result)
+            self.assertIn(b"Status: 503", headers)
+            self.assertIn(b"Max-Age=0", headers)
+            self.assertEqual("logout_incomplete", response["code"])
+            self.assertEqual([], list((root / "sessions").glob("*")))
+
+    def test_session_rights_gate_token_admin_and_power_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            restricted_navigation = NAVIGATION_RESPONSE.read_bytes().replace(
+                b'path="units.users.local_accounts.user_names"',
+                b'path="units.users.local_accounts.denied"',
+            )
+            restricted_topology = OBSERVED.read_bytes()
+            for control in (b"targPowerOn", b"targPowerOff", b"targCycle"):
+                restricted_topology = restricted_topology.replace(control, b"deniedPower")
+            cookie, session, _controller, _result = self.login_session(
+                root, restricted_navigation, restricted_topology
+            )
+            environment = self.token_environment(root, root / "missing-tokens.json")
+            environment["PM3000_SESSION_DIR"] = str(root / "sessions")
+            denied_tokens = self.run_cgi("GET", "/api/v1/tokens", cookie=cookie, extra_environment=environment)
+            denied_power = self.run_cgi(
+                "POST", "/api/v1/outlets/AAAAAAAAAAAAAAAAAAAAAA/actions",
+                cookie=cookie, csrf=str(session["csrfToken"]),
+                body=b'{"action":"on","inventoryRevision":"AAAAAAAAAAAAAAAAAAAAAA"}',
+                content_type="application/json", extra_environment=environment,
+            )
+            self.assertIn(b"Status: 403", denied_tokens.stdout)
+            self.assertIn(b"Status: 403", denied_power.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
+
+    def test_session_can_administer_tokens_and_bearer_auth_remains_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = self.token_environment(root, store_path)
+            environment["PM3000_SESSION_DIR"] = str(root / "sessions")
+            listed = self.run_cgi("GET", "/api/v1/tokens", cookie=cookie, extra_environment=environment)
+            self.assertIn(b"Status: 200", listed.stdout)
+            created = self.run_cgi(
+                "POST", "/api/v1/tokens", cookie=cookie, csrf=str(session["csrfToken"]),
+                body=b'{"label":"Session reader","scope":"read"}',
+                content_type="application/json", extra_environment=environment,
+            )
+            self.assertIn(b"Status: 201", created.stdout)
+            bearer = self.run_cgi(
+                "GET", "/api/v1/tokens", authorization=f"Bearer {administrator.plaintext}",
+                extra_environment=environment,
+            )
+            self.assertIn(b"Status: 200", bearer.stdout)
 
     def test_token_administration_success_returns_plaintext_once_without_digest_or_avtrans(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -548,36 +851,100 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIsNone(store.authenticate(delivered["token"]))
             self.assertEqual([], list(store_path.parent.glob(".tokens.*")))
 
-    def test_outlet_actions_remain_disabled_without_backend_access(self) -> None:
+    def test_outlet_action_uses_fresh_topology_identity_and_logs_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
+            credentials_path = root / "service.credentials"
+            socket_path = root / "avtrans.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
-            outlet_id = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)["outlets"][0]["id"]
+            projected = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+            outlet_id = projected["outlets"][0]["id"]
+            revision = projected["inventoryRevision"]
             controller = store.create_token(
                 administrator.plaintext,
                 label="Controller",
                 scope="control",
                 outlets=[outlet_id],
             )
-            result = self.run_cgi(
-                "POST",
-                f"/api/v1/outlets/{outlet_id}/actions",
-                authorization=f"Bearer {controller.plaintext}",
-                body=json.dumps({"action": "on", "inventoryRevision": "A" * 22}).encode(),
-                content_type="application/json",
-                extra_environment={
-                    "PM3000_TOKEN_STORE": str(store_path),
-                    "PM3000_CREDENTIALS": str(root / "must-not-open.credentials"),
-                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
-                },
-            )
+            credentials_path.write_text("service-user\nservice-password\n")
+            credentials_path.chmod(0o600)
+            action_response = b"<avtrans><action>on</action><paths><path>units.topology</path></paths></avtrans>"
+            with FakeAvtransController(
+                socket_path,
+                [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), action_response, LOGOUT_RESPONSE.read_bytes()],
+            ) as controller_backend:
+                result = self.run_cgi(
+                    "POST",
+                    f"/api/v1/outlets/{outlet_id}/actions",
+                    authorization=f"Bearer {controller.plaintext}",
+                    body=json.dumps({"action": "on", "inventoryRevision": revision}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_CREDENTIALS": str(credentials_path),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
 
             self.assertEqual(0, result.returncode, result.stderr)
-            _headers, body = result.stdout.split(b"\r\n\r\n", 1)
-            self.assertEqual("action_disabled", json.loads(body)["code"])
-            self.assertIn(b"Status: 503", result.stdout)
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(4, len(controller_backend.requests))
+            action_request = controller_backend.requests[2][1]
+            raw_identity = next(
+                row.attrib["id"]
+                for row in ET.parse(OBSERVED).iter("array")
+                if any(parameter.attrib.get("id") == "type" and
+                       (parameter.findtext("value") or "") == "outlet"
+                       for parameter in row.findall("parameter"))
+            )
+            self.assertIn(b"<action>on</action>", action_request)
+            self.assertIn(b"<path>units.topology</path>", action_request)
+            self.assertIn(b'<section structure="table" id="topologyTable">', action_request)
+            self.assertIn(f'<array id="{raw_identity}"></array>'.encode(), action_request)
+            self.assertIn(b"<action>logout</action>", controller_backend.requests[3][1])
+
+    def test_power_action_requires_exact_structural_confirmation(self) -> None:
+        confirmations = (
+            b"<avtrans><!-- <action>on</action> --><action>off</action><paths><path>units.topology</path></paths></avtrans>",
+            b"<avtrans><action>on</action><action>on</action><paths><path>units.topology</path></paths></avtrans>",
+            b"<avtrans><action>on</action><paths><path>wrong</path></paths></avtrans>",
+            b"<avtrans><action>on</action><paths><path>units.topology</path></paths><error>denied</error></avtrans>",
+            b"<avtrans><action>on</action><paths><path>units.topology</path></paths></avtrans><trailing />",
+        )
+        for confirmation in confirmations:
+            with self.subTest(confirmation=confirmation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                store_path = root / "rest" / "tokens.json"
+                credentials_path = root / "service.credentials"
+                socket_path = root / "avtrans.sock"
+                store = token_store.TokenStore(store_path)
+                administrator = store.bootstrap("Administrator")
+                projected = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+                outlet_id = projected["outlets"][0]["id"]
+                controller = store.create_token(
+                    administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
+                )
+                credentials_path.write_text("service-user\nservice-password\n")
+                credentials_path.chmod(0o600)
+                with FakeAvtransController(
+                    socket_path,
+                    [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), confirmation, LOGOUT_RESPONSE.read_bytes()],
+                ):
+                    result = self.run_cgi(
+                        "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                        authorization=f"Bearer {controller.plaintext}",
+                        body=json.dumps({"action": "on", "inventoryRevision": projected["inventoryRevision"]}).encode(),
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_TOKEN_STORE": str(store_path),
+                            "PM3000_CREDENTIALS": str(credentials_path),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                _headers, response = self.cgi_json(result)
+                self.assertEqual("action_outcome_unknown", response["code"])
 
     def test_action_request_is_validated_before_disabled_response_without_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
