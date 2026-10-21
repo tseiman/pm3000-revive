@@ -2,7 +2,7 @@
 
 Independent community project for incrementally modernizing Avocent PM3000 PDUs. The long-term scope includes updated remote access, firmware analysis and packaging, a modern web UI, ACME certificate handling, and RPC-based automation integrations. This project is not affiliated with Avocent or Vertiv.
 
-> **Current milestone:** a tested static Dropbear build, a documented compatibility patch for the legacy Web UI, and a verified architecture/stage plan for its compact modern replacement. No complete firmware image or replacement UI is provided yet.
+> **Current milestone:** tested Dropbear tooling, a documented legacy-WebUI compatibility patch, and a packaged modern WebUI/REST implementation through Stage 9 milestone 2A. The installed `0.1` pilot remains the live read-only baseline; current write-capable code is offline-tested only. No complete firmware image or Stage 10 product release is provided.
 
 ## Firmware baseline
 
@@ -46,7 +46,7 @@ cd pm3000-revive/components/dropbear
 
 Validated binaries are written to `components/dropbear/artifacts/bin/`. Release archives are written to `components/dropbear/dist/`.
 
-The modern PM3000 release is versioned independently from Dropbear. On Linux,
+The modern-WebUI candidate archive is versioned independently from Dropbear. On Linux,
 after the shared PPC toolchain above has been built, create it with:
 
 ```bash
@@ -59,14 +59,16 @@ corresponding `pm3000-release-*.tar`. Both release workflows restore the same
 PPC cross-toolchain cache seeded on `main`, but do not couple their component
 versions.
 
+Publishing a `modern-webui-v*` artifact records a reproducible offline milestone; it does not indicate Stage 10 cutover or real-device write validation.
+
 ## Install and test
 
 Installation is operator-initiated and uses the packaged two-phase installer. Read [Installing Dropbear on the PM3000](docs/INSTALL_DROPBEAR.md) before copying anything to a device. Phase 1 runs one parallel test on port 2222 while preserving vendor OpenSSH; phase 2 takes port 22 and enables SysV startup only after explicit confirmation of both the test login and a new port-22 login. No installer command reboots the PDU, and `rollback.sh` restores the preserved OpenSSH service.
 
 ## Project status and safety
 
-- Current stage: experimental component build; not a complete firmware update.
-- No PM3000 deployment is automated.
+- Modern WebUI development is at Stage 9 milestone 2A; Stage 10 cutover and final product release have not started.
+- Device deployment is never automatic. The repository provides an explicit, backup-gated operator-invoked installer; the current write-capable candidate remains undeployed.
 - Do not overwrite vendor binaries, bootloader data, calibration data, or the original firmware.
 - Keep an existing management session and recovery route available during device testing.
 - Do not publish vendor firmware images, device dumps, credentials, host keys, or proprietary files in this repository.

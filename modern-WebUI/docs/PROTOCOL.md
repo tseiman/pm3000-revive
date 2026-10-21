@@ -33,7 +33,7 @@ The reviewed fixtures in [`../fixtures/observed/`](../fixtures/observed/) confir
 6. `action=get`, `path=units.powermanagement.pdu_management` returns table `pdu_devices_table` with model, position, status, current, power, alarm, and threshold fields.
 7. `action=logout`, `path=login` invalidates the browser session and returns the unauthenticated login model.
 
-Only the read requests and logout were transmitted. Control descriptors such as `targPowerOn`, `targPowerOff`, `targCycle`, `on`, `off`, `cycle`, `rebootPDU`, `resetHW`, `factorydef`, and `upgradeFirmware` were observed in responses but never invoked. Their state-changing request payloads remain unknown.
+Only the read requests and logout were transmitted in the observed device captures. Control descriptors such as `targPowerOn`, `targPowerOff`, `targCycle`, `on`, `off`, `cycle`, `rebootPDU`, `resetHW`, `factorydef`, and `upgradeFirmware` were observed in responses but never invoked. Fixed outlet/PDU action payloads have since been derived from static firmware evidence and implemented offline, but they have not been empirically transmitted or validated on a real device.
 
 ## Confirmed server flow
 
@@ -54,7 +54,7 @@ Backend feature definitions distinguish:
 - PDU-wide actions;
 - configuration, reset, reboot, factory-default, and firmware operations.
 
-The [REST v1 contract](REST-V1.md) allows status/inventory reads. It reserves a closed individual `on`, `off`, and `cycle` request shape, but Stage 2 rejects every such request without constructing or sending backend XML. All other categories and operations are excluded. Backend authorization remains authoritative.
+The current [REST v1 contract](REST-V1.md) exposes fixed outlet and PDU inventory and fixed `on`, `off`, and `cycle` actions. Actions use fresh server-side row resolution, inventory revisions, authorization checks, operation-specific confirmation for `on`/`off`, and an unknown-outcome response for `cycle` or ambiguous post-dispatch results. No real device action has been executed or validated. All other power categories remain excluded, and backend authorization remains authoritative.
 
 Concrete browser paths, action IDs, controls, dependencies, and confirmation metadata are supplied by the backend response. The original frontend does not provide a safe hard-coded power-path table. Display labels and numeric positions must not be treated as protocol identifiers.
 
@@ -64,22 +64,22 @@ Concrete browser paths, action IDs, controls, dependencies, and confirmation met
 - REST is HTTPS-only; the adapter rejects execution through a cleartext listener even if routing is misconfigured.
 - Outlet identifiers are resolved from current inventory; no arithmetic or guessed mapping.
 - XML is constructed and parsed structurally with strict depth/size limits.
-- Missing, duplicate, unexpected, or ambiguous fields fail closed.
+- Missing, duplicate, or ambiguous required/identity fields fail closed; non-fixed-form projectors may omit harmless unsupported display fields. Revisioned fixed forms additionally reject unexpected fields and document structure.
 - Unknown backend errors remain errors; they are not converted into success or empty values.
 - State-changing requests are serialized or otherwise protected against overlap.
 - `cycle` is never retried automatically.
 - Session IDs, credentials, raw Authorization values, and full XML documents are not logged.
 
-## Remaining evidence
+## Remaining device evidence
 
 Observed sanitized fixtures now cover successful login/header, root navigation, topology, PDU/outlet inventory, read-only status, and logout. Evidence is still required for:
 
 - login failure and session expiry;
 - authorization denial;
-- exact individual `on`, `off`, and `cycle` request/response shapes;
+- sanitized real-device success, rejection, and uncertain-outcome evidence for individual `on`, `off`, and `cycle` actions;
 - malformed and timeout behavior.
 
-The framing between `mod_avtrans` and `/dev/avtrans_socket` must be proven before a CGI adapter connects directly. Alternatively, a same-origin call through the existing handler must be proven safe and non-deadlocking. Neither path is assumed yet.
+The native adapter implements the direct `/dev/avtrans_socket` transport and framing from offline firmware evidence and fake-controller tests. Compatibility with the live appliance socket remains a controlled device-validation gate; offline implementation is not proof of target behavior.
 
 ## Stage 1 evidence set
 

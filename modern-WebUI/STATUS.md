@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-The current offline candidate implements PM3000-backed WebUI sessions, token administration, validated outlet and PDU inventory, fixed power actions, self-service password change, typed DSView/NIS settings, revision-protected Help and Language and Data Buffering settings, and seven session-only read-only system and monitoring endpoints with typed C99 parsers, OpenAPI v1.4.0 schemas, and dependency-free browser views. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
+Stage 9 milestone 2A is the current published offline checkpoint. It implements PM3000-backed WebUI sessions, token administration, validated outlet and PDU inventory, fixed power actions, self-service password change, typed DSView/NIS settings, revision-protected Help and Language and Data Buffering settings, and seven session-only read-only system and monitoring endpoints with typed C99 parsers, OpenAPI v1.4.0 schemas, and dependency-free browser views. The milestone is commit `d2c97e6` with tree `e46500e776e17c94097c3c4bba7c7fe6b958ce29`. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
 
 ## Implemented
 
@@ -36,7 +36,11 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
 - QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.
-- Earlier independent reviews found and drove regressions for credential/SID/password envelopes, complete XML 1.0 and fixed-form closure, revisioned UI write races, exact read-back semantics, and operation-specific session error contracts. Those findings are resolved in the current candidate; final release status remains pending an independent review of its exact staged tree.
+- Independent review of the exact milestone 2A tree reported `BLOCKERS: NO` and no unresolved HIGH or MEDIUM findings. Earlier reviews drove regressions for credential/SID/password envelopes, complete XML 1.0 and fixed-form closure, revisioned UI write races, exact read-back semantics, and operation-specific session and cookie contracts.
+
+## Next milestone
+
+Stage 9 milestone 2B adds further low-risk fixed authentication, policy, logging, and network settings one typed resource at a time. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit. Stage 10 cutover and final product release have not started.
 
 ## Controlled device-validation boundary
 

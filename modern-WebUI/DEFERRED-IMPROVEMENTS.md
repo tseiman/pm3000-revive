@@ -4,7 +4,7 @@ This file records work intentionally left outside the currently implemented, nar
 
 ## Statically classified but not yet implemented
 
-- The full offline mutation inventory is summarized in `docs/MENU-CAPABILITY-CROSSCHECK.md`. Of the 20 fixed `COMPLETE_STATIC` settings contracts, DSView security (C03) and NIS (C14) are now implemented; the other 18 fixed settings and 10 fixed create/save flows remain.
+- The full offline mutation inventory is summarized in `docs/MENU-CAPABILITY-CROSSCHECK.md`. Of the 20 fixed `COMPLETE_STATIC` settings contracts, DSView security, NIS, Help and Language, and Data Buffering are now implemented; the other 16 fixed settings and 10 fixed create/save flows remain.
 - Implement each fixed contract as a separate typed REST operation or a compile-time allowlisted schema entry. Never expose a client-selected Avtrans path, action, form ID, parameter structure, or raw XML body.
 - Settings that preserve hidden, conditional, or server-generated state must begin with a fresh GET and carry forward only fields allowed by the exact firmware contract. Reject ambiguous variants rather than submitting a partial form.
 
@@ -21,12 +21,12 @@ A generic Avtrans write proxy is prohibited.
 
 ## Requires controlled PM3000 response fixtures
 
-- Outlet and PDU request contracts are implemented from closed static maps. `on`/`off` require operation-specific state confirmation; `cycle` remains an unknown outcome after dispatch because no stable read-back state exists. Password change requires the exact statically derived success-form hierarchy. Before release, capture sanitized successful, validation-error, authorization-error, pending-warning, and cycle responses during an explicitly approved device test to validate these response semantics empirically.
+- Outlet and PDU request contracts are implemented from closed static maps. `on`/`off` require operation-specific state confirmation; `cycle` remains an unknown outcome after dispatch because no stable read-back state exists. Password change requires the exact statically derived success-form hierarchy. Before Stage 10 cutover or any device-validated product release, capture sanitized successful, validation-error, authorization-error, pending-warning, and cycle responses during an explicitly approved device test to validate these response semantics empirically.
 - Compare modern navigation and action availability with at least one administrator and one restricted PM3000 account.
 
 ## Non-critical UI improvements
 
-- Add localized labels after the appliance-language contract is observed.
+- Add localized labels after the appliance-language behavior is validated on a real device.
 - Replace legacy fallback pages incrementally as typed settings endpoints become available.
 - Improve compact/mobile navigation for accounts with many authorized legacy pages.
 

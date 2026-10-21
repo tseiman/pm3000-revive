@@ -65,9 +65,9 @@ modern-WebUI/deploy/stage7-install.sh \
 
 This is a write operation. Run it only during an approved maintenance window.
 
-## Build the exact allowlist release
+## Build the exact allowlist candidate archive
 
-For a complete PPC32 big-endian release on Linux, including the native runtime,
+For a complete PPC32 big-endian candidate package on Linux, including the native runtime,
 atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
 `qemu-ppc` is installed, run from the repository root:
 
@@ -81,6 +81,8 @@ should use the `Build modern WebUI release` GitHub Actions workflow rather than
 trying to run the Linux Buildroot toolchain locally. Tags named
 `modern-webui-v<release-id>` publish `pm3000-release-<release-id>.tar` and its checksum;
 Dropbear remains independently versioned under `dropbear-v*`.
+
+These are reproducible milestone artifacts, not evidence of Stage 10 completion or live write validation.
 
 The lower-level package-only command is:
 

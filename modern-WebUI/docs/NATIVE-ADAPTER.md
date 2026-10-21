@@ -17,6 +17,15 @@ The current candidate has not been installed on a device. Development and verifi
 - `POST /api/v1/session/password`
 - `GET|PUT /api/v1/settings/security/dsview`
 - `GET|PUT /api/v1/settings/authentication/nis`
+- `GET|PUT /api/v1/settings/help-language`
+- `GET|PUT /api/v1/settings/data-buffering`
+- `GET /api/v1/system/information`
+- `GET /api/v1/system/usage/memory`
+- `GET /api/v1/system/usage/flash`
+- `GET /api/v1/monitoring/network/devices`
+- `GET /api/v1/monitoring/network/routes/ipv4`
+- `GET /api/v1/monitoring/network/routes/ipv6`
+- `GET /api/v1/monitoring/serial-ports`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
@@ -110,9 +119,9 @@ Status: 200 OK
 
 ### Backend projection
 
-The Avtrans client has no generic proxy or free-form command interface. Active routes emit only fixed login, navigation, topology, PDU inventory, password-change, typed DSView/NIS setting, power-action, and logout requests. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. Projectors map only approved fields to REST v1 and never expose raw controller row IDs or hidden PDU threshold data.
+The Avtrans client has no generic proxy or free-form command interface. Active routes emit only fixed login, navigation, topology, PDU inventory, password-change, typed setting, system/monitoring read, power-action, and logout requests. The bounded structural XML parser rejects comments, malformed/trailing documents, and explicit controller errors. Each projector validates its required paths, identities, forms, and unique fields while omitting harmless unsupported display data. The revisioned Help and Language and Data Buffering fixed-form projector additionally closes the complete document grammar, attributes, elements, text, controls, declarations, hierarchy, and child ordering. Projectors map only approved fields to REST v1 and never expose raw controller row IDs, hidden fields, or hidden PDU threshold data.
 
-Malformed, oversized, ambiguous, duplicate, or unexpected backend data fails closed. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
+Malformed, oversized, ambiguous, or duplicate required/identity data fails closed; harmless unsupported display fields may be omitted by non-fixed-form projectors. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
 
 ### Token store
 
@@ -138,6 +147,8 @@ Power routes validate HTTPS, session or bearer authorization, scope/right, outle
 
 Password change is session-only, requires `units.change_password`, matching CSRF, and matching new-password confirmation. It emits only the fixed `save` form, accepts only the firmware-derived success-form hierarchy, and clears secret buffers with a non-optimizable wipe.
 
+Help and Language and Data Buffering are session-only complete-replacement resources. Each GET validates the exact fixed-form response and returns a strong revision in the body and `ETag`; PUT requires matching CSRF and `If-Match`, obtains a fresh backend state, emits only the fixed firmware form, and returns success only after exact typed read-back. Bearer authentication is rejected before backend access.
+
 Power `on`/`off` responses must be valid operation-specific inventories that report the targeted object in the requested state. `cycle` has no stable confirmation state and therefore reports `action_outcome_unknown` after dispatch. A malformed, unrelated, or unexpected response after any write is likewise unknown; no write is retried automatically. No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed.
 
 ## Deployment preconditions
@@ -157,7 +168,7 @@ Do not deploy by overwriting vendor files in place.
 
 ## Rollback design
 
-A later installer must make rollback an atomic configuration operation:
+The backup-first installer and separate rollback tooling implement the following design offline. Their current write-capable candidate has not completed controlled live-device acceptance:
 
 1. remove or disable only the new REST/modern-UI Apache mapping;
 2. restore the previous Apache configuration from a validated backup;

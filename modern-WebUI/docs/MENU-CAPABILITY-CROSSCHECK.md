@@ -231,9 +231,9 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 
 ## Prioritized implementation conclusion
 
-### Tier 0: implement the observed PDU status page
+### Tier 0: observed PDU status — completed in bounded form
 
-Implement `GET /api/v1/pdus` and `GET /api/v1/pdus/{pduId}` from the existing sanitized `pdu-management-get-request.xml` and `pdu-management-get-response.xml`. Project only an opaque PDU ID, vendor/model, position, outlet count/status, current, power, and raw alarm state. Do not expose `thresholds`, raw row IDs, or paths. Initially allow browser sessions with the exact navigation capability and unrestricted bearer `read`; outlet-limited tokens must receive `403` because aggregate PDU values may cover disallowed outlets.
+`GET /api/v1/pdus` and PDU-wide fixed actions are implemented from the sanitized PDU-management fixtures. The API exposes opaque PDU IDs and bounded inventory fields, but not thresholds, raw row IDs, paths, or a separate PDU-detail route. Outlet-limited bearer tokens cannot access aggregate PDU data.
 
 ### Tier 1: firmware-derived read-only expansion
 

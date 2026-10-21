@@ -9,6 +9,15 @@ The machine-readable source is [`../api/openapi-v1.json`](../api/openapi-v1.json
 - `POST /api/v1/session/password`
 - `GET|PUT /api/v1/settings/security/dsview`
 - `GET|PUT /api/v1/settings/authentication/nis`
+- `GET|PUT /api/v1/settings/help-language`
+- `GET|PUT /api/v1/settings/data-buffering`
+- `GET /api/v1/system/information`
+- `GET /api/v1/system/usage/memory`
+- `GET /api/v1/system/usage/flash`
+- `GET /api/v1/monitoring/network/devices`
+- `GET /api/v1/monitoring/network/routes/ipv4`
+- `GET /api/v1/monitoring/network/routes/ipv6`
+- `GET /api/v1/monitoring/serial-ports`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
@@ -23,7 +32,7 @@ There is no generic backend path, XML passthrough, token recovery, reset, reboot
 
 ## Authentication boundaries
 
-`GET /health` is unauthenticated local liveness and never contacts Avtrans.
+`GET /api/v1/health` is unauthenticated local liveness and never contacts Avtrans.
 
 Browser users create a server-side session with an existing PM3000 username and password. The adapter logs in through the observed GSP flow, reads rights-filtered navigation and topology controls, stores the GSP SID only in a mode-`0600` session file below a mode-`0700` directory, and returns a `Secure`, `HttpOnly`, `SameSite=Strict` cookie. Sessions expire after 15 idle minutes. Browser mutations require the matching `X-CSRF-Token`. Logout removes local state even when backend logout cannot be confirmed.
 
@@ -79,9 +88,13 @@ Rules:
 
 ## Typed settings
 
-`/api/v1/settings/security/dsview` is a complete boolean resource with the sole field `allowDSView`. `/api/v1/settings/authentication/nis` is a complete two-field resource with required `domainName` and `address` printable-ASCII strings of at most 99 bytes. Unknown, duplicate, missing, oversized, or incorrectly typed members are rejected before Avtrans.
+`/api/v1/settings/security/dsview` is a complete boolean resource with the sole field `allowDSView`. `/api/v1/settings/authentication/nis` is a complete two-field resource with required `domainName` and `address` printable-ASCII strings of at most 99 bytes. `/api/v1/settings/help-language` completely replaces `applianceLanguage` and `url`; the language must be one of the freshly validated backend choices. `/api/v1/settings/data-buffering` completely replaces all seven local, NFS, and syslog fields and restricts the facility to `LOG_LOCAL0` through `LOG_LOCAL5`. Unknown, duplicate, missing, oversized, or incorrectly typed members are rejected before Avtrans.
 
-These initial settings endpoints are browser-session-only: they reject an Authorization header, require their exact PM3000 navigation path and CSRF for PUT, and never map a REST bearer scope onto a PM3000 configuration right. GET validates the exact response path, form, and unique parameter values. PUT emits fixed `save` requests in firmware field order and returns success only when the content response contains an exact read-back match for every submitted field; any mismatch, missing value, duplicate, or dispatch uncertainty returns `action_outcome_unknown` and is never retried automatically.
+These settings endpoints are browser-session-only: they reject an Authorization header, require their exact PM3000 navigation path and CSRF for PUT, and never map a REST bearer scope onto a PM3000 configuration right. DSView and NIS GETs validate their required response path, form, and unique parameter values. The revisioned Help and Language and Data Buffering GETs additionally validate the complete fixed-form document grammar, controls, parameter declarations, hierarchy, choices, and unique values. Those revisioned resources return a quoted strong revision in the response and `ETag`; PUT requires the same value in `If-Match` and refreshes the backend state before dispatch. PUT emits fixed `save` requests in firmware field order and returns success only after exact typed read-back of every submitted field; any mismatch, missing value, duplicate, or dispatch uncertainty returns `action_outcome_unknown` and is never retried automatically.
+
+## Session-only system and monitoring reads
+
+The seven system and monitoring routes are cookie-session-only and reject bearer authentication before backend access. They require the matching PM3000 navigation capability and project only closed, bounded fields. They never expose GSP SIDs, backend paths or IDs, raw XML, mutation controls, hidden parameters, or the appliance serial number. Transport failures return `backend_unavailable`; malformed or ambiguous controller responses return `backend_protocol_error`.
 
 ## Token administration
 

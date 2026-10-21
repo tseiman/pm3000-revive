@@ -4,16 +4,23 @@ This directory contains the clean-room implementation of a compact modern Web UI
 
 ## Current status
 
-The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, outlet/PDU inventory and fixed power actions, self-service password change, and typed DSView/NIS settings are implemented offline. Release `0.1` remains the installed read-only pilot; none of the current write-capable code has been deployed or run on the appliance. The vendor UI at `/` remains the fallback.
+Stage 9 milestone 2A is published and independently reviewed. The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, outlet/PDU inventory and fixed power actions, self-service password change, typed DSView/NIS settings, revisioned Help and Language and Data Buffering settings, and seven typed system/monitoring reads are implemented offline. Release `0.1` remains the installed read-only pilot; none of the current write-capable code has been deployed or run on the appliance. The vendor UI at `/` remains the fallback. Stage 10 cutover and final product release have not started.
 
-Confirmed architecture:
+Confirmed legacy/vendor architecture:
 
 ```text
-browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
+browser -> Apache 2.2 -> /appliance/avtrans -> mod_avtrans.so
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients use scoped REST bearer tokens. Outlet and PDU actions use fixed path/table/action mappings, fresh server-resolved row identities, revision guards, and no automatic retry after an uncertain result. Further settings are added only through typed, compile-time-allowlisted contracts; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
+Modern sidecar architecture:
+
+```text
+browser or API client -> Apache 2.2 CGI -> pm3000-rest
+                      -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD
+```
+
+The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients use scoped REST bearer tokens. Outlet and PDU actions use fixed path/table/action mappings, fresh server-resolved row identities, revision guards, and no automatic retry after an uncertain result. Revisioned settings additionally require a fresh typed GET, strong `ETag`/`If-Match`, complete replacement, and exact read-back. Further settings are added only through typed, compile-time-allowlisted contracts; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
 
 ## Documents
 
