@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "" };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -81,11 +81,12 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
-  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = "";
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
+  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
   clearOneTimeSecret(); clear($("outlet-grid")); clear($("pdu-grid")); clear($("token-rows")); clear($("navigation"));
+  setHelpLanguageLoaded(false); setDataBufferingLoaded(false);
   $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = ""; $("password-change-error").textContent = "";
   $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
   setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
@@ -130,6 +131,8 @@ function renderNavigation() {
       path === "units.change_password" ? "password" :
       path === "units.authentication.authenticationservers.nis" ? "nis" :
       path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
+      path === "units.applianceSettings.help" ? "help-language" :
+      path === "units.event_notification.global_settings_databuffering" ? "data-buffering" :
       path === "units.powermanagement.pdu_management" ? "pdus" :
       path === "units.applianceSettings.information" ? "sysinfo" :
       path === "units.applianceSettings.usage.memory" ? "memory" :
@@ -151,7 +154,7 @@ function renderNavigation() {
 
 function switchView(view, path = "", label = "") {
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
@@ -161,6 +164,8 @@ function switchView(view, path = "", label = "") {
   if (view === "pdus") loadPdus();
   if (view === "nis") loadNisSetting();
   if (view === "dsview") loadDsviewSetting();
+  if (view === "help-language") loadHelpLanguageSetting();
+  if (view === "data-buffering") loadDataBufferingSetting();
   if (view === "sysinfo") loadSysinfo();
   if (view === "memory") loadMemory();
   if (view === "flash") loadFlash();
@@ -362,6 +367,120 @@ $("dsview-form").addEventListener("submit", async (event) => {
   }
 });
 
+const bufferingFacilities = ["LOG_LOCAL0", "LOG_LOCAL1", "LOG_LOCAL2", "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5"];
+const strongRevision = (value) => typeof value === "string" && /^"[0-9a-f]{64}"$/u.test(value);
+
+function setHelpLanguageLoaded(loaded) {
+  $("help-language").disabled = !loaded; $("help-url").disabled = !loaded; $("save-help-language").disabled = !loaded;
+  if (!loaded) {
+    state.helpLanguageRevision = ""; $("help-language").value = ""; $("help-url").value = ""; clear($("help-language"));
+  }
+}
+
+async function loadHelpLanguageSetting() {
+  if (state.helpLanguageWritePending) return;
+  const request = ++state.helpLanguageRequest;
+  setHelpLanguageLoaded(false); $("help-language-error").textContent = ""; setText("help-language-status", "Loading current setting…");
+  try {
+    const payload = await api("/api/v1/settings/help-language");
+    if (request !== state.helpLanguageRequest) return;
+    if (!strongRevision(payload.revision) || typeof payload.applianceLanguage !== "string" || typeof payload.url !== "string" || !Array.isArray(payload.allowedLanguages) || !payload.allowedLanguages.every((language) => typeof language === "string") || !payload.allowedLanguages.includes(payload.applianceLanguage)) throw new Error("The settings response was invalid.");
+    for (const language of payload.allowedLanguages) {
+      const option = document.createElement("option"); option.value = language; option.textContent = language; $("help-language").appendChild(option);
+    }
+    $("help-language").value = payload.applianceLanguage; $("help-url").value = payload.url;
+    state.helpLanguageRevision = payload.revision;
+    setHelpLanguageLoaded(true); setText("help-language-status", "Current setting loaded. Saving replaces both fields.");
+  } catch (error) {
+    if (request === state.helpLanguageRequest) {
+      setHelpLanguageLoaded(false); setText("help-language-status", "Current setting unavailable. Reload before saving.");
+      if (state.session) $("help-language-error").textContent = error.message;
+    }
+  }
+}
+
+$("help-language-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.helpLanguageWritePending || $("save-help-language").disabled || !state.helpLanguageRevision) return;
+  const generation = state.generation;
+  state.helpLanguageWritePending = true; $("reload-help-language").disabled = true; $("disconnect").disabled = true;
+  $("save-help-language").disabled = true; $("help-language-error").textContent = "";
+  let message = "";
+  try {
+    await api("/api/v1/settings/help-language", { method: "PUT", headers: { "If-Match": state.helpLanguageRevision }, body: JSON.stringify({ applianceLanguage: $("help-language").value, url: $("help-url").value }) });
+    toast("Help and Language setting saved.");
+  } catch (error) { message = error.message; }
+  finally {
+    state.helpLanguageWritePending = false; $("reload-help-language").disabled = false;
+    if (!state.dataBufferingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    await loadHelpLanguageSetting();
+    if (message && state.session && generation === state.generation) $("help-language-error").textContent = message;
+  }
+});
+
+function setDataBufferingLoaded(loaded) {
+  for (const id of ["buffer-local-size", "buffer-local-segments", "buffer-nfs-server", "buffer-nfs-path", "buffer-nfs-size", "buffer-nfs-segments", "buffer-syslog-facility", "save-data-buffering"]) $(id).disabled = !loaded;
+  if (!loaded) {
+    state.dataBufferingRevision = "";
+    for (const id of ["buffer-local-size", "buffer-local-segments", "buffer-nfs-server", "buffer-nfs-path", "buffer-nfs-size", "buffer-nfs-segments"]) $(id).value = "";
+    clear($("buffer-syslog-facility"));
+  }
+}
+
+async function loadDataBufferingSetting() {
+  if (state.dataBufferingWritePending) return;
+  const request = ++state.dataBufferingRequest;
+  setDataBufferingLoaded(false); $("data-buffering-error").textContent = ""; setText("data-buffering-status", "Loading current setting…");
+  try {
+    const payload = await api("/api/v1/settings/data-buffering");
+    if (request !== state.dataBufferingRequest) return;
+    const integerFields = ["localSize", "localSegments", "nfsSize", "nfsSegments"];
+    if (!strongRevision(payload.revision) || !integerFields.every((field) => Number.isInteger(payload[field])) || typeof payload.nfsServer !== "string" || typeof payload.nfsPath !== "string" || !bufferingFacilities.includes(payload.syslogFacility)) throw new Error("The settings response was invalid.");
+    $("buffer-local-size").value = String(payload.localSize); $("buffer-local-segments").value = String(payload.localSegments);
+    $("buffer-nfs-server").value = payload.nfsServer; $("buffer-nfs-path").value = payload.nfsPath;
+    $("buffer-nfs-size").value = String(payload.nfsSize); $("buffer-nfs-segments").value = String(payload.nfsSegments);
+    for (const facility of bufferingFacilities) {
+      const option = document.createElement("option"); option.value = facility; option.textContent = facility; $("buffer-syslog-facility").appendChild(option);
+    }
+    $("buffer-syslog-facility").value = payload.syslogFacility;
+    state.dataBufferingRevision = payload.revision;
+    setDataBufferingLoaded(true); setText("data-buffering-status", "Current setting loaded. Saving replaces all seven fields.");
+  } catch (error) {
+    if (request === state.dataBufferingRequest) {
+      setDataBufferingLoaded(false); setText("data-buffering-status", "Current setting unavailable. Reload before saving.");
+      if (state.session) $("data-buffering-error").textContent = error.message;
+    }
+  }
+}
+
+$("data-buffering-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.dataBufferingWritePending || $("save-data-buffering").disabled || !state.dataBufferingRevision) return;
+  const generation = state.generation;
+  state.dataBufferingWritePending = true; $("reload-data-buffering").disabled = true; $("disconnect").disabled = true;
+  $("save-data-buffering").disabled = true; $("data-buffering-error").textContent = "";
+  const replacement = {
+    localSize: $("buffer-local-size").valueAsNumber, localSegments: $("buffer-local-segments").valueAsNumber,
+    nfsServer: $("buffer-nfs-server").value, nfsPath: $("buffer-nfs-path").value,
+    nfsSize: $("buffer-nfs-size").valueAsNumber, nfsSegments: $("buffer-nfs-segments").valueAsNumber,
+    syslogFacility: $("buffer-syslog-facility").value
+  };
+  let message = "";
+  try {
+    await api("/api/v1/settings/data-buffering", { method: "PUT", headers: { "If-Match": state.dataBufferingRevision }, body: JSON.stringify(replacement) });
+    toast("Data Buffering setting saved.");
+  } catch (error) { message = error.message; }
+  finally {
+    state.dataBufferingWritePending = false; $("reload-data-buffering").disabled = false;
+    if (!state.helpLanguageWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    await loadDataBufferingSetting();
+    if (message && state.session && generation === state.generation) $("data-buffering-error").textContent = message;
+  }
+});
+
+$("reload-help-language").addEventListener("click", loadHelpLanguageSetting);
+$("reload-data-buffering").addEventListener("click", loadDataBufferingSetting);
+
 $("password-change-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("submit-password-change");
@@ -414,6 +533,7 @@ $("connect-form").addEventListener("submit", (event) => {
 
 $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
+  if (state.helpLanguageWritePending || state.dataBufferingWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);
 }); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-pdus").addEventListener("click", loadPdus); $("refresh-tokens").addEventListener("click", loadTokens);

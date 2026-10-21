@@ -108,6 +108,45 @@
           </div>
         </section>
 
+        <section id="help-language-view" class="view" aria-labelledby="help-language-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">System</span><h1 id="help-language-title">Help and Language</h1><p>Replace the appliance language and help URL from a fresh settings read.</p></div>
+            <button id="reload-help-language" class="secondary-button" type="button">Reload</button>
+          </div>
+          <div class="panel">
+            <form id="help-language-form">
+              <label for="help-language">Appliance language</label><select id="help-language" disabled required></select>
+              <label for="help-url">Help URL</label><input id="help-url" maxlength="256" disabled required>
+              <p id="help-language-status" class="panel-status" aria-live="polite">Load the current setting before saving.</p>
+              <p id="help-language-error" class="form-error" role="alert"></p>
+              <button id="save-help-language" class="primary-button" type="submit" disabled>Save setting</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="data-buffering-view" class="view" aria-labelledby="data-buffering-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Events and logs</span><h1 id="data-buffering-title">Data Buffering</h1><p>Replace the complete local, NFS, and syslog buffering configuration from a fresh settings read.</p></div>
+            <button id="reload-data-buffering" class="secondary-button" type="button">Reload</button>
+          </div>
+          <div class="panel">
+            <form id="data-buffering-form">
+              <div class="form-grid">
+                <div><label for="buffer-local-size">Local size</label><input id="buffer-local-size" type="number" min="0" max="2048" disabled required></div>
+                <div><label for="buffer-local-segments">Local segments</label><input id="buffer-local-segments" type="number" min="1" max="9" disabled required></div>
+                <div><label for="buffer-nfs-server">NFS server</label><input id="buffer-nfs-server" maxlength="100" disabled></div>
+                <div><label for="buffer-nfs-path">NFS path</label><input id="buffer-nfs-path" maxlength="100" disabled></div>
+                <div><label for="buffer-nfs-size">NFS size</label><input id="buffer-nfs-size" type="number" min="0" max="99999" disabled required></div>
+                <div><label for="buffer-nfs-segments">NFS segments</label><input id="buffer-nfs-segments" type="number" min="0" max="99" disabled required></div>
+                <div><label for="buffer-syslog-facility">Syslog facility</label><select id="buffer-syslog-facility" disabled required></select></div>
+              </div>
+              <p id="data-buffering-status" class="panel-status" aria-live="polite">Load the current setting before saving.</p>
+              <p id="data-buffering-error" class="form-error" role="alert"></p>
+              <button id="save-data-buffering" class="primary-button" type="submit" disabled>Save setting</button>
+            </form>
+          </div>
+        </section>
+
         <section id="password-change-view" class="view" aria-labelledby="password-change-title" hidden>
           <div class="page-heading"><div><span class="eyebrow">Account security</span><h1 id="password-change-title">Change password</h1><p>Update the password of the signed-in PM3000 user.</p></div></div>
           <div class="panel">

@@ -17,6 +17,8 @@ typedef struct {
     uint64_t path_mask;
     int can_manage_tokens;
     int can_control_power;
+    int can_help_language;
+    int can_data_buffering;
 } pm3000_session;
 
 int pm3000_session_create(const char *directory, const char *username,

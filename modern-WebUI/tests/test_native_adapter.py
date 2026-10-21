@@ -254,6 +254,7 @@ class NativeAdapterTests(unittest.TestCase):
         root: Path,
         navigation: bytes | None = None,
         topology: bytes | None = None,
+        login_response: bytes | None = None,
     ) -> tuple[str, dict[str, object], FakeAvtransController, subprocess.CompletedProcess[bytes]]:
         socket_path = root / "avtrans.sock"
         session_dir = root / "sessions"
@@ -261,7 +262,7 @@ class NativeAdapterTests(unittest.TestCase):
         controller = FakeAvtransController(
             socket_path,
             [
-                LOGIN_RESPONSE.read_bytes(),
+                login_response or LOGIN_RESPONSE.read_bytes(),
                 navigation or NAVIGATION_RESPONSE.read_bytes(),
                 topology if topology is not None else OBSERVED.read_bytes(),
             ],
@@ -311,6 +312,67 @@ class NativeAdapterTests(unittest.TestCase):
             persisted = files[0].read_bytes()
             self.assertNotIn(b"p&<secret", persisted)
             self.assertNotIn(cookie.encode(), persisted)
+
+    def test_session_login_escapes_maximum_length_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            socket_path = root / "avtrans.sock"
+            username = "'" * 128
+            password = "'" * 256
+            body = json.dumps({"username": username, "password": password}).encode()
+            with FakeAvtransController(socket_path, [
+                LOGIN_RESPONSE.read_bytes(), NAVIGATION_RESPONSE.read_bytes(), OBSERVED.read_bytes(),
+            ]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/session", body=body, content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 201", result.stdout)
+            self.assertEqual(3, len(controller.requests))
+            self.assertIn(b"<value>" + b"&apos;" * 128 + b"</value>", controller.requests[0][1])
+            self.assertIn(b"<value>" + b"&apos;" * 256 + b"</value>", controller.requests[0][1])
+
+    def test_session_login_rejects_non_printable_ascii_credentials_before_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+            }
+            cases = (
+                b'{"username":"op\\nname","password":"secret"}',
+                b'{"username":"operator","password":"sec\\u007fret"}',
+                b'{"username":"operator","password":"sec\\u0001ret"}',
+            )
+            for body in cases:
+                with self.subTest(body=body):
+                    result = self.run_cgi(
+                        "POST", "/api/v1/session", body=body,
+                        content_type="application/json", extra_environment=environment,
+                    )
+                    headers, response = self.cgi_json(result)
+                    self.assertIn(b"Status: 400", headers)
+                    self.assertEqual("bad_request", response["code"])
+
+    def test_session_login_escapes_maximum_expansion_controller_sids(self) -> None:
+        entities = {b"&": b"&amp;", b"<": b"&lt;", b'"': b"&quot;", b"'": b"&apos;"}
+        template = LOGIN_RESPONSE.read_bytes()
+        for decoded, entity in entities.items():
+            with self.subTest(decoded=decoded), tempfile.TemporaryDirectory() as temporary:
+                encoded_sid = entity * 128
+                login_response = template.replace(b"[REDACTED-SID]", encoded_sid)
+                _cookie, _response, controller, result = self.login_session(
+                    Path(temporary), login_response=login_response,
+                )
+                self.assertIn(b"Status: 201", result.stdout)
+                self.assertEqual(3, len(controller.requests))
+                expected = b"<sid>" + encoded_sid + b"</sid>"
+                self.assertIn(expected, controller.requests[1][1])
+                self.assertIn(expected, controller.requests[2][1])
+                self.assertNotIn(b"<sid>" + decoded * 128 + b"</sid>", controller.requests[1][1])
 
     def test_session_get_restores_public_metadata_and_refreshes_cookie(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -975,7 +1037,9 @@ class NativeAdapterTests(unittest.TestCase):
             controller_token = store.create_token(
                 administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
             )
-            credentials_path.write_text("service-user\nservice-password\n")
+            service_username = "'" * 128
+            service_password = "'" * 256
+            credentials_path.write_text(f"{service_username}\n{service_password}\n")
             credentials_path.chmod(0o600)
             responses = [
                 LOGIN_RESPONSE.read_bytes(),
@@ -999,6 +1063,8 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(4, len(controller.requests))
             requests = [request.decode("utf-8") for _, request in controller.requests]
             self.assertIn("<action>login</action>", requests[0])
+            self.assertIn("<value>" + "&apos;" * 128 + "</value>", requests[0])
+            self.assertIn("<value>" + "&apos;" * 256 + "</value>", requests[0])
             self.assertIn("<action>get</action>", requests[1])
             self.assertIn("<path>units.topology</path>", requests[1])
             self.assertIn("<action>targPowerOn</action>", requests[2])
@@ -1007,6 +1073,52 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertNotIn("<action>on</action>", requests[2])
             self.assertIn("<action>logout</action>", requests[3])
             self.assertNotIn(controller_token.plaintext, "".join(requests))
+
+    def test_service_credential_flow_escapes_maximum_expansion_controller_sids(self) -> None:
+        entities = {b"&": b"&amp;", b"<": b"&lt;", b'"': b"&quot;", b"'": b"&apos;"}
+        login_template = LOGIN_RESPONSE.read_bytes()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            credentials_path = root / "service.credentials"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            inventory = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+            outlet_id = inventory["outlets"][0]["id"]
+            controller_token = store.create_token(
+                administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
+            )
+            credentials_path.write_text("service-user\nservice-password\n")
+            credentials_path.chmod(0o600)
+            for index, (decoded, entity) in enumerate(entities.items()):
+                with self.subTest(decoded=decoded):
+                    socket_path = root / f"service-sid-{index}.sock"
+                    encoded_sid = entity * 128
+                    login_response = login_template.replace(b"[REDACTED-SID]", encoded_sid)
+                    with FakeAvtransController(socket_path, [
+                        login_response, OBSERVED.read_bytes(), OBSERVED.read_bytes(),
+                        LOGOUT_RESPONSE.read_bytes(),
+                    ]) as controller:
+                        result = self.run_cgi(
+                            "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                            authorization=f"Bearer {controller_token.plaintext}",
+                            body=json.dumps({
+                                "action": "on",
+                                "inventoryRevision": inventory["inventoryRevision"],
+                            }).encode(),
+                            content_type="application/json",
+                            extra_environment={
+                                "PM3000_TOKEN_STORE": str(store_path),
+                                "PM3000_CREDENTIALS": str(credentials_path),
+                                "PM3000_AVTRANS_SOCKET": str(socket_path),
+                            },
+                        )
+                    self.assertIn(b"Status: 204", result.stdout)
+                    expected = b"<sid>" + encoded_sid + b"</sid>"
+                    self.assertEqual(4, len(controller.requests))
+                    for _header, request in controller.requests[1:]:
+                        self.assertIn(expected, request)
+                        self.assertNotIn(b"<sid>" + decoded * 128 + b"</sid>", request)
 
     def test_outlet_action_rejects_controller_error_wrong_action_path_and_missing_payload(self) -> None:
         observed = OBSERVED.read_bytes()
@@ -1093,6 +1205,32 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIn(b'<parameter id="confirmpassword" structure="password"><value>new&gt;password</value></parameter>', request)
             self.assertNotIn(b"old&<password", result.stdout)
             self.assertNotIn(b"new>password", result.stdout)
+
+            maximum_socket = root / "password-maximum-expansion.sock"
+            printable_ascii = "".join(chr(value) for value in range(0x20, 0x7f))
+            xml_entities = {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;"}
+            with FakeAvtransController(maximum_socket, [response] * len(printable_ascii)) as maximum_controller:
+                for character in printable_ascii:
+                    maximum_password = character * 256
+                    maximum_body = json.dumps({
+                        "oldPassword": maximum_password,
+                        "newPassword": maximum_password,
+                        "confirmation": maximum_password,
+                    }, separators=(",", ":")).encode()
+                    maximum_result = self.run_cgi(
+                        "POST", "/api/v1/session/password", cookie=cookie,
+                        csrf=str(session["csrfToken"]), body=maximum_body,
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_SESSION_DIR": str(root / "sessions"),
+                            "PM3000_AVTRANS_SOCKET": str(maximum_socket),
+                        },
+                    )
+                    self.assertIn(b"Status: 204", maximum_result.stdout, character)
+            self.assertEqual(len(printable_ascii), len(maximum_controller.requests))
+            for character, request in zip(printable_ascii, maximum_controller.requests):
+                escaped = xml_entities.get(character, character).encode() * 256
+                self.assertEqual(3, request[1].count(b"<value>" + escaped + b"</value>"), character)
 
             invalid_socket = root / "password-invalid-response.sock"
             invalid_environment = {
@@ -1271,6 +1409,333 @@ class NativeAdapterTests(unittest.TestCase):
                     content_type="application/json", extra_environment=environment,
                 )
                 self.assertIn(b"Status: 400", rejected.stdout)
+
+    @staticmethod
+    def help_language_page(language: bytes = b"en", url: bytes = b"https://help.example.test/a&amp;b") -> bytes:
+        return (
+            b'<avtrans><action>content</action><paths><path>units.applianceSettings.help</path></paths><payload>'
+            b'<controls><control id="save" structure="button"/></controls>'
+            b'<section id="sessionform" structure="form">'
+            b'<parameter id="applanguage" structure="combo"><value>' + language +
+            b'</value><option label="English">en</option><option label="Deutsch">de</option></parameter>'
+            b'<parameter id="url" structure="RWtext"><value>' + url +
+            b'</value></parameter></section></payload></avtrans>'
+        )
+
+    @staticmethod
+    def data_buffering_page(values: tuple[bytes, ...] = (
+        b"1024", b"4", b"nfs.example.test", b"/buffer", b"4096", b"8", b"LOG_LOCAL2"
+    )) -> bytes:
+        local_size, local_segments, nfs_server, nfs_path, nfs_size, nfs_segments, facility = values
+        return (
+            b'<avtrans><action>content</action><paths><path>units.event_notification.global_settings_databuffering</path></paths><payload>'
+            b'<controls><control id="save" structure="button"/></controls>'
+            b'<section id="global_settings_form" structure="form">'
+            b'<parameter id="local" structure="title">'
+            b'<parameter id="local_size" structure="RWtext"><value>' + local_size + b'</value></parameter>'
+            b'<parameter id="local_segments" structure="RWtext"><value>' + local_segments + b'</value></parameter></parameter>'
+            b'<parameter id="nfs" structure="title"><parameter id="nfs_notice" structure="notice"/>'
+            b'<parameter id="nfs_server" structure="RWtext"><value>' + nfs_server + b'</value></parameter>'
+            b'<parameter id="nfs_path" structure="RWtext"><value>' + nfs_path + b'</value></parameter>'
+            b'<parameter id="nfs_size" structure="RWtext"><value>' + nfs_size + b'</value></parameter>'
+            b'<parameter id="nfs_segments" structure="RWtext"><value>' + nfs_segments + b'</value></parameter></parameter>'
+            b'<parameter id="syslog" structure="title"><parameter id="syslog_facility" structure="combo"><value>' + facility +
+            b'</value><option>LOG_LOCAL0</option><option>LOG_LOCAL1</option><option>LOG_LOCAL2</option>'
+            b'<option>LOG_LOCAL3</option><option>LOG_LOCAL4</option><option>LOG_LOCAL5</option></parameter></parameter>'
+            b'</section></payload></avtrans>'
+        )
+
+    def setting_get(self, root: Path, cookie: str, route: str, page: bytes, name: str):
+        socket_path = root / f"{name}-get.sock"
+        with FakeAvtransController(socket_path, [page]) as controller:
+            result = self.run_cgi(
+                "GET", route, cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(socket_path),
+                },
+            )
+        return result, controller
+
+    def test_fixed_settings_require_exact_navigation_write_capabilities(self) -> None:
+        cases = (
+            (b'accessPath="configuration.appliance.language" accessRights="w"',
+             b'accessPath="configuration.appliance.language.other" accessRights="w"',
+             "/api/v1/settings/help-language"),
+            (b'accessPath="configuration.event-notify" accessRights="w"',
+             b'accessPath="configuration.event-notify" accessRights="r"',
+             "/api/v1/settings/data-buffering"),
+        )
+        for expected, replacement, route in cases:
+            with self.subTest(route=route), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                navigation = NAVIGATION_RESPONSE.read_bytes().replace(expected, replacement, 1)
+                cookie, _session, _controller, _result = self.login_session(root, navigation=navigation)
+                rejected = self.run_cgi(
+                    "GET", route, cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+                    },
+                )
+                headers, payload = self.cgi_json(rejected)
+                self.assertIn(b"Status: 403", headers)
+                self.assertEqual("forbidden", payload["code"])
+                self.assertFalse((root / "must-not-open.sock").exists())
+
+    def test_help_language_get_returns_values_choices_revision_and_strong_etag(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            result, controller = self.setting_get(
+                root, cookie, "/api/v1/settings/help-language", self.help_language_page(), "help"
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            etag = next(line.split(b": ", 1)[1] for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            self.assertRegex(etag.decode(), r'^"[0-9a-f]{64}"$')
+            self.assertEqual(etag.decode(), payload["revision"])
+            self.assertEqual("en", payload["applianceLanguage"])
+            self.assertEqual("https://help.example.test/a&b", payload["url"])
+            self.assertEqual(["en", "de"], payload["allowedLanguages"])
+            self.assertEqual(1, len(controller.requests))
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+
+    def test_fixed_setting_backend_accepts_legal_xml_whitespace_in_allowed_attribute(self) -> None:
+        for name, whitespace in (("tab", b"\t"), ("line-feed", b"\n"), ("carriage-return", b"\r")):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                cookie, _session, _controller, _result = self.login_session(root)
+                page = self.help_language_page().replace(
+                    b'<option label="English">', b'<option label="before' + whitespace + b'after">', 1
+                )
+                result, _controller = self.setting_get(
+                    root, cookie, "/api/v1/settings/help-language", page, f"help-{name}"
+                )
+                headers, payload = self.cgi_json(result)
+                self.assertIn(b"Status: 200", headers)
+                self.assertEqual("en", payload["applianceLanguage"])
+
+    def test_fixed_setting_get_rejects_wrong_hierarchy_duplicates_controls_and_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            help_page = self.help_language_page()
+            data_page = self.data_buffering_page()
+            cases = (
+                ("help-no-save", "/api/v1/settings/help-language", help_page.replace(b'<controls><control id="save" structure="button"/></controls>', b"")),
+                ("help-extra-control", "/api/v1/settings/help-language", help_page.replace(b'</controls>', b'<control id="other" structure="button"/></controls>')),
+                ("help-stray-control-in-form", "/api/v1/settings/help-language", help_page.replace(b'<controls>', b'<control id="unexpected" structure="button"/><controls>')),
+                ("help-nested-empty-controls", "/api/v1/settings/help-language", help_page.replace(b'<controls>', b'<controls/><controls>')),
+                ("help-control-under-payload", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<control id="unexpected" structure="button"/><section id="sessionform"')),
+                ("help-extra-form", "/api/v1/settings/help-language", help_page.replace(b'</payload>', b'<section id="other" structure="form"></section></payload>')),
+                ("help-duplicate", "/api/v1/settings/help-language", help_page.replace(b'</section></payload>', b'<parameter id="url" structure="RWtext"><value>x</value></parameter></section></payload>')),
+                ("help-unknown", "/api/v1/settings/help-language", help_page.replace(b'</section></payload>', b'<parameter id="hidden" structure="RWtext"><value>x</value></parameter></section></payload>')),
+                ("help-unknown-empty", "/api/v1/settings/help-language", help_page.replace(b'</section></payload>', b'<parameter id="hidden" structure="password"/></section></payload>')),
+                ("help-choice-duplicate", "/api/v1/settings/help-language", help_page.replace(b'</parameter><parameter id="url"', b'<option>en</option></parameter><parameter id="url"', 1)),
+                ("help-choice-wrong-field", "/api/v1/settings/help-language", help_page.replace(b'</value></parameter></section></payload>', b'</value><option>x</option></parameter></section></payload>', 1)),
+                ("help-language-long", "/api/v1/settings/help-language", self.help_language_page(b"a" * 33)),
+                ("help-xml-noncharacter", "/api/v1/settings/help-language", self.help_language_page(b"en", b"\xef\xbf\xbe")),
+                ("help-literal-cdata-close", "/api/v1/settings/help-language", self.help_language_page(b"en", b"https://help.example.test/a]]>b")),
+                ("help-text-under-payload", "/api/v1/settings/help-language", help_page.replace(b"<controls>", b"JUNK<controls>")),
+                ("help-empty-processing-instruction", "/api/v1/settings/help-language", b"<??>" + help_page),
+                ("help-incomplete-xml-declaration", "/api/v1/settings/help-language", b"<?xml?>" + help_page),
+                ("help-invalid-processing-target", "/api/v1/settings/help-language", b"<?1bad?>" + help_page),
+                ("help-extra-root-child", "/api/v1/settings/help-language", help_page.replace(b"<avtrans>", b"<avtrans><unexpected/>", 1)),
+                ("help-text-under-root", "/api/v1/settings/help-language", help_page.replace(b"</action>", b"</action>JUNK", 1)),
+                ("help-root-attribute", "/api/v1/settings/help-language", help_page.replace(b"<avtrans>", b'<avtrans mystery="x">', 1)),
+                ("help-action-attribute", "/api/v1/settings/help-language", help_page.replace(b"<action>", b'<action mystery="x">', 1)),
+                ("help-paths-attribute", "/api/v1/settings/help-language", help_page.replace(b"<paths>", b'<paths mystery="x">', 1)),
+                ("help-path-attribute", "/api/v1/settings/help-language", help_page.replace(b"<path>", b'<path mystery="x">', 1)),
+                ("help-payload-attribute", "/api/v1/settings/help-language", help_page.replace(b"<payload>", b'<payload mystery="x">', 1)),
+                ("help-controls-attribute", "/api/v1/settings/help-language", help_page.replace(b"<controls>", b'<controls mystery="x">', 1)),
+                ("help-control-attribute", "/api/v1/settings/help-language", help_page.replace(b'<control id="save"', b'<control mystery="x" id="save"', 1)),
+                ("help-section-attribute", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<section mystery="x" id="sessionform"', 1)),
+                ("help-parameter-attribute", "/api/v1/settings/help-language", help_page.replace(b'<parameter id="url"', b'<parameter mystery="x" id="url"', 1)),
+                ("help-value-attribute", "/api/v1/settings/help-language", help_page.replace(b"<value>", b'<value mystery="x">', 1)),
+                ("help-option-attribute", "/api/v1/settings/help-language", help_page.replace(b'<option label="English"', b'<option mystery="x" label="English"', 1)),
+                ("help-default-namespace", "/api/v1/settings/help-language", help_page.replace(b"<avtrans>", b'<avtrans xmlns="urn:x">', 1)),
+                ("help-prefixed-attribute", "/api/v1/settings/help-language", help_page.replace(b"<payload>", b'<payload x:flag="1">', 1)),
+                ("help-invalid-attribute-name", "/api/v1/settings/help-language", help_page.replace(b"<payload>", b'<payload 1bad="1">', 1)),
+                ("help-missing-attribute-space", "/api/v1/settings/help-language", help_page.replace(b'id="save" structure=', b'id="save"structure=', 1)),
+                ("help-prefixed-id-attribute", "/api/v1/settings/help-language", help_page.replace(b'id="save" structure=', b'id="save" x:id="other" structure=', 1)),
+                ("help-declaration-missing-space", "/api/v1/settings/help-language", b'<?xml version="1.0"encoding="UTF-8"?>' + help_page),
+                ("help-payload-before-paths", "/api/v1/settings/help-language", help_page.replace(b'<paths><path>units.applianceSettings.help</path></paths>', b'', 1).replace(b'</avtrans>', b'<paths><path>units.applianceSettings.help</path></paths></avtrans>', 1)),
+                ("help-controls-after-form", "/api/v1/settings/help-language", help_page.replace(b'<controls><control id="save" structure="button"/></controls>', b'', 1).replace(b'</payload>', b'<controls><control id="save" structure="button"/></controls></payload>', 1)),
+                ("help-extra-empty-paths", "/api/v1/settings/help-language", help_page.replace(b'</paths>', b'</paths><paths/>', 1)),
+                ("help-option-before-value", "/api/v1/settings/help-language", help_page.replace(b'<value>en</value><option label="English">en</option>', b'<option label="English">en</option><value>en</value>', 1)),
+                ("data-wrong-parent", "/api/v1/settings/data-buffering", data_page.replace(b'id="local" structure="title"', b'id="wrong" structure="title"')),
+                ("data-syslog-wrong-parent", "/api/v1/settings/data-buffering", data_page.replace(b'id="syslog" structure="title"', b'id="wrong" structure="title"')),
+                ("data-duplicate", "/api/v1/settings/data-buffering", data_page.replace(b'</parameter></parameter><parameter id="nfs"', b'</parameter><parameter id="local_size" structure="RWtext"><value>1</value></parameter></parameter><parameter id="nfs"', 1)),
+                ("data-unknown-empty", "/api/v1/settings/data-buffering", data_page.replace(b'<parameter id="nfs_notice" structure="notice"/>', b'<parameter id="nfs_notice" structure="notice"/><parameter id="hidden" structure="password"/>')),
+                ("data-missing-notice", "/api/v1/settings/data-buffering", data_page.replace(b'<parameter id="nfs_notice" structure="notice"/>', b"")),
+                ("data-xml-noncharacter", "/api/v1/settings/data-buffering", self.data_buffering_page((b"1024", b"4", b"", b"\xef\xbf\xbe", b"4096", b"8", b"LOG_LOCAL2"))),
+                ("data-noncharacter-in-title-text", "/api/v1/settings/data-buffering", data_page.replace(b'<parameter id="local" structure="title">', b'<parameter id="local" structure="title">\xef\xbf\xbe')),
+                ("data-noncharacter-between-elements", "/api/v1/settings/data-buffering", data_page.replace(b'<controls>', b'\xef\xbf\xbf<controls>')),
+                ("data-noncharacter-in-attribute", "/api/v1/settings/data-buffering", data_page.replace(b'<payload>', b'<payload ignored="\xef\xbf\xbe">')),
+                ("data-prohibited-c0", "/api/v1/settings/data-buffering", data_page.replace(b'<controls>', b'\x01<controls>')),
+                ("help-parameter-outside-form", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<parameter id="hidden" structure="password"/><section id="sessionform"')),
+                ("help-empty-section-outside-form", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<section id="wrapper" structure="standard"/><section id="sessionform"')),
+                ("help-stray-value", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<value>hidden</value><section id="sessionform"')),
+                ("data-parameter-in-nonform", "/api/v1/settings/data-buffering", data_page.replace(b'<section id="global_settings_form"', b'<section id="wrapper" structure="standard"><parameter id="hidden" structure="password"/></section><section id="global_settings_form"')),
+                ("data-out-of-range", "/api/v1/settings/data-buffering", self.data_buffering_page((b"2049", b"4", b"", b"/buffer", b"4096", b"8", b"LOG_LOCAL2"))),
+            )
+            for name, route, page in cases:
+                with self.subTest(name=name):
+                    result, _controller = self.setting_get(root, cookie, route, page, name)
+                    headers, payload = self.cgi_json(result)
+                    self.assertIn(b"Status: 502", headers)
+                    self.assertEqual("backend_protocol_error", payload["code"])
+
+    def test_help_language_put_is_get_first_closed_and_serializes_escaped_ordered_complete_form(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            get_result, _controller = self.setting_get(root, cookie, "/api/v1/settings/help-language", self.help_language_page(), "help-rev")
+            get_headers, payload = self.cgi_json(get_result)
+            revision = next(line.split(b": ", 1)[1].decode() for line in get_headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            self.assertEqual(revision, payload["revision"])
+            current = self.help_language_page()
+            saved = self.help_language_page(b"de", b"https://help.example.test/?x=&lt;&amp;y=&quot;q&quot;")
+            socket_path = root / "help-put.sock"
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": revision}
+            body = json.dumps({"applianceLanguage": "de", "url": 'https://help.example.test/?x=<&y="q"'}, ensure_ascii=False).encode()
+            with FakeAvtransController(socket_path, [current, saved]) as controller:
+                result = self.run_cgi(
+                    "PUT", "/api/v1/settings/help-language", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body,
+                    content_type="application/json", extra_environment=environment,
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(2, len(controller.requests))
+            request = controller.requests[1][1]
+            expected = (
+                b'<section structure="form"><parameter id="applanguage" structure="combo"><value>de</value></parameter>'
+                b'<parameter id="url" structure="RWtext"><value>https://help.example.test/?x=&lt;&amp;y=&quot;q&quot;</value></parameter></section>'
+            )
+            self.assertIn(expected, request)
+            self.assertNotIn(b"sessionform", request)
+
+            maximum_url = "'" * 256
+            maximum_saved = self.help_language_page(b"en", b"&apos;" * 256)
+            maximum_socket = root / "help-put-maximum-expansion.sock"
+            maximum_environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(maximum_socket),
+                "HTTP_IF_MATCH": revision,
+            }
+            with FakeAvtransController(maximum_socket, [current, maximum_saved]) as maximum_controller:
+                maximum_result = self.run_cgi(
+                    "PUT", "/api/v1/settings/help-language", cookie=cookie,
+                    csrf=str(session["csrfToken"]),
+                    body=json.dumps({"applianceLanguage": "en", "url": maximum_url}).encode(),
+                    content_type="application/json", extra_environment=maximum_environment,
+                )
+            self.assertIn(b"Status: 204", maximum_result.stdout)
+            self.assertEqual(2, len(maximum_controller.requests))
+            self.assertIn(b"&apos;" * 256, maximum_controller.requests[1][1])
+
+    def test_help_language_put_rejects_auth_preconditions_json_and_fresh_choices_before_save(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock")}
+            valid = b'{"applianceLanguage":"en","url":"https://help.example.test"}'
+            cases = (
+                ("missing-csrf", {}, valid, b"Status: 403"),
+                ("bearer", {"csrf": str(session["csrfToken"]), "authorization": "Bearer denied"}, valid, b"Status: 401"),
+                ("missing-if-match", {"csrf": str(session["csrfToken"])}, valid, b"Status: 428"),
+                ("invalid-if-match", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "g" * 64 + '"'}}, valid, b"Status: 400"),
+                ("unknown", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "0" * 64 + '"'}}, b'{"applianceLanguage":"en","url":"x","hidden":"bad"}', b"Status: 400"),
+                ("duplicate", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "0" * 64 + '"'}}, b'{"applianceLanguage":"en","applianceLanguage":"de","url":"x"}', b"Status: 400"),
+                ("url-empty", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "0" * 64 + '"'}}, b'{"applianceLanguage":"en","url":""}', b"Status: 400"),
+                ("url-bytes", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "0" * 64 + '"'}}, json.dumps({"applianceLanguage":"en", "url":"é" * 129}, ensure_ascii=False).encode(), b"Status: 400"),
+                ("url-xml-noncharacter", {"csrf": str(session["csrfToken"]), "extra_environment": {**environment, "HTTP_IF_MATCH": '"' + "0" * 64 + '"'}}, b'{"applianceLanguage":"en","url":"\\ufffe"}', b"Status: 400"),
+            )
+            for name, kwargs, body, expected in cases:
+                with self.subTest(name=name):
+                    options = {"cookie": cookie, "body": body, "content_type": "application/json", "extra_environment": environment}
+                    options.update(kwargs)
+                    rejected = self.run_cgi("PUT", "/api/v1/settings/help-language", **options)
+                    self.assertIn(expected, rejected.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
+
+            get_result, _controller = self.setting_get(root, cookie, "/api/v1/settings/help-language", self.help_language_page(), "help-choice-rev")
+            headers = get_result.stdout.split(b"\r\n\r\n", 1)[0]
+            revision = next(line.split(b": ", 1)[1].decode() for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            socket_path = root / "help-choice.sock"
+            with FakeAvtransController(socket_path, [self.help_language_page()]) as controller:
+                rejected = self.run_cgi(
+                    "PUT", "/api/v1/settings/help-language", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=b'{"applianceLanguage":"fr","url":"https://help.example.test"}',
+                    content_type="application/json", extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": revision,
+                    },
+                )
+            self.assertIn(b"Status: 400", rejected.stdout)
+            self.assertEqual(1, len(controller.requests))
+
+    def test_data_buffering_get_and_put_enforce_revision_ranges_order_and_unknown_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            current = self.data_buffering_page()
+            get_result, _controller = self.setting_get(root, cookie, "/api/v1/settings/data-buffering", current, "data-rev")
+            headers, payload = self.cgi_json(get_result)
+            revision = next(line.split(b": ", 1)[1].decode() for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            self.assertEqual({
+                "localSize": 1024, "localSegments": 4, "nfsServer": "nfs.example.test", "nfsPath": "/buffer",
+                "nfsSize": 4096, "nfsSegments": 8, "syslogFacility": "LOG_LOCAL2", "revision": revision,
+            }, payload)
+            requested = {"localSize": 0, "localSegments": 9, "nfsServer": "", "nfsPath": "<&", "nfsSize": 99999, "nfsSegments": 99, "syslogFacility": "LOG_LOCAL5"}
+            saved = self.data_buffering_page((b"0", b"9", b"", b"&lt;&amp;", b"99999", b"99", b"LOG_LOCAL5"))
+            socket_path = root / "data-put.sock"
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": revision}
+            with FakeAvtransController(socket_path, [current, saved]) as controller:
+                result = self.run_cgi(
+                    "PUT", "/api/v1/settings/data-buffering", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=json.dumps(requested).encode(),
+                    content_type="application/json", extra_environment=environment,
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            request = controller.requests[1][1]
+            ids = [b'local_size', b'local_segments', b'nfs_server', b'nfs_path', b'nfs_size', b'nfs_segments', b'syslog_facility']
+            self.assertEqual(sorted(request.index(b'id="' + item + b'"') for item in ids), [request.index(b'id="' + item + b'"') for item in ids])
+            self.assertIn(b"<value>&lt;&amp;</value>", request)
+            self.assertNotIn(b"global_settings_form", request)
+            self.assertNotIn(b'id="local"', request)
+            self.assertNotIn(b'id="nfs"', request)
+            self.assertNotIn(b'id="syslog"', request)
+
+            mismatch_socket = root / "data-mismatch.sock"
+            environment["PM3000_AVTRANS_SOCKET"] = str(mismatch_socket)
+            with FakeAvtransController(mismatch_socket, [current, current]) as mismatch_controller:
+                mismatch = self.run_cgi(
+                    "PUT", "/api/v1/settings/data-buffering", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=json.dumps(requested).encode(),
+                    content_type="application/json", extra_environment=environment,
+                )
+            _, error = self.cgi_json(mismatch)
+            self.assertEqual("action_outcome_unknown", error["code"])
+            self.assertEqual(2, len(mismatch_controller.requests))
+
+            invalid_cases = (
+                {**requested, "localSize": -1}, {**requested, "localSize": 2049},
+                {**requested, "localSegments": 0}, {**requested, "localSegments": 10},
+                {**requested, "nfsSize": 100000}, {**requested, "nfsSegments": 100},
+                {**requested, "nfsServer": "bad server"}, {**requested, "nfsServer": "é" * 51},
+                {**requested, "nfsPath": "é" * 51}, {**requested, "syslogFacility": "LOG_LOCAL6"},
+                {**requested, "metadata": "forbidden"},
+            )
+            no_backend = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(root / "never.sock"), "HTTP_IF_MATCH": revision}
+            for candidate in invalid_cases:
+                rejected = self.run_cgi(
+                    "PUT", "/api/v1/settings/data-buffering", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=json.dumps(candidate, ensure_ascii=False).encode(),
+                    content_type="application/json", extra_environment=no_backend,
+                )
+                self.assertIn(b"Status: 400", rejected.stdout, candidate)
+            self.assertFalse((root / "never.sock").exists())
 
     def test_session_password_change_rejects_bearer_csrf_and_confirmation_errors_before_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -132,6 +134,82 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('JSON.stringify({ allowDSView:', self.javascript)
         self.assertIn('$("allow-dsview").checked = false', self.javascript)
         self.assertIn('await loadDsviewSetting()', self.javascript)
+
+    def test_revisioned_setting_forms_are_disabled_until_a_successful_get(self) -> None:
+        for form, save, load, request_counter in (
+            ("help-language-form", "save-help-language", "loadHelpLanguageSetting", "helpLanguageRequest"),
+            ("data-buffering-form", "save-data-buffering", "loadDataBufferingSetting", "dataBufferingRequest"),
+        ):
+            with self.subTest(form=form):
+                self.assertIn(f'id="{form}"', self.html)
+                self.assertRegex(self.html, rf'id="{save}"[^>]*disabled')
+                self.assertIn(f"async function {load}()", self.javascript)
+                self.assertIn(f"++state.{request_counter}", self.javascript)
+        self.assertIn('path === "units.applianceSettings.help" ? "help-language"', self.javascript)
+        self.assertIn('path === "units.event_notification.global_settings_databuffering" ? "data-buffering"', self.javascript)
+        self.assertIn('setHelpLanguageLoaded(false)', self.javascript)
+        self.assertIn('setDataBufferingLoaded(false)', self.javascript)
+
+    def test_revisioned_settings_keep_revisions_in_memory_and_send_if_match(self) -> None:
+        self.assertIn('helpLanguageRevision: ""', self.javascript)
+        self.assertIn('dataBufferingRevision: ""', self.javascript)
+        self.assertIn('state.helpLanguageRevision = payload.revision', self.javascript)
+        self.assertIn('state.dataBufferingRevision = payload.revision', self.javascript)
+        self.assertIn('headers: { "If-Match": state.helpLanguageRevision }', self.javascript)
+        self.assertIn('headers: { "If-Match": state.dataBufferingRevision }', self.javascript)
+        self.assertIn('if (method !== "GET" && options.csrf !== false && state.csrf)', self.javascript)
+        self.assertNotRegex(self.javascript, r'(localStorage|sessionStorage)\s*\.')
+
+    def test_revisioned_setting_saves_always_reload_without_automatic_retry(self) -> None:
+        help_submit = re.search(r'\$\("help-language-form"\)\.addEventListener\("submit".+?\n\}\);', self.javascript, re.S)
+        data_submit = re.search(r'\$\("data-buffering-form"\)\.addEventListener\("submit".+?\n\}\);', self.javascript, re.S)
+        self.assertIsNotNone(help_submit)
+        self.assertIsNotNone(data_submit)
+        assert help_submit is not None and data_submit is not None
+        for source, loader, route in (
+            (help_submit.group(0), "loadHelpLanguageSetting", "/api/v1/settings/help-language"),
+            (data_submit.group(0), "loadDataBufferingSetting", "/api/v1/settings/data-buffering"),
+        ):
+            with self.subTest(route=route):
+                self.assertEqual(1, source.count(f'api("{route}"'))
+                self.assertIn(f"await {loader}()", source)
+                self.assertIn("const generation = state.generation;", source)
+                self.assertIn("message && state.session && generation === state.generation", source)
+                self.assertRegex(source, rf"(?s)finally\s*\{{.+?state\.(?:helpLanguage|dataBuffering)WritePending = false;.+?await {loader}\(\)")
+
+    def test_revisioned_setting_writes_block_reload_and_second_submit_until_readback(self) -> None:
+        for prefix, loader, reload_id, save_id in (
+            ("helpLanguage", "loadHelpLanguageSetting", "reload-help-language", "save-help-language"),
+            ("dataBuffering", "loadDataBufferingSetting", "reload-data-buffering", "save-data-buffering"),
+        ):
+            with self.subTest(prefix=prefix):
+                self.assertIn(f"{prefix}WritePending: false", self.javascript)
+                self.assertIn(f"if (state.{prefix}WritePending) return;", self.javascript)
+                self.assertIn(f"state.{prefix}WritePending = true", self.javascript)
+                self.assertIn(f"state.{prefix}WritePending = false", self.javascript)
+                self.assertIn(f'$("{reload_id}").disabled = true', self.javascript)
+                self.assertIn(f'$("{reload_id}").disabled = false', self.javascript)
+                self.assertIn(f'$("{save_id}").disabled = true', self.javascript)
+
+    def test_revisioned_setting_runtime_blocks_reload_submit_race(self) -> None:
+        for setting in ("help-language", "data-buffering"):
+            with self.subTest(setting=setting):
+                result = subprocess.run(
+                    ["node", str(ROOT / "tests" / "ui_settings_write_lock.js"), str(WEB / "app.js"), setting],
+                    check=True, capture_output=True, text=True,
+                )
+                payload = json.loads(result.stdout)
+                self.assertEqual(setting, payload["setting"])
+                self.assertEqual(1, payload["pendingPuts"])
+                self.assertEqual(1, sum(call["method"] == "PUT" for call in payload["settingsCalls"]))
+                self.assertEqual([], payload["logoutCalls"])
+
+    def test_revisioned_setting_dynamic_values_use_text_content_and_no_html_sink(self) -> None:
+        self.assertIn('option.textContent = language', self.javascript)
+        self.assertIn('option.textContent = facility', self.javascript)
+        self.assertIn("document.createElement(\"option\")", self.javascript)
+        for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML"):
+            self.assertNotIn(unsafe, self.javascript)
 
     def test_ui_exposes_rights_gated_password_change_without_browser_storage(self) -> None:
         self.assertIn('id="password-change-view"', self.html)

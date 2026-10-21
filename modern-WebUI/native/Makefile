@@ -4,8 +4,8 @@ CC ?= cc
 CFLAGS ?= -std=c99 -Os -Wall -Wextra -Werror -pedantic
 CPPFLAGS ?=
 BUILD := build
-SOURCES := main.c sha256.c identifiers.c projector.c token_auth.c token_admin.c controller_xml.c avtrans.c session.c
-HEADERS := sha256.h identifiers.h projector.h token_auth.h token_admin.h controller_xml.h avtrans.h session.h
+SOURCES := main.c sha256.c identifiers.c projector.c token_auth.c token_admin.c controller_xml.c fixed_form.c avtrans.c session.c
+HEADERS := sha256.h identifiers.h projector.h token_auth.h token_admin.h controller_xml.h fixed_form.h avtrans.h session.h
 
 .PHONY: host target clean
 

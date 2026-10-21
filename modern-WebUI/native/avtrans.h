@@ -85,5 +85,15 @@ int pm3000_fetch_serial_session(const char *socket_path, const char *sid,
                                  unsigned char **response,
                                  size_t *response_length, char *error,
                                  unsigned int error_size);
+int pm3000_fetch_fixed_setting_session(const char *socket_path, const char *sid,
+                                        const char *path,
+                                        unsigned char **response,
+                                        size_t *response_length, char *error,
+                                        unsigned int error_size);
+int pm3000_save_fixed_setting_session(const char *socket_path, const char *sid,
+                                       const char *path, const char *form_payload,
+                                       unsigned char **response,
+                                       size_t *response_length, char *error,
+                                       unsigned int error_size);
 
 #endif

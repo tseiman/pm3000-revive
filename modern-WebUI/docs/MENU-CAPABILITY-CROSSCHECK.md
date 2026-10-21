@@ -10,9 +10,9 @@ This document compares the firmware 2.0.1.23 navigation model with the compact m
 - the extracted CACPD feature-module contracts;
 - the current REST API, native adapter, and browser client.
 
-No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed.
+No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed. Help and Language and Data Buffering are offline static-contract implementations; their real firmware write behavior has not been validated on a device.
 
-The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), and self-service password change (`units.change_password`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
+The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), self-service password change (`units.change_password`), Help and Language (`units.applianceSettings.help`), and Data Buffering (`units.event_notification.global_settings_databuffering`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
 
 ## Classification
 
@@ -82,9 +82,10 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** read candidate; write requires a complete form pair.
 
 - **Help and Language** — `units.applianceSettings.help`
-  - **Current:** Placeholder.
-  - **Static schema:** appliance language and help URL.
-  - **Decision:** read candidate. Language is a plausible narrow write candidate after one sanitized save fixture.
+  - **Current:** Implemented offline as session-only `GET|PUT /api/v1/settings/help-language` and a dependency-free browser form. GET returns the current language, help URL, runtime `allowedLanguages`, and a quoted strong revision in both the body and `ETag` header.
+  - **Static schema:** exact `applanguage` combo and `url` field in `sessionform`; exact `configuration.appliance.language:w` capability is required and bearer authentication is rejected.
+  - **Write semantics:** complete two-field replacement only. The browser remains disabled until a successful GET, keeps the revision only in memory, sends CSRF plus `If-Match`, and reloads after every save result. A PUT returns 204 only when a typed post-save read-back exactly matches both submitted fields; stale revisions return 412 and uncertain outcomes are not retried automatically.
+  - **Validation status:** parser, serializer, contract, and UI behavior are tested offline. No real firmware write has been attempted or validated.
 
 - **Boot Configuration** — `units.applianceSettings.bootconfiguration`
   - **Current:** Placeholder.
@@ -188,9 +189,10 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** redacted read candidate. Writes require complete forms; credentials and shared secrets must never be reflected.
 
 - **Data Buffering** — `units.event_notification.global_settings_databuffering`
-  - **Current:** Placeholder.
-  - **Static schema:** local, NFS, and syslog buffering configuration.
-  - **Decision:** redacted read candidate; writes require a complete form pair.
+  - **Current:** Implemented offline as session-only `GET|PUT /api/v1/settings/data-buffering` and a dependency-free browser form.
+  - **Static schema:** complete seven-field `global_settings_form`: local size/segments, NFS server/path/size/segments, and `LOG_LOCAL0` through `LOG_LOCAL5`. Exact `configuration.event-notify:w` capability is required and bearer authentication is rejected.
+  - **Write semantics:** complete seven-field replacement only. GET supplies a quoted strong revision in the body and `ETag`; PUT requires CSRF and the same value in `If-Match`. The browser saves only after a successful GET and reloads after success, rejection, or unknown outcome. A 204 means the typed post-save read-back exactly matched every submitted field; it does not merely mean that dispatch was accepted.
+  - **Validation status:** parser, serializer, ranges, stale protection, contract, and UI behavior are tested offline. No real firmware write has been attempted or validated.
 
 - **Appliance Logging** — `units.event_notification.sessions`
   - **Current:** Placeholder.
@@ -258,13 +260,13 @@ The current bearer `read` scope must not silently grant access to serial numbers
 
 Implement active-session viewing only after a sanitized GET fixture establishes practical row bounds. Do not expose raw backend session IDs.
 
-### Writes: none currently enableable
+### Bounded writes currently implemented offline
 
-The next low-blast-radius candidate is PDU rename, followed by current-user password change or language selection. Each still requires its own sanitized GET/mutation/success/error fixture set. No existing static form definition alone is sufficient to enable dispatch.
+Current-user password change, NIS, DSView, Help and Language, and Data Buffering have fixed, closed write routes. Help and Language and Data Buffering additionally use GET-first strong revisions and `If-Match`; both are complete replacements and report success only after exact typed read-back of every submitted field. These implementations are based on static firmware contracts and automated offline fixtures, not real appliance write validation. They remain uninstalled candidates until an approved device-validation window supplies sanitized success and failure evidence.
 
 ### Tier 3: configuration CRUD only after matched fixtures
 
-Network, firewall, SNMP, authentication servers, users/groups, event destinations, buffering, boot/security, route/host CRUD, active-session kill, and all PDU-wide mutations require sanitized matching `get` and mutation fixtures before implementation.
+Network, firewall, SNMP, remaining authentication servers, users/groups, event destinations other than the bounded Data Buffering form, boot/security, route/host CRUD, active-session kill, and other dynamic mutations require sanitized matching `get` and mutation fixtures before implementation.
 
 ### Permanently excluded or separately designed
 

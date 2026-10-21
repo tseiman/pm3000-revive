@@ -9,7 +9,8 @@ int pm3000_xml_login_sid(const unsigned char *xml, size_t length,
 int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           const char *const *allowed_paths,
                           unsigned int allowed_count, uint64_t *path_mask,
-                          int *can_manage);
+                          int *can_manage, int *can_help_language,
+                          int *can_data_buffering);
 int pm3000_xml_topology_controls(const unsigned char *xml, size_t length,
                                  int *can_control);
 int pm3000_xml_confirm(const unsigned char *xml, size_t length,
@@ -29,6 +30,36 @@ int pm3000_xml_dsview_value(const unsigned char *xml, size_t length,
 int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
                           const char *path, char *domain, size_t domain_size,
                           char *address, size_t address_size);
+
+#define PM3000_FIXED_MAX_FIELDS 8U
+#define PM3000_FIXED_MAX_CHOICES 16U
+#define PM3000_FIXED_VALUE_SIZE 257U
+
+struct pm3000_xml_fixed_field {
+    const char *id;
+    const char *structure;
+    const char *parent_id;
+};
+
+struct pm3000_xml_fixed_parameter {
+    const char *id;
+    const char *structure;
+    const char *parent_id;
+};
+
+struct pm3000_xml_fixed_result {
+    char values[PM3000_FIXED_MAX_FIELDS][PM3000_FIXED_VALUE_SIZE];
+    char choices[PM3000_FIXED_MAX_CHOICES][33];
+    unsigned int choice_count;
+};
+
+int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
+                          const char *path, const char *form,
+                          const struct pm3000_xml_fixed_field *fields,
+                          unsigned int field_count,
+                          const struct pm3000_xml_fixed_parameter *parameters,
+                          unsigned int parameter_count, int choice_field,
+                          struct pm3000_xml_fixed_result *out);
 
 struct pm3000_sysinfo {
     char model_number[256];

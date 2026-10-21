@@ -36,6 +36,8 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/session/password",
                 "/api/v1/settings/security/dsview",
                 "/api/v1/settings/authentication/nis",
+                "/api/v1/settings/help-language",
+                "/api/v1/settings/data-buffering",
                 "/api/v1/system/information",
                 "/api/v1/system/usage/memory",
                 "/api/v1/system/usage/flash",
@@ -60,6 +62,8 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"post"}, set(paths["/api/v1/session/password"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/security/dsview"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/authentication/nis"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/help-language"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/data-buffering"]))
         for route in (
             "/api/v1/system/information",
             "/api/v1/system/usage/memory",
@@ -104,6 +108,89 @@ class RestV1ContractTests(unittest.TestCase):
             {"204", "400", "401", "403", "405", "413", "415", "503"},
             set(route["put"]["responses"]),
         )
+
+    def test_revisioned_settings_are_closed_cookie_only_full_replacements(self) -> None:
+        paths = self.contract["paths"]
+        schemas = self.contract["components"]["schemas"]
+        cases = {
+            "/api/v1/settings/help-language": (
+                "units.applianceSettings.help",
+                "configuration.appliance.language:w",
+                "HelpLanguageSetting",
+                "HelpLanguageReplacement",
+                {"applianceLanguage", "url", "allowedLanguages", "revision"},
+                {"applianceLanguage", "url"},
+            ),
+            "/api/v1/settings/data-buffering": (
+                "units.event_notification.global_settings_databuffering",
+                "configuration.event-notify:w",
+                "DataBufferingSetting",
+                "DataBufferingReplacement",
+                {"localSize", "localSegments", "nfsServer", "nfsPath", "nfsSize", "nfsSegments", "syslogFacility", "revision"},
+                {"localSize", "localSegments", "nfsServer", "nfsPath", "nfsSize", "nfsSegments", "syslogFacility"},
+            ),
+        }
+        for path, (nav_path, capability, read_schema, write_schema, read_fields, write_fields) in cases.items():
+            with self.subTest(path=path):
+                route = paths[path]
+                for operation in route.values():
+                    self.assertEqual([{"cookieAuth": []}], operation["security"])
+                    self.assertTrue(operation["x-bearer-rejected"])
+                    self.assertEqual(nav_path, operation["x-required-nav-path"])
+                    self.assertEqual(capability, operation["x-required-write-capability"])
+                get = route["get"]
+                put = route["put"]
+                self.assertEqual(
+                    f"#/components/schemas/{read_schema}",
+                    get["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+                )
+                self.assertEqual(
+                    "#/components/headers/StrongETag",
+                    get["responses"]["200"]["headers"]["ETag"]["$ref"],
+                )
+                self.assertEqual(
+                    f"#/components/schemas/{write_schema}",
+                    put["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+                )
+                if_match = next(item for item in put["parameters"] if item["name"] == "If-Match")
+                self.assertTrue(if_match["required"])
+                self.assertEqual("header", if_match["in"])
+                self.assertEqual("#/components/schemas/StrongRevision", if_match["schema"]["$ref"])
+                self.assertTrue(put["x-csrf-required"])
+                self.assertTrue(put["x-full-replacement"])
+                self.assertEqual("exact-read-back-of-all-submitted-fields", put["x-success-confirmation"])
+                self.assertEqual(
+                    "#/components/responses/SettingWriteUnconfirmed",
+                    put["responses"]["503"]["$ref"],
+                )
+                self.assertEqual(
+                    {"204", "400", "401", "403", "405", "412", "413", "415", "428", "502", "503"},
+                    set(put["responses"]),
+                )
+                for name, fields in ((read_schema, read_fields), (write_schema, write_fields)):
+                    schema = schemas[name]
+                    self.assertFalse(schema["additionalProperties"])
+                    self.assertEqual(fields, set(schema["required"]))
+                    self.assertEqual(fields, set(schema["properties"]))
+
+        self.assertEqual(
+            ["LOG_LOCAL0", "LOG_LOCAL1", "LOG_LOCAL2", "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5"],
+            schemas["SyslogFacility"]["enum"],
+        )
+        self.assertEqual('^"[0-9a-f]{64}"$', schemas["StrongRevision"]["pattern"])
+        xml_text_pattern = "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$"
+        help_text_pattern = "^[^\\u0000-\\u0020\\u007F\\uFFFE\\uFFFF]+$"
+        for schema_name in ("HelpLanguageReplacement", "HelpLanguageSetting"):
+            self.assertEqual(help_text_pattern, schemas[schema_name]["properties"]["url"]["pattern"])
+            self.assertEqual(xml_text_pattern, schemas[schema_name]["properties"]["applianceLanguage"].get("pattern"))
+        self.assertEqual(
+            xml_text_pattern,
+            schemas["HelpLanguageSetting"]["properties"]["allowedLanguages"]["items"]["pattern"],
+        )
+        for schema_name in ("DataBufferingReplacement", "DataBufferingSetting"):
+            self.assertEqual(xml_text_pattern, schemas[schema_name]["properties"]["nfsPath"]["pattern"])
+        for field in ("oldPassword", "newPassword", "confirmation"):
+            self.assertEqual("^[ -~]+$", schemas["PasswordChangeRequest"]["properties"][field]["pattern"])
 
     def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
         paths = self.contract["paths"]
@@ -267,6 +354,9 @@ class RestV1ContractTests(unittest.TestCase):
                 "bad_request",
                 "unauthorized",
                 "forbidden",
+                "csrf_rejected",
+                "precondition_required",
+                "revision_changed",
                 "not_found",
                 "method_not_allowed",
                 "not_acceptable",
@@ -276,6 +366,8 @@ class RestV1ContractTests(unittest.TestCase):
                 "backend_unavailable",
                 "backend_protocol_error",
                 "action_outcome_unknown",
+                "session_store_unavailable",
+                "logout_incomplete",
                 "internal_error",
                 "last_administrator",
                 "token_limit_reached",
@@ -307,10 +399,67 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual([], session["post"]["security"])
         self.assertEqual([{"cookieAuth": []}], session["get"]["security"])
         self.assertEqual([{"cookieAuth": []}], session["delete"]["security"])
+        password_operation = self.contract["paths"]["/api/v1/session/password"]["post"]
+        self.assertEqual([{"cookieAuth": []}], password_operation["security"])
+        self.assertEqual(2048, password_operation["x-max-body-bytes"])
+
+        def response_code(operation, status: str) -> str:
+            response_ref = operation["responses"][status]["$ref"].split("/")[-1]
+            response = self.contract["components"]["responses"][response_ref]
+            schema_ref = response["content"]["application/json"]["schema"]["$ref"].split("/")[-1]
+            schema = self.contract["components"]["schemas"][schema_ref]
+            return schema["properties"]["code"]["const"]
+
+        self.assertEqual({"201", "400", "401", "413", "415", "503"}, set(session["post"]["responses"]))
+        self.assertEqual(1024, session["post"]["x-max-body-bytes"])
         self.assertEqual(
-            [{"cookieAuth": []}],
-            self.contract["paths"]["/api/v1/session/password"]["post"]["security"],
+            "#/components/schemas/SessionCreateRequest",
+            session["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],
         )
+        for operation, status in ((session["post"], "201"), (session["get"], "200")):
+            response_ref = operation["responses"][status]["$ref"].split("/")[-1]
+            response = self.contract["components"]["responses"][response_ref]
+            self.assertEqual(
+                "#/components/schemas/Session",
+                response["content"]["application/json"]["schema"]["$ref"],
+            )
+            self.assertIn("Set-Cookie", response["headers"])
+            self.assertEqual(
+                "#/components/headers/ActiveSessionCookie",
+                response["headers"]["Set-Cookie"]["$ref"],
+            )
+
+        self.assertEqual("bad_request", response_code(session["post"], "400"))
+        self.assertEqual("unauthorized", response_code(session["post"], "401"))
+        self.assertEqual("payload_too_large", response_code(session["post"], "413"))
+        self.assertEqual("unsupported_media_type", response_code(session["post"], "415"))
+        self.assertEqual("session_store_unavailable", response_code(session["post"], "503"))
+        self.assertEqual({"204", "401", "403", "503"}, set(session["delete"]["responses"]))
+        self.assertEqual("unauthorized", response_code(session["get"], "401"))
+        self.assertEqual("unauthorized", response_code(session["delete"], "401"))
+        self.assertEqual("csrf_rejected", response_code(session["delete"], "403"))
+        self.assertEqual("logout_incomplete", response_code(session["delete"], "503"))
+        for status in ("204", "503"):
+            response_ref = session["delete"]["responses"][status]["$ref"].split("/")[-1]
+            response = self.contract["components"]["responses"][response_ref]
+            self.assertIn("Set-Cookie", response["headers"])
+            self.assertEqual(
+                "#/components/headers/ExpiredSessionCookie",
+                response["headers"]["Set-Cookie"]["$ref"],
+            )
+        headers = self.contract["components"]["headers"]
+        self.assertEqual(
+            r"^pm3000_session=[A-Za-z0-9_-]{43}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900$",
+            headers["ActiveSessionCookie"]["schema"]["pattern"],
+        )
+        self.assertEqual(
+            r"^pm3000_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0$",
+            headers["ExpiredSessionCookie"]["schema"]["pattern"],
+        )
+        logout_ref = session["delete"]["responses"]["503"]["$ref"].split("/")[-1]
+        logout_description = self.contract["components"]["responses"][logout_ref]["description"]
+        self.assertIn("omitted when local deletion fails", logout_description)
+        self.assertIn("expired when local deletion succeeds", logout_description)
 
     def test_every_response_disables_caching_and_content_sniffing(self) -> None:
         responses = list(self.contract["components"]["responses"].items())

@@ -7,7 +7,7 @@
 #define XML_MAX_BYTES (1024U * 1024U)
 #define XML_MAX_DEPTH 32U
 #define XML_MAX_NAME 63U
-#define XML_MAX_TEXT 255U
+#define XML_MAX_TEXT 512U
 #define XML_MAX_ATTRS 32U
 #define XML_MAX_PATHS 64U
 #define XML_MAX_PARAMETERS 128U
@@ -17,8 +17,12 @@ struct frame {
     char name[XML_MAX_NAME + 1U];
     char id[XML_MAX_TEXT + 1U];
     char structure[XML_MAX_NAME + 1U];
+    char path[XML_MAX_TEXT + 1U];
+    char access_path[XML_MAX_TEXT + 1U];
+    char access_rights[XML_MAX_NAME + 1U];
     char text[XML_MAX_TEXT + 1U];
     size_t text_length;
+    unsigned int fixed_child_stage;
 };
 
 struct parameter_value {
@@ -29,6 +33,22 @@ struct parameter_value {
     char container_id[XML_MAX_TEXT + 1U];
     char container_structure[XML_MAX_NAME + 1U];
     unsigned int direct_form_child;
+    char value[XML_MAX_TEXT + 1U];
+};
+
+struct parameter_declaration {
+    char form[XML_MAX_TEXT + 1U];
+    char parameter[XML_MAX_TEXT + 1U];
+    char structure[XML_MAX_NAME + 1U];
+    char container_name[XML_MAX_NAME + 1U];
+    char container_id[XML_MAX_TEXT + 1U];
+    char container_structure[XML_MAX_NAME + 1U];
+    unsigned int direct_form_child;
+};
+
+struct option_value {
+    char form[XML_MAX_TEXT + 1U];
+    char parameter[XML_MAX_TEXT + 1U];
     char value[XML_MAX_TEXT + 1U];
 };
 
@@ -68,6 +88,30 @@ struct document {
     unsigned int password_message;
     struct parameter_value parameter_values[XML_MAX_PARAMETERS];
     unsigned int parameter_value_count;
+    struct parameter_declaration parameter_declarations[XML_MAX_PARAMETERS];
+    unsigned int parameter_declaration_count;
+    unsigned int payload_parameter_count;
+    unsigned int payload_section_count;
+    unsigned int payload_value_count;
+    unsigned int payload_option_count;
+    unsigned int direct_payload_forms;
+    unsigned int direct_payload_controls;
+    unsigned int unexpected_payload_elements;
+    unsigned int unexpected_payload_text;
+    unsigned int unexpected_envelope_elements;
+    unsigned int unexpected_envelope_text;
+    unsigned int unexpected_fixed_attributes;
+    unsigned int unexpected_fixed_sequence;
+    unsigned int fixed_envelope_stage;
+    unsigned int fixed_payload_stage;
+    struct option_value option_values[PM3000_FIXED_MAX_CHOICES + 1U];
+    unsigned int option_value_count;
+    char form_ids[32][XML_MAX_TEXT + 1U];
+    unsigned int form_count;
+    unsigned int control_count;
+    unsigned int save_controls;
+    unsigned int help_language_capability;
+    unsigned int data_buffering_capability;
     char table_id[XML_MAX_NAME + 1U];
     char current_table_id[XML_MAX_NAME + 1U];
     unsigned int table_count;
@@ -85,7 +129,11 @@ static int valid_utf8(const unsigned char *input, size_t length) {
         unsigned char first = input[offset++];
         uint32_t value;
         size_t remaining;
-        if (first < 0x80U) { if (first == 0U) return 0; continue; }
+        if (first < 0x80U) {
+            if ((first < 0x20U && first != 0x09U && first != 0x0aU && first != 0x0dU))
+                return 0;
+            continue;
+        }
         if (first >= 0xc2U && first <= 0xdfU) { value = first & 0x1fU; remaining = 1U; }
         else if (first >= 0xe0U && first <= 0xefU) { value = first & 0x0fU; remaining = 2U; }
         else if (first >= 0xf0U && first <= 0xf4U) { value = first & 0x07U; remaining = 3U; }
@@ -96,10 +144,76 @@ static int valid_utf8(const unsigned char *input, size_t length) {
             if ((next & 0xc0U) != 0x80U) return 0;
             value = (value << 6) | (next & 0x3fU);
         }
-        if ((value >= 0xd800U && value <= 0xdfffU) || value > 0x10ffffU ||
+        if ((value >= 0xd800U && value <= 0xdfffU) || value == 0xfffeU ||
+            value == 0xffffU || value > 0x10ffffU ||
             value < (first <= 0xdfU ? 0x80U : first <= 0xefU ? 0x800U : 0x10000U)) return 0;
     }
     return 1;
+}
+
+static int declaration_space(unsigned char value) {
+    return value == ' ' || value == '\t' || value == '\n' || value == '\r';
+}
+
+static int declaration_span(const unsigned char *input, size_t start,
+                            size_t length, const char *expected) {
+    return strlen(expected) == length && memcmp(input + start, expected, length) == 0;
+}
+
+static int valid_xml_declaration(const unsigned char *input, size_t length) {
+    size_t offset = 0U;
+    unsigned int attribute = 0U;
+    int saw_standalone = 0;
+    if (length < 4U || memcmp(input, "xml", 3U) != 0 ||
+        !declaration_space(input[3U])) return 0;
+    offset = 3U;
+    while (offset < length) {
+        size_t separator_start = offset;
+        size_t name_start, name_length, value_start, value_length;
+        unsigned char quote;
+        while (offset < length && declaration_space(input[offset])) ++offset;
+        if (offset == length) break;
+        if (offset == separator_start) return 0;
+        name_start = offset;
+        while (offset < length &&
+               ((input[offset] >= 'A' && input[offset] <= 'Z') ||
+                (input[offset] >= 'a' && input[offset] <= 'z'))) ++offset;
+        name_length = offset - name_start;
+        if (name_length == 0U) return 0;
+        while (offset < length && declaration_space(input[offset])) ++offset;
+        if (offset >= length || input[offset++] != '=') return 0;
+        while (offset < length && declaration_space(input[offset])) ++offset;
+        if (offset >= length || (input[offset] != '\'' && input[offset] != '"')) return 0;
+        quote = input[offset++];
+        value_start = offset;
+        while (offset < length && input[offset] != quote) ++offset;
+        if (offset >= length) return 0;
+        value_length = offset - value_start;
+        ++offset;
+        if (attribute == 0U) {
+            if (!declaration_span(input, name_start, name_length, "version") ||
+                !declaration_span(input, value_start, value_length, "1.0")) return 0;
+        } else if (attribute == 1U &&
+                   declaration_span(input, name_start, name_length, "encoding")) {
+            if (value_length != 5U ||
+                !((input[value_start] == 'U' || input[value_start] == 'u') &&
+                  (input[value_start + 1U] == 'T' || input[value_start + 1U] == 't') &&
+                  (input[value_start + 2U] == 'F' || input[value_start + 2U] == 'f') &&
+                  input[value_start + 3U] == '-' && input[value_start + 4U] == '8')) return 0;
+        } else if ((attribute == 1U || attribute == 2U) &&
+                   declaration_span(input, name_start, name_length, "standalone")) {
+            if (saw_standalone ||
+                !(declaration_span(input, value_start, value_length, "yes") ||
+                  declaration_span(input, value_start, value_length, "no"))) return 0;
+            saw_standalone = 1;
+        } else return 0;
+        ++attribute;
+        if (saw_standalone) {
+            while (offset < length && declaration_space(input[offset])) ++offset;
+            return offset == length;
+        }
+    }
+    return attribute == 1U || attribute == 2U;
 }
 
 static void skip_space(struct document *document) {
@@ -111,13 +225,18 @@ static void skip_space(struct document *document) {
 static int parse_name(struct document *document, char *output, size_t capacity) {
     size_t start = document->offset;
     size_t amount;
+    unsigned char value;
+    if (document->offset >= document->length) return -1;
+    value = document->input[document->offset];
+    if (!(isalpha(value) || value == '_')) return -1;
+    ++document->offset;
     while (document->offset < document->length) {
-        unsigned char value = document->input[document->offset];
-        if (!(isalnum(value) || value == '_' || value == '-' || value == ':')) break;
+        value = document->input[document->offset];
+        if (!(isalnum(value) || value == '_' || value == '-' || value == '.')) break;
         ++document->offset;
     }
     amount = document->offset - start;
-    if (amount == 0U || amount >= capacity) return -1;
+    if (amount >= capacity) return -1;
     memcpy(output, document->input + start, amount);
     output[amount] = '\0';
     return 0;
@@ -125,7 +244,9 @@ static int parse_name(struct document *document, char *output, size_t capacity) 
 
 static int append_byte(char *output, size_t *length, size_t capacity,
                        unsigned char value) {
-    if (value == 0U || value < 0x20U || *length + 1U >= capacity) return -1;
+    if (value == 0U ||
+        (value < 0x20U && value != 0x09U && value != 0x0aU && value != 0x0dU) ||
+        *length + 1U >= capacity) return -1;
     output[(*length)++] = (char)value;
     output[*length] = '\0';
     return 0;
@@ -268,6 +389,20 @@ static int close_element(struct document *document, const char *name) {
             }
         }
     }
+    if (strcmp(name, "option") == 0 && document->depth >= 2U &&
+        strcmp(document->stack[document->depth - 2U].name, "parameter") == 0 &&
+        has_ancestor(document, "payload")) {
+        const char *form = ancestor_form_id(document);
+        const struct frame *parameter = &document->stack[document->depth - 2U];
+        struct option_value *record;
+        if (form == NULL || form[0] == '\0' || parameter->id[0] == '\0' ||
+            document->option_value_count >= PM3000_FIXED_MAX_CHOICES + 1U)
+            return -1;
+        record = &document->option_values[document->option_value_count++];
+        strcpy(record->form, form);
+        strcpy(record->parameter, parameter->id);
+        strcpy(record->value, frame->text);
+    }
     if (document->depth == 2U && strcmp(name, "action") == 0) {
         if (++document->actions != 1U) return -1;
         strcpy(document->action, frame->text);
@@ -296,11 +431,21 @@ static int close_element(struct document *document, const char *name) {
     return 0;
 }
 
+static int fixed_attribute_allowed(const char *element, const char *attribute) {
+    if (strcmp(element, "control") == 0 || strcmp(element, "section") == 0 ||
+        strcmp(element, "parameter") == 0)
+        return strcmp(attribute, "id") == 0 || strcmp(attribute, "structure") == 0;
+    if (strcmp(element, "option") == 0) return strcmp(attribute, "label") == 0;
+    return 0;
+}
+
 static int start_element(struct document *document, int *self_closing) {
     struct frame *frame;
     char attribute_names[XML_MAX_ATTRS][XML_MAX_NAME + 1U];
     char id[XML_MAX_TEXT + 1U] = {0};
     char path[XML_MAX_TEXT + 1U] = {0};
+    char access_path[XML_MAX_TEXT + 1U] = {0};
+    char access_rights[XML_MAX_NAME + 1U] = {0};
     char structure[XML_MAX_NAME + 1U] = {0};
     unsigned int attribute_count = 0U;
     if (document->depth >= XML_MAX_DEPTH) return -1;
@@ -311,6 +456,7 @@ static int start_element(struct document *document, int *self_closing) {
         char name[XML_MAX_NAME + 1U];
         char value[XML_MAX_TEXT + 1U];
         unsigned int index;
+        size_t separator_start = document->offset;
         skip_space(document);
         if (document->offset >= document->length) return -1;
         if (document->input[document->offset] == '>') {
@@ -321,7 +467,7 @@ static int start_element(struct document *document, int *self_closing) {
             document->input[document->offset + 1U] == '>') {
             document->offset += 2U; *self_closing = 1; break;
         }
-        if (attribute_count >= XML_MAX_ATTRS ||
+        if (document->offset == separator_start || attribute_count >= XML_MAX_ATTRS ||
             parse_name(document, name, sizeof(name)) != 0) return -1;
         for (index = 0U; index < attribute_count; ++index)
             if (strcmp(attribute_names[index], name) == 0) return -1;
@@ -333,10 +479,21 @@ static int start_element(struct document *document, int *self_closing) {
         if (attribute_value(document, value, sizeof(value)) != 0) return -1;
         if (strcmp(name, "id") == 0) strcpy(id, value);
         else if (strcmp(name, "path") == 0) strcpy(path, value);
+        else if (strcmp(name, "accessPath") == 0) strcpy(access_path, value);
+        else if (strcmp(name, "accessRights") == 0) {
+            if (strlen(value) > XML_MAX_NAME) return -1;
+            strcpy(access_rights, value);
+        }
         else if (strcmp(name, "structure") == 0) {
             if (strlen(value) > XML_MAX_NAME) return -1;
             strcpy(structure, value);
         }
+    }
+    {
+        unsigned int index;
+        for (index = 0U; index < attribute_count; ++index)
+            if (!fixed_attribute_allowed(frame->name, attribute_names[index]))
+                ++document->unexpected_fixed_attributes;
     }
     if (document->depth == 0U) {
         if (strcmp(frame->name, "avtrans") != 0 || ++document->roots != 1U) return -1;
@@ -349,6 +506,94 @@ static int start_element(struct document *document, int *self_closing) {
     }
     strcpy(frame->id, id);
     strcpy(frame->structure, structure);
+    strcpy(frame->path, path);
+    strcpy(frame->access_path, access_path);
+    strcpy(frame->access_rights, access_rights);
+    if (document->depth == 1U) {
+        unsigned int expected = document->fixed_envelope_stage;
+        if ((expected == 0U && strcmp(frame->name, "action") == 0) ||
+            (expected == 1U && strcmp(frame->name, "paths") == 0) ||
+            (expected == 2U && strcmp(frame->name, "payload") == 0))
+            ++document->fixed_envelope_stage;
+        else
+            ++document->unexpected_fixed_sequence;
+    }
+    if (document->depth == 2U && strcmp(document->stack[1].name, "payload") == 0) {
+        unsigned int expected = document->fixed_payload_stage;
+        if ((expected == 0U && strcmp(frame->name, "controls") == 0) ||
+            (expected == 1U && strcmp(frame->name, "section") == 0))
+            ++document->fixed_payload_stage;
+        else
+            ++document->unexpected_fixed_sequence;
+    }
+    if (document->depth > 0U && strcmp(document->stack[document->depth - 1U].name, "parameter") == 0) {
+        struct frame *parameter = &document->stack[document->depth - 1U];
+        if (strcmp(frame->name, "value") == 0) {
+            if (parameter->fixed_child_stage != 0U) ++document->unexpected_fixed_sequence;
+            parameter->fixed_child_stage = 1U;
+        } else if (strcmp(frame->name, "option") == 0) {
+            if (parameter->fixed_child_stage == 0U) ++document->unexpected_fixed_sequence;
+            parameter->fixed_child_stage = 2U;
+        }
+    }
+    if (document->depth > 0U && !has_ancestor(document, "payload")) {
+        const struct frame *container = &document->stack[document->depth - 1U];
+        int allowed =
+            (document->depth == 1U &&
+             (strcmp(frame->name, "action") == 0 ||
+              strcmp(frame->name, "paths") == 0 ||
+              strcmp(frame->name, "payload") == 0)) ||
+            (document->depth == 2U && strcmp(container->name, "paths") == 0 &&
+             strcmp(frame->name, "path") == 0);
+        if (!allowed) ++document->unexpected_envelope_elements;
+    }
+    if (has_ancestor(document, "payload")) {
+        const struct frame *container = document->depth == 0U ? NULL :
+                                        &document->stack[document->depth - 1U];
+        if (strcmp(frame->name, "section") == 0) {
+            ++document->payload_section_count;
+            if (strcmp(structure, "form") == 0 && container != NULL &&
+                strcmp(container->name, "payload") == 0)
+                ++document->direct_payload_forms;
+        } else if (strcmp(frame->name, "value") == 0) {
+            ++document->payload_value_count;
+        } else if (strcmp(frame->name, "option") == 0) {
+            ++document->payload_option_count;
+        } else if (strcmp(frame->name, "controls") == 0) {
+            if (container != NULL && strcmp(container->name, "payload") == 0)
+                ++document->direct_payload_controls;
+            else
+                ++document->unexpected_payload_elements;
+        } else if (strcmp(frame->name, "control") == 0) {
+            if (container == NULL || strcmp(container->name, "controls") != 0 ||
+                document->depth < 2U ||
+                strcmp(document->stack[document->depth - 2U].name, "payload") != 0)
+                ++document->unexpected_payload_elements;
+        } else if (strcmp(frame->name, "parameter") != 0)
+            ++document->unexpected_payload_elements;
+    }
+    if (strcmp(frame->name, "parameter") == 0 && has_ancestor(document, "payload")) {
+        const char *form = ancestor_form_id(document);
+        if (++document->payload_parameter_count > XML_MAX_PARAMETERS) return -1;
+        if (form != NULL) {
+            struct parameter_declaration *record;
+            const struct frame *container;
+            if (form[0] == '\0' || id[0] == '\0' || document->depth == 0U ||
+                document->parameter_declaration_count >= XML_MAX_PARAMETERS) return -1;
+            record = &document->parameter_declarations[document->parameter_declaration_count++];
+            container = &document->stack[document->depth - 1U];
+            strcpy(record->form, form);
+            strcpy(record->parameter, id);
+            strcpy(record->structure, structure);
+            strcpy(record->container_name, container->name);
+            strcpy(record->container_id, container->id);
+            strcpy(record->container_structure, container->structure);
+            record->direct_form_child =
+                strcmp(container->name, "section") == 0 &&
+                strcmp(container->id, form) == 0 &&
+                strcmp(container->structure, "form") == 0;
+        }
+    }
     if (document->depth == 2U && strcmp(frame->name, "section") == 0 &&
         strcmp(id, "changedPassword") == 0 && strcmp(structure, "standard") == 0 &&
         strcmp(document->stack[1].name, "payload") == 0)
@@ -374,9 +619,34 @@ static int start_element(struct document *document, int *self_closing) {
     if (strcmp(frame->name, "section") == 0 && strcmp(structure, "nav") == 0 &&
         path[0] != '\0' && has_ancestor(document, "payload")) {
         if (remember_navigation_path(document, path) != 0) return -1;
+        if (strcmp(path, "units.applianceSettings.help") == 0 &&
+            strcmp(access_path, "configuration.appliance.language") == 0 &&
+            strcmp(access_rights, "w") == 0)
+            document->help_language_capability = 1U;
+        if (strcmp(path, "units.event_notification.global_settings_databuffering") == 0) {
+            size_t ancestor;
+            for (ancestor = 0U; ancestor < document->depth; ++ancestor) {
+                const struct frame *candidate = &document->stack[ancestor];
+                if (strcmp(candidate->path, "units.event_notification") == 0 &&
+                    strcmp(candidate->access_path, "configuration.event-notify") == 0 &&
+                    strcmp(candidate->access_rights, "w") == 0)
+                    document->data_buffering_capability = 1U;
+            }
+        }
+    }
+    if (strcmp(frame->name, "section") == 0 && strcmp(structure, "form") == 0 &&
+        has_ancestor(document, "payload")) {
+        if (id[0] == '\0' || document->form_count >= 32U) return -1;
+        strcpy(document->form_ids[document->form_count++], id);
     }
     if (strcmp(frame->name, "control") == 0 && has_ancestor(document, "controls") &&
         has_ancestor(document, "payload")) {
+        ++document->control_count;
+        if (strcmp(id, "save") == 0 && strcmp(structure, "button") == 0 &&
+            document->depth >= 2U &&
+            strcmp(document->stack[document->depth - 1U].name, "controls") == 0 &&
+            strcmp(document->stack[document->depth - 2U].name, "payload") == 0)
+            ++document->save_controls;
         if (strcmp(id, "targPowerOn") == 0) {
             document->power_on = 1U;
         } else if (strcmp(id, "targPowerOff") == 0) {
@@ -422,20 +692,49 @@ static int parse_document(const unsigned char *xml, size_t length,
     while (document->offset < document->length) {
         if (document->input[document->offset] != '<') {
             size_t start = document->offset;
+            size_t index;
             while (document->offset < document->length &&
                    document->input[document->offset] != '<') ++document->offset;
+            for (index = start; index + 2U < document->offset; ++index)
+                if (document->input[index] == ']' &&
+                    document->input[index + 1U] == ']' &&
+                    document->input[index + 2U] == '>') return -1;
             if (document->depth == 0U) {
-                size_t index;
                 for (index = start; index < document->offset; ++index)
                     if (!isspace((unsigned char)document->input[index])) return -1;
             } else {
                 struct frame *frame = &document->stack[document->depth - 1U];
+                if (!has_ancestor(document, "payload") &&
+                    !((document->depth == 2U &&
+                       (strcmp(frame->name, "action") == 0 || strcmp(frame->name, "sid") == 0)) ||
+                      (document->depth == 3U && strcmp(frame->name, "path") == 0 &&
+                       ancestor_is(document, 2U, "paths")))) {
+                    for (index = start; index < document->offset; ++index) {
+                        unsigned char byte = document->input[index];
+                        if (byte != ' ' && byte != '\t' && byte != '\n' && byte != '\r') {
+                            ++document->unexpected_envelope_text;
+                            break;
+                        }
+                    }
+                }
+                if (has_ancestor(document, "payload") &&
+                    strcmp(frame->name, "value") != 0 &&
+                    strcmp(frame->name, "option") != 0) {
+                    for (index = start; index < document->offset; ++index) {
+                        unsigned char byte = document->input[index];
+                        if (byte != ' ' && byte != '\t' && byte != '\n' && byte != '\r') {
+                            ++document->unexpected_payload_text;
+                            break;
+                        }
+                    }
+                }
                 if ((document->depth == 2U &&
                      (strcmp(frame->name, "action") == 0 ||
                       strcmp(frame->name, "sid") == 0)) ||
                     (document->depth == 3U && strcmp(frame->name, "path") == 0 &&
                      ancestor_is(document, 2U, "paths")) ||
-                    (strcmp(frame->name, "value") == 0 &&
+                    (((strcmp(frame->name, "value") == 0 ||
+                       strcmp(frame->name, "option") == 0)) &&
                      (ancestor_form_id(document) != NULL ||
                       document->current_row_index >= 0))) {
                     if (decode(document->input + start, document->offset - start,
@@ -448,12 +747,15 @@ static int parse_document(const unsigned char *xml, size_t length,
         ++document->offset;
         if (document->offset >= document->length) return -1;
         if (document->input[document->offset] == '?') {
-            size_t end;
+            size_t content_start, end;
             if (document->offset != 1U) return -1;
-            end = document->offset + 1U;
+            content_start = document->offset + 1U;
+            end = content_start;
             while (end + 1U < document->length &&
                    !(document->input[end] == '?' && document->input[end + 1U] == '>')) ++end;
-            if (end + 1U >= document->length) return -1;
+            if (end + 1U >= document->length ||
+                !valid_xml_declaration(document->input + content_start,
+                                       end - content_start)) return -1;
             document->offset = end + 2U;
         } else if (document->input[document->offset] == '!') {
             return -1;
@@ -490,7 +792,8 @@ int pm3000_xml_login_sid(const unsigned char *xml, size_t length,
 int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           const char *const *allowed_paths,
                           unsigned int allowed_count, uint64_t *path_mask,
-                          int *can_manage) {
+                          int *can_manage, int *can_help_language,
+                          int *can_data_buffering) {
     struct document document;
     unsigned int index, candidate;
     if (allowed_count > 64U || parse_document(xml, length, &document) != 0 ||
@@ -508,6 +811,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
     for (candidate = 0U; candidate < document.navigation_count; ++candidate)
         if (strcmp(document.navigation_paths[candidate],
                    "units.users.local_accounts.user_names") == 0) *can_manage = 1;
+    *can_help_language = document.help_language_capability == 1U;
+    *can_data_buffering = document.data_buffering_capability == 1U;
     return 0;
 }
 
@@ -694,6 +999,85 @@ int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
         ++found;
     }
     return found == 2U ? 0 : -1;
+}
+
+int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
+                          const char *path, const char *form,
+                          const struct pm3000_xml_fixed_field *fields,
+                          unsigned int field_count,
+                          const struct pm3000_xml_fixed_parameter *parameters,
+                          unsigned int parameter_count, int choice_field,
+                          struct pm3000_xml_fixed_result *out) {
+    struct document document;
+    unsigned int index, field_index, next_field = 0U, matching_forms = 0U;
+    unsigned int seen[PM3000_FIXED_MAX_FIELDS] = {0};
+    if (out == NULL || fields == NULL || parameters == NULL ||
+        field_count == 0U || parameter_count == 0U ||
+        field_count > PM3000_FIXED_MAX_FIELDS || parameter_count > XML_MAX_PARAMETERS ||
+        choice_field >= (int)field_count ||
+        parse_document(xml, length, &document) != 0 ||
+        strcmp(document.action, "content") != 0 || strcmp(document.path, path) != 0 ||
+        document.payloads != 1U || document.form_count != 1U ||
+        document.payload_section_count != 1U || document.direct_payload_forms != 1U ||
+        document.direct_payload_controls != 1U || document.unexpected_payload_elements != 0U ||
+        document.unexpected_payload_text != 0U || document.unexpected_envelope_elements != 0U ||
+        document.unexpected_envelope_text != 0U || document.unexpected_fixed_attributes != 0U ||
+        document.unexpected_fixed_sequence != 0U || document.fixed_envelope_stage != 3U ||
+        document.fixed_payload_stage != 2U ||
+        document.payload_value_count != field_count ||
+        document.payload_option_count != document.option_value_count ||
+        document.control_count != 1U || document.save_controls != 1U) return -1;
+    memset(out, 0, sizeof(*out));
+    for (index = 0U; index < document.form_count; ++index)
+        if (strcmp(document.form_ids[index], form) == 0) ++matching_forms;
+    if (matching_forms != 1U || document.payload_parameter_count != parameter_count ||
+        document.parameter_declaration_count != parameter_count)
+        return -1;
+    for (index = 0U; index < parameter_count; ++index) {
+        const struct parameter_declaration *record = &document.parameter_declarations[index];
+        const struct pm3000_xml_fixed_parameter *expected = &parameters[index];
+        if (strcmp(record->form, form) != 0 ||
+            strcmp(record->parameter, expected->id) != 0 ||
+            strcmp(record->structure, expected->structure) != 0) return -1;
+        if (expected->parent_id == NULL) {
+            if (!record->direct_form_child) return -1;
+        } else if (strcmp(record->container_name, "parameter") != 0 ||
+                   strcmp(record->container_id, expected->parent_id) != 0 ||
+                   strcmp(record->container_structure, "title") != 0) return -1;
+    }
+    for (index = 0U; index < document.parameter_value_count; ++index) {
+        const struct parameter_value *record = &document.parameter_values[index];
+        if (strcmp(record->form, form) != 0) continue;
+        for (field_index = 0U; field_index < field_count; ++field_index)
+            if (strcmp(record->parameter, fields[field_index].id) == 0) break;
+        if (field_index == field_count) return -1;
+        if (field_index != next_field || ++seen[field_index] != 1U ||
+            strcmp(record->structure, fields[field_index].structure) != 0 ||
+            strlen(record->value) >= sizeof(out->values[field_index])) return -1;
+        if (fields[field_index].parent_id == NULL) {
+            if (!record->direct_form_child) return -1;
+        } else if (strcmp(record->container_name, "parameter") != 0 ||
+                   strcmp(record->container_id, fields[field_index].parent_id) != 0 ||
+                   strcmp(record->container_structure, "title") != 0) return -1;
+        strcpy(out->values[field_index], record->value);
+        ++next_field;
+    }
+    if (next_field != field_count) return -1;
+    if (choice_field >= 0) {
+        for (index = 0U; index < document.option_value_count; ++index) {
+            const struct option_value *option = &document.option_values[index];
+            unsigned int previous;
+            if (strcmp(option->form, form) != 0) continue;
+            if (strcmp(option->parameter, fields[choice_field].id) != 0) return -1;
+            if (option->value[0] == '\0' || strlen(option->value) >= sizeof(out->choices[0]) ||
+                out->choice_count >= PM3000_FIXED_MAX_CHOICES) return -1;
+            for (previous = 0U; previous < out->choice_count; ++previous)
+                if (strcmp(out->choices[previous], option->value) == 0) return -1;
+            strcpy(out->choices[out->choice_count++], option->value);
+        }
+        if (out->choice_count == 0U) return -1;
+    }
+    return 0;
 }
 
 static int table_parse_start(const unsigned char *xml, size_t length,

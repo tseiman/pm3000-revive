@@ -90,6 +90,18 @@
       "direction": "response",
       "purpose": "Synthetic serialstatistictable rows with serial port statistics",
       "evidence": "synthetic"
+    },
+    {
+      "file": "help-language-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic Help and Language fixed-form values and runtime choices",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "data-buffering-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic Data Buffering fixed-form values and syslog choices",
+      "evidence": "synthetic"
     }
   ],
   "transport_timeout": {

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.3.0",
-    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
+    "version": "1.4.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language and Data Buffering settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
   },
   "servers": [
     {
@@ -457,29 +457,33 @@
       "post": {
         "summary": "Create a server-side WebUI session using an existing PM3000 account",
         "security": [],
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SessionCreateRequest" }
+            }
+          }
+        },
         "responses": {
           "201": {
-            "description": "Session created; the GSP SID remains server-side.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SessionCreated"
+          },
+          "400": {
+            "$ref": "#/components/responses/SessionBadRequest"
           },
           "401": {
-            "$ref": "#/components/responses/Unauthorized"
+            "$ref": "#/components/responses/SessionUnauthorized"
+          },
+          "413": {
+            "$ref": "#/components/responses/SessionPayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/SessionUnsupportedMediaType"
           },
           "503": {
-            "$ref": "#/components/responses/BackendUnavailable"
+            "$ref": "#/components/responses/SessionStoreUnavailable"
           }
         },
         "operationId": "createSession"
@@ -493,24 +497,10 @@
         ],
         "responses": {
           "200": {
-            "description": "Public identity, CSRF token, and rights-filtered navigation.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SessionCurrent"
           },
           "401": {
-            "$ref": "#/components/responses/Unauthorized"
+            "$ref": "#/components/responses/SessionUnauthorized"
           }
         },
         "operationId": "getSession"
@@ -524,41 +514,16 @@
         ],
         "responses": {
           "204": {
-            "description": "Local session removed and controller logout confirmed.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
+            "$ref": "#/components/responses/SessionDeleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/SessionUnauthorized"
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "$ref": "#/components/responses/SessionCsrfRejected"
           },
           "503": {
-            "description": "Local session ended but controller logout was not confirmed.",
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
+            "$ref": "#/components/responses/LogoutIncomplete"
           }
         },
         "operationId": "deleteSession",
@@ -682,7 +647,7 @@
         ],
         "x-required-navigation-path": "units.change_password",
         "x-csrf-required": true,
-        "x-max-body-bytes": 1024,
+        "x-max-body-bytes": 2048,
         "x-backend-template": "action=save;path=units.change_password;form=change_password_form;responsePath=units.change_password.changedPassword",
         "requestBody": {
           "required": true,
@@ -924,6 +889,142 @@
           "503": {
             "$ref": "#/components/responses/BackendUnavailable"
           }
+        }
+      }
+    },
+    "/api/v1/settings/help-language": {
+      "get": {
+        "operationId": "getHelpLanguageSetting",
+        "summary": "Read the complete Help and Language setting and runtime language choices",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.applianceSettings.help",
+        "x-required-write-capability": "configuration.appliance.language:w",
+        "x-backend-template": "action=get;path=units.applianceSettings.help;form=sessionform",
+        "responses": {
+          "200": {
+            "description": "Current complete setting, available language values, and strong revision.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" },
+              "ETag": { "$ref": "#/components/headers/StrongETag" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HelpLanguageSetting" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      },
+      "put": {
+        "operationId": "replaceHelpLanguageSetting",
+        "summary": "Replace the complete Help and Language setting after a fresh revision check",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.applianceSettings.help",
+        "x-required-write-capability": "configuration.appliance.language:w",
+        "x-csrf-required": true,
+        "x-full-replacement": true,
+        "x-max-body-bytes": 4096,
+        "x-success-confirmation": "exact-read-back-of-all-submitted-fields",
+        "x-backend-template": "get-current-revision;action=save;path=units.applianceSettings.help;form=sessionform;parse-exact-read-back",
+        "parameters": [{
+          "name": "If-Match", "in": "header", "required": true,
+          "description": "Strong revision returned in the latest successful GET response body and ETag header.",
+          "schema": { "$ref": "#/components/schemas/StrongRevision" }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HelpLanguageReplacement" } } }
+        },
+        "responses": {
+          "204": {
+            "description": "Every submitted field exactly matched the typed controller read-back after save.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "412": { "$ref": "#/components/responses/RevisionChanged" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/SettingWriteUnconfirmed" }
+        }
+      }
+    },
+    "/api/v1/settings/data-buffering": {
+      "get": {
+        "operationId": "getDataBufferingSetting",
+        "summary": "Read the complete Data Buffering setting",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.event_notification.global_settings_databuffering",
+        "x-required-write-capability": "configuration.event-notify:w",
+        "x-backend-template": "action=get;path=units.event_notification.global_settings_databuffering;form=global_settings_form",
+        "responses": {
+          "200": {
+            "description": "Current complete setting and strong revision.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" },
+              "ETag": { "$ref": "#/components/headers/StrongETag" }
+            },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataBufferingSetting" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      },
+      "put": {
+        "operationId": "replaceDataBufferingSetting",
+        "summary": "Replace the complete Data Buffering setting after a fresh revision check",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.event_notification.global_settings_databuffering",
+        "x-required-write-capability": "configuration.event-notify:w",
+        "x-csrf-required": true,
+        "x-full-replacement": true,
+        "x-max-body-bytes": 4096,
+        "x-success-confirmation": "exact-read-back-of-all-submitted-fields",
+        "x-backend-template": "get-current-revision;action=save;path=units.event_notification.global_settings_databuffering;form=global_settings_form;parse-exact-read-back",
+        "parameters": [{
+          "name": "If-Match", "in": "header", "required": true,
+          "description": "Strong revision returned in the latest successful GET response body and ETag header.",
+          "schema": { "$ref": "#/components/schemas/StrongRevision" }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataBufferingReplacement" } } }
+        },
+        "responses": {
+          "204": {
+            "description": "Every submitted field exactly matched the typed controller read-back after save.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "412": { "$ref": "#/components/responses/RevisionChanged" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/SettingWriteUnconfirmed" }
         }
       }
     },
@@ -1302,6 +1403,9 @@
           "bad_request",
           "unauthorized",
           "forbidden",
+          "csrf_rejected",
+          "precondition_required",
+          "revision_changed",
           "not_found",
           "method_not_allowed",
           "not_acceptable",
@@ -1311,11 +1415,45 @@
           "backend_unavailable",
           "backend_protocol_error",
           "action_outcome_unknown",
+          "session_store_unavailable",
+          "logout_incomplete",
           "internal_error",
           "last_administrator",
           "token_limit_reached",
           "token_store_unavailable"
         ]
+      },
+      "SessionCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 2,
+        "required": ["username", "password"],
+        "properties": {
+          "username": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[ -~]+$" },
+          "password": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[ -~]+$" }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["identity", "csrfToken", "navigation"],
+        "properties": {
+          "identity": {
+            "type": "object", "additionalProperties": false, "required": ["username"],
+            "properties": { "username": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[ -~]+$" } }
+          },
+          "csrfToken": { "type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$" },
+          "navigation": {
+            "type": "object", "additionalProperties": false,
+            "required": ["paths", "canManageTokens", "canControlPower"],
+            "properties": {
+              "paths": { "type": "array", "maxItems": 58, "uniqueItems": true, "items": { "type": "string", "pattern": "^units(?:\\.[A-Za-z0-9_]+)*$" } },
+              "canManageTokens": { "type": "boolean" },
+              "canControlPower": { "type": "boolean" }
+            }
+          }
+        }
       },
       "ApiError": {
         "type": "object",
@@ -1334,6 +1472,34 @@
             "maxLength": 256
           }
         }
+      },
+      "BadRequestError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "bad_request" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "UnauthorizedError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "unauthorized" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "CsrfRejectedError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "csrf_rejected" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "PayloadTooLargeError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "payload_too_large" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "UnsupportedMediaTypeError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "unsupported_media_type" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "SessionStoreUnavailableError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "session_store_unavailable" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      },
+      "LogoutIncompleteError": {
+        "type": "object", "additionalProperties": false, "required": ["code", "message"],
+        "properties": { "code": { "const": "logout_incomplete" }, "message": { "type": "string", "minLength": 1, "maxLength": 256 } }
       },
       "PduId": {
         "type": "string",
@@ -1621,18 +1787,21 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 256,
+            "pattern": "^[ -~]+$",
             "writeOnly": true
           },
           "newPassword": {
             "type": "string",
             "minLength": 1,
             "maxLength": 256,
+            "pattern": "^[ -~]+$",
             "writeOnly": true
           },
           "confirmation": {
             "type": "string",
             "minLength": 1,
             "maxLength": 256,
+            "pattern": "^[ -~]+$",
             "writeOnly": true
           }
         }
@@ -1669,6 +1838,84 @@
             "maxLength": 99,
             "pattern": "^[A-Za-z0-9._:-]+$"
           }
+        }
+      },
+      "StrongRevision": {
+        "type": "string",
+        "minLength": 66,
+        "maxLength": 66,
+        "pattern": "^\"[0-9a-f]{64}\"$",
+        "description": "Quoted strong ETag revision derived from the complete validated setting and runtime choices."
+      },
+      "HelpLanguageReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 2,
+        "required": ["applianceLanguage", "url"],
+        "properties": {
+          "applianceLanguage": {
+            "type": "string", "minLength": 1, "maxLength": 32,
+            "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$",
+            "x-max-utf8-bytes": 32,
+            "description": "Must exactly equal one of allowedLanguages from the fresh GET."
+          },
+          "url": {
+            "type": "string", "minLength": 1, "maxLength": 256,
+            "pattern": "^[^\\u0000-\\u0020\\u007F\\uFFFE\\uFFFF]+$", "x-max-utf8-bytes": 256
+          }
+        }
+      },
+      "HelpLanguageSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applianceLanguage", "url", "allowedLanguages", "revision"],
+        "properties": {
+          "applianceLanguage": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$", "x-max-utf8-bytes": 32 },
+          "url": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u0020\\u007F\\uFFFE\\uFFFF]+$", "x-max-utf8-bytes": 256 },
+          "allowedLanguages": {
+            "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$", "x-max-utf8-bytes": 32 }
+          },
+          "revision": { "$ref": "#/components/schemas/StrongRevision", "readOnly": true }
+        }
+      },
+      "SyslogFacility": {
+        "type": "string",
+        "enum": ["LOG_LOCAL0", "LOG_LOCAL1", "LOG_LOCAL2", "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5"]
+      },
+      "DataBufferingReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 7,
+        "maxProperties": 7,
+        "required": ["localSize", "localSegments", "nfsServer", "nfsPath", "nfsSize", "nfsSegments", "syslogFacility"],
+        "properties": {
+          "localSize": { "type": "integer", "minimum": 0, "maximum": 2048 },
+          "localSegments": { "type": "integer", "minimum": 1, "maximum": 9 },
+          "nfsServer": {
+            "type": "string", "maxLength": 100, "x-max-utf8-bytes": 100,
+            "x-runtime-validation": "empty-or-ipv4-ipv6-domain-name"
+          },
+          "nfsPath": { "type": "string", "maxLength": 100, "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$", "x-max-utf8-bytes": 100 },
+          "nfsSize": { "type": "integer", "minimum": 0, "maximum": 99999 },
+          "nfsSegments": { "type": "integer", "minimum": 0, "maximum": 99 },
+          "syslogFacility": { "$ref": "#/components/schemas/SyslogFacility" }
+        }
+      },
+      "DataBufferingSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["localSize", "localSegments", "nfsServer", "nfsPath", "nfsSize", "nfsSegments", "syslogFacility", "revision"],
+        "properties": {
+          "localSize": { "type": "integer", "minimum": 0, "maximum": 2048 },
+          "localSegments": { "type": "integer", "minimum": 1, "maximum": 9 },
+          "nfsServer": { "type": "string", "maxLength": 100, "x-max-utf8-bytes": 100, "x-runtime-validation": "empty-or-ipv4-ipv6-domain-name" },
+          "nfsPath": { "type": "string", "maxLength": 100, "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$", "x-max-utf8-bytes": 100 },
+          "nfsSize": { "type": "integer", "minimum": 0, "maximum": 99999 },
+          "nfsSegments": { "type": "integer", "minimum": 0, "maximum": 99 },
+          "syslogFacility": { "$ref": "#/components/schemas/SyslogFacility" },
+          "revision": { "$ref": "#/components/schemas/StrongRevision", "readOnly": true }
         }
       },
       "SystemInformation": {
@@ -1869,7 +2116,7 @@
         }
       },
       "PayloadTooLarge": {
-        "description": "The raw request body exceeds 1,024 bytes.",
+        "description": "The raw request body exceeds the operation's declared byte limit.",
         "content": {
           "application/json": {
             "schema": {
@@ -1902,6 +2149,30 @@
           "X-Content-Type-Options": {
             "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
           }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "The path is known but the HTTP method is not allowed.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+        }
+      },
+      "RevisionChanged": {
+        "description": "The If-Match revision does not match a fresh controller read; reload before saving.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+        }
+      },
+      "PreconditionRequired": {
+        "description": "A quoted strong If-Match revision is required.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
         }
       },
       "OutletCollection": {
@@ -1939,6 +2210,55 @@
             "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
           }
         }
+      },
+      "SessionCreated": {
+        "description": "Session created; the GSP SID remains server-side.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }, "Set-Cookie": { "$ref": "#/components/headers/ActiveSessionCookie" } }
+      },
+      "SessionCurrent": {
+        "description": "Public identity, CSRF token, rights-filtered navigation, and refreshed browser-session cookie.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Session" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }, "Set-Cookie": { "$ref": "#/components/headers/ActiveSessionCookie" } }
+      },
+      "SessionDeleted": {
+        "description": "Local session removed, controller logout confirmed, and browser-session cookie expired.",
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }, "Set-Cookie": { "$ref": "#/components/headers/ExpiredSessionCookie" } }
+      },
+      "SessionBadRequest": {
+        "description": "The session request body is invalid.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BadRequestError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "SessionUnauthorized": {
+        "description": "Browser-session authorization was supplied or controller login/session validation failed.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnauthorizedError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "SessionCsrfRejected": {
+        "description": "The browser-session CSRF token is missing or invalid.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CsrfRejectedError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "SessionPayloadTooLarge": {
+        "description": "The session request body exceeds 1024 bytes.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PayloadTooLargeError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "SessionUnsupportedMediaType": {
+        "description": "The session request is not unencoded application/json.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UnsupportedMediaTypeError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "SessionStoreUnavailable": {
+        "description": "Controller login succeeded, but the local server-side session could not be persisted safely.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SessionStoreUnavailableError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" } }
+      },
+      "LogoutIncomplete": {
+        "description": "Local session deletion or controller logout could not be confirmed. Set-Cookie is omitted when local deletion fails; the browser-session cookie is expired when local deletion succeeds but controller logout fails.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LogoutIncompleteError" } } },
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" }, "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }, "Set-Cookie": { "$ref": "#/components/headers/ExpiredSessionCookie" } }
       },
       "Unauthorized": {
         "description": "A valid bearer token is required.",
@@ -2014,6 +2334,24 @@
       },
       "BackendUnavailable": {
         "description": "The fixed read operation could not complete.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "SettingWriteUnconfirmed": {
+        "description": "The pre-write backend read was unavailable (`backend_unavailable`), or a dispatched write could not be confirmed by exact typed read-back (`action_outcome_unknown`). A possibly dispatched write is never retried automatically.",
         "content": {
           "application/json": {
             "schema": {
@@ -2180,6 +2518,20 @@
         "schema": {
           "type": "string",
           "const": "nosniff"
+        }
+      },
+      "ActiveSessionCookie": {
+        "description": "Secure HttpOnly SameSite=Strict active PM3000 browser-session cookie.",
+        "schema": { "type": "string", "pattern": "^pm3000_session=[A-Za-z0-9_-]{43}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=900$" }
+      },
+      "ExpiredSessionCookie": {
+        "description": "Secure HttpOnly SameSite=Strict PM3000 browser-session cookie expiration.",
+        "schema": { "type": "string", "pattern": "^pm3000_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0$" }
+      },
+      "StrongETag": {
+        "description": "Strong revision for use as the next replacement request's If-Match value.",
+        "schema": {
+          "$ref": "#/components/schemas/StrongRevision"
         }
       }
     }

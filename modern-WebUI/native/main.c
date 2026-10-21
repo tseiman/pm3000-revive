@@ -1,5 +1,6 @@
 #include "avtrans.h"
 #include "controller_xml.h"
+#include "fixed_form.h"
 #include "identifiers.h"
 #include "projector.h"
 #include "session.h"
@@ -22,6 +23,12 @@ static void cgi_headers_extra(unsigned int status, const char *reason,
 
 static void cgi_headers(unsigned int status, const char *reason) {
     cgi_headers_extra(status, reason, NULL);
+}
+
+static void cgi_settings_headers(const char *etag) {
+    printf("Status: 200 OK\r\nContent-Type: application/json\r\n"
+           "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+           "ETag: %s\r\n\r\n", etag);
 }
 
 static int cgi_error_extra(unsigned int status, const char *reason, const char *code,
@@ -115,6 +122,15 @@ static int json_ascii_string(struct json_cursor *cursor, char *output, size_t ca
     return -1;
 }
 
+static int printable_ascii(const char *value) {
+    const unsigned char *cursor = (const unsigned char *)value;
+    while (*cursor != 0U) {
+        if (*cursor < 0x20U || *cursor > 0x7eU) return 0;
+        ++cursor;
+    }
+    return 1;
+}
+
 static int parse_session_request(const unsigned char *body, size_t length,
                                  char username[129], char password[257]) {
     struct json_cursor cursor = {body, length, 0U};
@@ -144,7 +160,8 @@ static int parse_session_request(const unsigned char *body, size_t length,
         } else return -1;
     }
     json_space(&cursor);
-    return cursor.offset == cursor.length && have_username && have_password ? 0 : -1;
+    return cursor.offset == cursor.length && have_username && have_password &&
+           printable_ascii(username) && printable_ascii(password) ? 0 : -1;
 }
 
 static int parse_action_request(const unsigned char *body, size_t length,
@@ -683,6 +700,138 @@ static int run_token_route(const char *method, const char *path, const char *sto
     }
 }
 
+static int write_fixed_setting(pm3000_fixed_form_kind kind,
+                               const struct pm3000_fixed_snapshot *snapshot) {
+    unsigned int index;
+    cgi_settings_headers(snapshot->revision);
+    if (kind == PM3000_FORM_HELP_LANGUAGE) {
+        fputs("{\"applianceLanguage\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[0]) != 0) return 1;
+        fputs(",\"url\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[1]) != 0) return 1;
+        fputs(",\"allowedLanguages\":[", stdout);
+        for (index = 0U; index < snapshot->form.choice_count; ++index) {
+            if (index > 0U) fputc(',', stdout);
+            if (write_json_ascii_string(stdout, snapshot->form.choices[index]) != 0) return 1;
+        }
+        fputs("],\"revision\":", stdout);
+    } else {
+        fprintf(stdout,
+                "{\"localSize\":%s,\"localSegments\":%s,\"nfsServer\":",
+                snapshot->form.values[0], snapshot->form.values[1]);
+        if (write_json_ascii_string(stdout, snapshot->form.values[2]) != 0) return 1;
+        fputs(",\"nfsPath\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[3]) != 0) return 1;
+        fprintf(stdout,
+                ",\"nfsSize\":%s,\"nfsSegments\":%s,\"syslogFacility\":",
+                snapshot->form.values[4], snapshot->form.values[5]);
+        if (write_json_ascii_string(stdout, snapshot->form.values[6]) != 0) return 1;
+        fputs(",\"revision\":", stdout);
+    }
+    if (write_json_ascii_string(stdout, snapshot->revision) != 0) return 1;
+    fputs("}\n", stdout);
+    return ferror(stdout) ? 1 : 0;
+}
+
+static int run_fixed_setting_route(const char *method,
+                                   pm3000_fixed_form_kind kind,
+                                   const pm3000_session *session,
+                                   const char *socket_path) {
+    unsigned char *response = NULL;
+    size_t response_length = 0U;
+    struct pm3000_fixed_snapshot current, confirmed;
+    struct pm3000_fixed_input input;
+    char error[160] = {0};
+    const char *path = pm3000_fixed_path(kind);
+    int result;
+    if (strcmp(method, "GET") == 0) {
+        if (pm3000_fetch_fixed_setting_session(socket_path, session->sid, path,
+                                                &response, &response_length,
+                                                error, sizeof(error)) != 0)
+            return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                             "The settings backend was unavailable.");
+        result = pm3000_fixed_parse_backend(kind, response, response_length, &current);
+        free(response);
+        if (result != 0)
+            return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                             "The settings response was invalid.");
+        return write_fixed_setting(kind, &current);
+    }
+    if (strcmp(method, "PUT") != 0)
+        return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    if (!pm3000_session_csrf_matches(session, getenv("HTTP_X_CSRF_TOKEN")))
+        return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+    {
+        const char *if_match = getenv("HTTP_IF_MATCH");
+        unsigned char body[4097] = {0};
+        size_t body_length = 0U;
+        size_t etag_index;
+        int body_result;
+        char form_payload[8192];
+        if (if_match == NULL || if_match[0] == '\0')
+            return cgi_error(428U, "Precondition Required", "precondition_required",
+                             "A strong If-Match revision is required.");
+        if (strlen(if_match) != 66U || if_match[0] != '"' || if_match[65] != '"')
+            return cgi_error(400U, "Bad Request", "bad_request", "If-Match is invalid.");
+        for (etag_index = 1U; etag_index < 65U; ++etag_index)
+            if (!((if_match[etag_index] >= '0' && if_match[etag_index] <= '9') ||
+                  (if_match[etag_index] >= 'a' && if_match[etag_index] <= 'f')))
+                return cgi_error(400U, "Bad Request", "bad_request", "If-Match is invalid.");
+        body_result = read_json_body(body, 4096U, &body_length);
+        if (body_result == 415)
+            return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                             "Content-Type must be application/json without content encoding.");
+        if (body_result == 413)
+            return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                             "The request body is too large.");
+        if (body_result != 0 || pm3000_fixed_parse_request(kind, body, body_length, &input) != 0)
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "The complete settings request is invalid.");
+        if (pm3000_fetch_fixed_setting_session(socket_path, session->sid, path,
+                                                &response, &response_length,
+                                                error, sizeof(error)) != 0)
+            return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                             "The settings backend was unavailable.");
+        result = pm3000_fixed_parse_backend(kind, response, response_length, &current);
+        free(response); response = NULL; response_length = 0U;
+        if (result != 0)
+            return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                             "The settings response was invalid.");
+        if (strcmp(if_match, current.revision) != 0)
+            return cgi_error(412U, "Precondition Failed", "revision_changed",
+                             "The setting changed; reload it before saving.");
+        if (kind == PM3000_FORM_HELP_LANGUAGE &&
+            !pm3000_fixed_language_allowed(&current, input.values[0]))
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "The selected language is not currently available.");
+        if (pm3000_fixed_serialize(kind, &input, form_payload, sizeof(form_payload)) != 0)
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "The complete settings request is invalid.");
+        result = pm3000_save_fixed_setting_session(socket_path, session->sid, path,
+                                                    form_payload, &response,
+                                                    &response_length, error,
+                                                    sizeof(error));
+        memset(form_payload, 0, sizeof(form_payload));
+        if (result == 3) {
+            free(response);
+            return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                             "The setting write may have been dispatched; do not retry automatically.");
+        }
+        if (result != 0) {
+            free(response);
+            return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                             "The setting write backend was unavailable.");
+        }
+        result = pm3000_fixed_parse_backend(kind, response, response_length, &confirmed);
+        free(response);
+        if (result != 0 || !pm3000_fixed_values_match(kind, &confirmed, &input))
+            return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                             "The setting write outcome is unknown; do not retry automatically.");
+        cgi_headers(204U, "No Content");
+        return ferror(stdout) ? 1 : 0;
+    }
+}
+
 static int run_cgi(void) {
     const char *method = getenv("REQUEST_METHOD");
     const char *path = getenv("PATH_INFO");
@@ -726,7 +875,7 @@ static int run_cgi(void) {
     }
     if (method != NULL && path != NULL &&
         strcmp(path, "/api/v1/session/password") == 0) {
-        unsigned char body[1025] = {0};
+        unsigned char body[2049] = {0};
         char old_password[257] = {0}, new_password[257] = {0}, confirmation[257] = {0};
         size_t body_length = 0U;
         int body_result, result;
@@ -743,7 +892,7 @@ static int run_cgi(void) {
             return cgi_error(403U, "Forbidden", "forbidden", "Password change is not permitted.");
         if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
             return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
-        body_result = read_json_body(body, 1024U, &body_length);
+        body_result = read_json_body(body, 2048U, &body_length);
         if (body_result == 415) {
             memset(body, 0, sizeof(body));
             return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
@@ -778,6 +927,27 @@ static int run_cgi(void) {
                              "The password change was not confirmed.");
         cgi_headers(204U, "No Content");
         return ferror(stdout) ? 1 : 0;
+    }
+    if (method != NULL && path != NULL &&
+        (strcmp(path, "/api/v1/settings/help-language") == 0 ||
+         strcmp(path, "/api/v1/settings/data-buffering") == 0)) {
+        pm3000_fixed_form_kind kind = strcmp(path, "/api/v1/settings/help-language") == 0 ?
+            PM3000_FORM_HELP_LANGUAGE : PM3000_FORM_DATA_BUFFERING;
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this browser setting.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if ((kind == PM3000_FORM_HELP_LANGUAGE && !gui_session.can_help_language) ||
+            (kind == PM3000_FORM_DATA_BUFFERING && !gui_session.can_data_buffering))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "The exact configuration write capability is required.");
+        return run_fixed_setting_route(
+            method, kind, &gui_session,
+            configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"));
     }
     if (method != NULL && path != NULL &&
         strcmp(path, "/api/v1/settings/security/dsview") == 0) {

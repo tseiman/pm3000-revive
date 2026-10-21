@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans><action>content</action><paths><path>units.applianceSettings.help</path></paths><payload><controls><control id="save" structure="button"/></controls><section id="sessionform" structure="form"><parameter id="applanguage" structure="combo"><value>en</value><option label="English">en</option><option label="Deutsch">de</option></parameter><parameter id="url" structure="RWtext"><value>https://help.example.test/pm3000</value></parameter></section></payload></avtrans>
