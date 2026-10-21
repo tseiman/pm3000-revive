@@ -14,8 +14,6 @@ No appliance or legacy WebUI request was made while producing this cross-check. 
 
 The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Only `units.topology` has a corresponding native capability: read-only outlet inventory. `units.powermanagement.pdu_management` is temporarily aliased to that outlet view but has no PDU API, projector, or native page and is therefore not implemented. Every other visible legacy leaf opens a local placeholder. The legacy UI remains separately available at `/`.
 
-The same XML fixture also contains the separate setup-wizard branch (`wizard` → `wizard.wizardsection`), producing 44 terminal paths when that out-of-screenshot branch is counted. It is not in the modern fixed allowlist. The wizard is a stateful multi-page wrapper around security, network, serial-port, and user configuration and is intentionally not treated as a standalone safe contract.
-
 ## Classification
 
 - **Implemented**: modern UI and native REST behavior exist.
@@ -39,7 +37,7 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 - **System Tools** — `units.overview`
   - **Current:** Placeholder.
   - **Static contract:** reboot, shutdown, factory default, configuration save/restore, viewer launch, and firmware workflow.
-  - **Decision:** firmware is excluded. Reboot, shutdown, factory default, restore, and viewer launch remain deferred because they are destructive, stateful, or require dynamic wizard/session contracts. A configuration-download function may be considered separately after a sanitized request/response fixture.
+  - **Decision:** firmware is excluded. Reboot, shutdown, factory default, restore, and viewer launch remain deferred because they are destructive, stateful, or require dynamic multi-step/session contracts. A configuration-download function may be considered separately after a sanitized request/response fixture.
 
 - **PDUs** — `units.powermanagement.pdu_management`
   - **Current:** Not implemented. The menu is temporarily aliased to the implemented Access/outlet inventory view; there is no `/api/v1/pdus` route, PDU-response projector, or native PDU page.
