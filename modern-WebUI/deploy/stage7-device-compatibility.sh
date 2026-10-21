@@ -17,6 +17,14 @@ for command in python3 ssh scp mktemp; do
     command -v "$command" >/dev/null 2>&1 || { echo "$command missing" >&2; exit 1; }
 done
 
+transport_options=()
+if [[ -n "${PM3000_SSH_CONTROL_PATH:-}" ]]; then
+    [[ "$PM3000_SSH_CONTROL_PATH" = /* && "$PM3000_SSH_CONTROL_PATH" != *"'"* ]] || {
+        echo "unsafe SSH control path" >&2; exit 2;
+    }
+    transport_options=(-o ControlMaster=no -o ControlPath="$PM3000_SSH_CONTROL_PATH")
+fi
+
 local_work=$(mktemp -d "${TMPDIR:-/tmp}/pm3000-stage7-compat-host.XXXXXX")
 chmod 700 "$local_work"
 package_snapshot=$local_work/release.tar
@@ -24,7 +32,7 @@ remote=
 remote_created=no
 cleanup() {
     if [[ "$remote_created" == yes ]]; then
-        ssh "$target" "rm -rf '$remote'" >/dev/null 2>&1 || true
+        ssh "${transport_options[@]}" "$target" "rm -rf '$remote'" >/dev/null 2>&1 || true
     fi
     rm -rf "$local_work"
 }
@@ -138,11 +146,11 @@ PY
 )
 
 remote=/tmp/pm3000-stage7-compat-$(date -u +%Y%m%dT%H%M%SZ)-$$
-ssh "$target" "umask 077; mkdir '$remote'"
+ssh "${transport_options[@]}" "$target" "umask 077; mkdir '$remote'"
 remote_created=yes
-scp -O "$package_snapshot" "$target:$remote/release.tar"
+scp -O "${transport_options[@]}" "$package_snapshot" "$target:$remote/release.tar"
 
-ssh "$target" sh -s "$remote" "$package_digest" <<'REMOTE'
+ssh "${transport_options[@]}" "$target" sh -s "$remote" "$package_digest" <<'REMOTE'
 set -eu
 umask 077
 work=$1
