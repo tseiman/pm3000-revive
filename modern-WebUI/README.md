@@ -4,7 +4,7 @@ This directory contains the clean-room implementation of a compact modern Web UI
 
 ## Current status
 
-The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, and outlet inventory are implemented and verified offline. Outlet `on`, `off`, and `cycle` input is validated but backend dispatch is disabled: observed topology controls use `targPowerOn`, `targPowerOff`, and `targCycle`, while plain action names belong to detail tables. Release `0.1` remains the installed read-only pilot. The vendor UI at `/` remains the fallback.
+The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, outlet/PDU inventory and fixed power actions, self-service password change, and typed DSView/NIS settings are implemented offline. Release `0.1` remains the installed read-only pilot; none of the current write-capable code has been deployed or run on the appliance. The vendor UI at `/` remains the fallback.
 
 Confirmed architecture:
 
@@ -13,7 +13,7 @@ browser -> Apache /appliance/avtrans -> mod_avtrans -> /dev/avtrans_socket
         -> uicontrold -> GSP session/authorization -> CACPD -> power API
 ```
 
-The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients continue to use scoped REST bearer tokens. Outlet-action input, authentication, authorization, and CSRF are validated, but dispatch is disabled before any Avtrans socket access until an observed action contract exists. Writable settings remain on the legacy UI until each closed form contract has a sanitized real request/response fixture; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
+The implementation keeps Apache and the vendor backend. Browser users authenticate with existing PM3000 credentials; GSP SIDs remain in short-lived server-side files and browser mutations require CSRF tokens. External clients use scoped REST bearer tokens. Outlet and PDU actions use fixed path/table/action mappings, fresh server-resolved row identities, revision guards, and no automatic retry after an uncertain result. Further settings are added only through typed, compile-time-allowlisted contracts; see [deferred improvements](DEFERRED-IMPROVEMENTS.md).
 
 ## Documents
 

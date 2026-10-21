@@ -471,6 +471,14 @@ int pm3000_session_csrf_matches(const pm3000_session *session, const char *value
     return difference == 0U;
 }
 
+int pm3000_session_has_path(const pm3000_session *session, const char *path) {
+    unsigned int index;
+    for (index = 0U; index < PM3000_SESSION_PATH_COUNT; ++index)
+        if (strcmp(allowed_paths[index], path) == 0)
+            return (session->path_mask & (UINT64_C(1) << index)) != 0U;
+    return 0;
+}
+
 static void json_string(FILE *output, const char *value) {
     const unsigned char *cursor = (const unsigned char *)value;
     fputc('"', output);

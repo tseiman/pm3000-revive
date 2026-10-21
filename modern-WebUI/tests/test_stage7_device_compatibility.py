@@ -37,6 +37,19 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.fake_bin}:{self.environment['PATH']}"
         self.environment["FAKE_TRANSPORT_LOG"] = str(self.log)
+        device = self.root / "device"
+        private_rest = device / "mnt/hdUser/pm3000-revive/rest"
+        private_credentials = device / "etc/pm3000-rest"
+        private_rest.mkdir(parents=True, mode=0o700)
+        private_credentials.mkdir(parents=True, mode=0o700)
+        for path, payload in (
+            (private_rest / "tokens.json", b"{}\n"),
+            (private_rest / "tokens.json.lock", b""),
+            (private_credentials / "controller.credentials", b"user\npassword\n"),
+        ):
+            path.write_bytes(payload)
+            path.chmod(0o600)
+        self.environment["FAKE_DEVICE_ROOT"] = str(device)
         self.backup = self._create_real_backup()
         self.package = self.root / "pm3000-release-test.tar"
         self._create_package()
@@ -123,6 +136,9 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
             "    stream.write(('ssh ' + json.dumps(sys.argv[1:]) + '\\n').encode())\n"
             "    stream.write(body)\n"
             "    stream.write(b'\\n---remote-body-end---\\n')\n"
+            "device = os.environ['FAKE_DEVICE_ROOT'].encode()\n"
+            "body = body.replace(b'/mnt/hdUser/pm3000-revive/rest', device + b'/mnt/hdUser/pm3000-revive/rest')\n"
+            "body = body.replace(b'/etc/pm3000-rest', device + b'/etc/pm3000-rest')\n"
             "if len(sys.argv) >= 3 and sys.argv[2] == 'sh':\n"
             "    result = subprocess.run(['sh', *sys.argv[3:]], input=body)\n"
             "else:\n"
@@ -165,7 +181,8 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertIn("--verify-release", transport)
         self.assertIn("PATH_INFO=/health", transport)
         self.assertNotIn("/etc/apache2", transport)
-        self.assertNotIn("/mnt/hdUser", transport)
+        self.assertIn("--verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json", transport)
+        self.assertIn("--verify-private-regular /etc/pm3000-rest/controller.credentials", transport)
         self.assert_no_remote_tree()
 
     def test_rejects_backup_from_other_target_before_transport(self):

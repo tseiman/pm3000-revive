@@ -17,6 +17,7 @@
 #define MAX_XML_BYTES (1024UL * 1024UL)
 #define MAX_DEPTH 32U
 #define MAX_OUTLETS 256U
+#define MAX_PDUS 64U
 #define MAX_NAME_BYTES 128U
 #define MAX_IDENTITY_BYTES 255U
 #define MAX_TEXT_BYTES 255U
@@ -35,6 +36,16 @@ struct row_value {
     unsigned int seen_status;
     unsigned int seen_action;
     unsigned int unexpected;
+    char pdu_name[MAX_NAME_BYTES + 1U];
+    char pdu_vendor[MAX_NAME_BYTES + 1U];
+    char pdu_model[MAX_NAME_BYTES + 1U];
+    char pdu_pos[16];
+    char pdu_status[32];
+    char pdu_current[32];
+    char pdu_power[32];
+    char pdu_alarm[64];
+    unsigned int seen_pdu_name, seen_pdu_vendor, seen_pdu_model, seen_pdu_pos;
+    unsigned int seen_pdu_status, seen_pdu_current, seen_pdu_power, seen_pdu_alarm;
 };
 
 struct outlet {
@@ -45,6 +56,16 @@ struct outlet {
     char pdu_id[PM3000_ID_LENGTH + 1U];
     unsigned int position;
     const char *state;
+};
+
+struct pdu {
+    char identity[MAX_IDENTITY_BYTES + 1U];
+    char id[PM3000_ID_LENGTH + 1U];
+    char name[MAX_NAME_BYTES + 1U];
+    char vendor[MAX_NAME_BYTES + 1U];
+    char model[MAX_NAME_BYTES + 1U];
+    unsigned int position, outlets_on, outlet_count;
+    char current[32], power[32], alarm[64];
 };
 
 struct frame {
@@ -65,10 +86,15 @@ struct parser {
     size_t depth;
     struct outlet outlets[MAX_OUTLETS];
     size_t outlet_count;
+    struct pdu pdus[MAX_PDUS];
+    size_t pdu_count;
     unsigned int root_count;
     unsigned int action_count;
     unsigned int path_count;
     unsigned int topology_count;
+    unsigned int pdu_table_count;
+    unsigned int pdu_on, pdu_off, pdu_cycle;
+    int mode;
     char action[32];
     char path[64];
     char error[160];
@@ -245,6 +271,15 @@ static int assign_row_value(struct parser *parser, const char *parameter, const 
     else if (strcmp(parameter, "port") == 0) ASSIGN_FIELD(port, seen_port, 15U);
     else if (strcmp(parameter, "type") == 0) ASSIGN_FIELD(type, seen_type, 31U);
     else if (strcmp(parameter, "status") == 0) ASSIGN_FIELD(status, seen_status, 31U);
+    else if (strcmp(parameter, "pduId_Index") == 0) ASSIGN_FIELD(pdu_name, seen_pdu_name, MAX_NAME_BYTES);
+    else if (strcmp(parameter, "pdu_vendor") == 0) ASSIGN_FIELD(pdu_vendor, seen_pdu_vendor, MAX_NAME_BYTES);
+    else if (strcmp(parameter, "pdu_model") == 0) ASSIGN_FIELD(pdu_model, seen_pdu_model, MAX_NAME_BYTES);
+    else if (strcmp(parameter, "pdu_pos") == 0) ASSIGN_FIELD(pdu_pos, seen_pdu_pos, 15U);
+    else if (strcmp(parameter, "pdu_status") == 0) ASSIGN_FIELD(pdu_status, seen_pdu_status, 31U);
+    else if (strcmp(parameter, "pdu_current") == 0) ASSIGN_FIELD(pdu_current, seen_pdu_current, 31U);
+    else if (strcmp(parameter, "pdu_power") == 0) ASSIGN_FIELD(pdu_power, seen_pdu_power, 31U);
+    else if (strcmp(parameter, "pdu_alarm") == 0) ASSIGN_FIELD(pdu_alarm, seen_pdu_alarm, 63U);
+    else if (strcmp(parameter, "thresholds") == 0) { /* intentionally not exposed */ }
     else if (strcmp(parameter, "action") == 0) {
         if (row->seen_action != 0U || value[0] != '\0') return -1;
         row->seen_action = 1U;
@@ -256,16 +291,49 @@ static int assign_row_value(struct parser *parser, const char *parameter, const 
 static int finalize_array(struct parser *parser, struct frame *frame) {
     struct row_value *row = &frame->row;
     size_t index;
-    int inside_topology = 0;
-    if (row->seen_type == 0U || strcmp(row->type, "outlet") != 0) return 0;
+    int inside_topology = 0, inside_pdu_table = 0;
     for (index = 0; index + 1U < parser->depth; ++index) {
-        if (strcmp(parser->stack[index].name, "section") == 0 &&
-            strcmp(parser->stack[index].id, "topologyTable") == 0 &&
-            strcmp(parser->stack[index].structure, "table") == 0) {
-            inside_topology = 1;
-            break;
-        }
+        if (strcmp(parser->stack[index].name, "section") != 0 ||
+            strcmp(parser->stack[index].structure, "table") != 0) continue;
+        if (strcmp(parser->stack[index].id, "topologyTable") == 0) inside_topology = 1;
+        if (strcmp(parser->stack[index].id, "pdu_devices_table") == 0) inside_pdu_table = 1;
     }
+    if (inside_pdu_table) {
+        char *end;
+        unsigned long position, outlets_on, outlet_count;
+        struct pdu *pdu;
+        if (frame->id[0] == '\0' || row->unexpected != 0U ||
+            row->seen_pdu_name != 1U || row->seen_pdu_vendor != 1U ||
+            row->seen_pdu_model != 1U || row->seen_pdu_pos != 1U ||
+            row->seen_pdu_status != 1U || row->seen_pdu_current != 1U ||
+            row->seen_pdu_power != 1U || row->seen_pdu_alarm != 1U ||
+            parser->pdu_count >= MAX_PDUS) return -1;
+        errno = 0; position = strtoul(row->pdu_pos, &end, 10);
+        if (errno != 0 || end == row->pdu_pos || *end != '\0' || position < 1UL || position > 65535UL) return -1;
+        errno = 0; outlets_on = strtoul(row->pdu_status, &end, 10);
+        if (errno != 0 || end == row->pdu_status || *end != '/' || outlets_on > 65535UL) return -1;
+        {
+            char *total_start = end + 1;
+            errno = 0; outlet_count = strtoul(total_start, &end, 10);
+            if (errno != 0 || end == total_start || *end != '\0' || outlet_count < 1UL ||
+                outlet_count > 65535UL || outlets_on > outlet_count) return -1;
+        }
+        for (index = 0; index < parser->pdu_count; ++index)
+            if (strcmp(parser->pdus[index].identity, frame->id) == 0) return -1;
+        pdu = &parser->pdus[parser->pdu_count];
+        strcpy(pdu->identity, frame->id); strcpy(pdu->name, row->pdu_name);
+        strcpy(pdu->vendor, row->pdu_vendor); strcpy(pdu->model, row->pdu_model);
+        strcpy(pdu->current, row->pdu_current); strcpy(pdu->power, row->pdu_power);
+        strcpy(pdu->alarm, row->pdu_alarm);
+        pdu->position = (unsigned int)position; pdu->outlets_on = (unsigned int)outlets_on;
+        pdu->outlet_count = (unsigned int)outlet_count;
+        if (pm3000_derive_id("pdu", pdu->identity, pdu->id) != 0) return -1;
+        for (index = 0; index < parser->pdu_count; ++index)
+            if (strcmp(parser->pdus[index].id, pdu->id) == 0) return -1;
+        ++parser->pdu_count;
+        return 0;
+    }
+    if (row->seen_type == 0U || strcmp(row->type, "outlet") != 0) return 0;
     if (!inside_topology) return -1;
     if (row->seen_name != 1U || row->seen_port != 1U || row->seen_status != 1U ||
         row->seen_action != 1U || row->unexpected != 0U || frame->id[0] == '\0') return -1;
@@ -381,6 +449,21 @@ static int start_element(struct parser *parser, int *self_closing) {
     if (strcmp(frame->name, "section") == 0 && strcmp(frame->id, "topologyTable") == 0) {
         if (strcmp(frame->structure, "table") != 0 || ++parser->topology_count != 1U) return -1;
     }
+    if (strcmp(frame->name, "section") == 0 && strcmp(frame->id, "pdu_devices_table") == 0) {
+        if (strcmp(frame->structure, "table") != 0 || ++parser->pdu_table_count != 1U) return -1;
+    }
+    if (strcmp(frame->name, "control") == 0) {
+        size_t parent;
+        int inside_pdu = 0;
+        for (parent = 0U; parent < parser->depth; ++parent)
+            if (strcmp(parser->stack[parent].name, "section") == 0 &&
+                strcmp(parser->stack[parent].id, "pdu_devices_table") == 0) inside_pdu = 1;
+        if (inside_pdu) {
+            if (strcmp(frame->id, "on") == 0) ++parser->pdu_on;
+            else if (strcmp(frame->id, "off") == 0) ++parser->pdu_off;
+            else if (strcmp(frame->id, "cycle") == 0) ++parser->pdu_cycle;
+        }
+    }
     ++parser->depth;
     if (*self_closing != 0 && close_frame(parser, frame->name) != 0) return -1;
     return 0;
@@ -427,9 +510,15 @@ static int parse_document(struct parser *parser) {
         }
     }
     if (parser->depth != 0U || parser->root_count != 1U || parser->action_count != 1U ||
-        strcmp(parser->action, "content") != 0 || parser->path_count != 1U ||
-        strcmp(parser->path, "units.topology") != 0 || parser->topology_count != 1U ||
-        parser->outlet_count == 0U) return -1;
+        strcmp(parser->action, "content") != 0 || parser->path_count != 1U) return -1;
+    if (parser->mode == 0) {
+        if (strcmp(parser->path, "units.topology") != 0 || parser->topology_count != 1U ||
+            parser->pdu_table_count != 0U || parser->outlet_count == 0U) return -1;
+    } else {
+        if (strcmp(parser->path, "units.powermanagement.pdu_management") != 0 ||
+            parser->pdu_table_count != 1U || parser->topology_count != 0U ||
+            parser->pdu_count == 0U) return -1;
+    }
     return 0;
 }
 
@@ -482,6 +571,33 @@ static int emit_inventory(struct parser *parser, FILE *output, int unrestricted,
     return ferror(output) ? -1 : 0;
 }
 
+static int emit_pdus(struct parser *parser, FILE *output) {
+    char *identities[MAX_PDUS];
+    char revision[PM3000_ID_LENGTH + 1U];
+    size_t index;
+    int can_control = parser->pdu_on == 1U && parser->pdu_off == 1U && parser->pdu_cycle == 1U;
+    for (index = 0; index < parser->pdu_count; ++index) identities[index] = parser->pdus[index].identity;
+    if (pm3000_inventory_revision(identities, parser->pdu_count, revision) != 0) return -1;
+    fputs("{\"apiVersion\":\"v1\",\"inventoryRevision\":", output); json_string(output, revision);
+    fputs(",\"pdus\":[", output);
+    for (index = 0; index < parser->pdu_count; ++index) {
+        const struct pdu *pdu = &parser->pdus[index];
+        if (index != 0U) fputc(',', output);
+        fputs("{\"id\":", output); json_string(output, pdu->id);
+        fputs(",\"name\":", output); json_string(output, pdu->name);
+        fputs(",\"vendor\":", output); json_string(output, pdu->vendor);
+        fputs(",\"model\":", output); json_string(output, pdu->model);
+        fprintf(output, ",\"position\":%u,\"outletsOn\":%u,\"outletCount\":%u,\"currentAmps\":",
+                pdu->position, pdu->outlets_on, pdu->outlet_count);
+        json_string(output, pdu->current); fputs(",\"powerWatts\":", output); json_string(output, pdu->power);
+        fputs(",\"alarm\":", output); json_string(output, pdu->alarm);
+        fputs(can_control ? ",\"availableActions\":[\"on\",\"off\",\"cycle\"]}" :
+                            ",\"availableActions\":[]}", output);
+    }
+    fputs("]}\n", output);
+    return ferror(output) ? -1 : 0;
+}
+
 int pm3000_project_bytes_filtered(const unsigned char *xml, unsigned long length, FILE *output,
                                   int unrestricted, const char *outlets,
                                   unsigned int outlet_count, char *error,
@@ -506,6 +622,85 @@ int pm3000_project_bytes_filtered(const unsigned char *xml, unsigned long length
 int pm3000_project_bytes(const unsigned char *xml, unsigned long length, FILE *output,
                           char *error, unsigned int error_size) {
     return pm3000_project_bytes_filtered(xml, length, output, 1, NULL, 0U, error, error_size);
+}
+
+int pm3000_project_pdus_bytes(const unsigned char *xml, unsigned long length, FILE *output,
+                              char *error, unsigned int error_size) {
+    struct parser parser;
+    memset(&parser, 0, sizeof(parser)); parser.mode = 1;
+    if (length == 0UL || length > MAX_XML_BYTES || !valid_utf8(xml, (size_t)length)) return -1;
+    parser.input = xml; parser.length = (size_t)length;
+    if (parse_document(&parser) != 0 ||
+        (output != NULL && emit_pdus(&parser, output) != 0)) {
+        (void)snprintf(error, error_size, "backend XML violates the PDU contract"); return -1;
+    }
+    return 0;
+}
+
+int pm3000_confirm_outlet_action(const unsigned char *xml, unsigned long length,
+                                 const char *identity, const char *action) {
+    struct parser parser;
+    size_t index;
+    const char *expected;
+    memset(&parser, 0, sizeof(parser));
+    if (strcmp(action, "on") == 0) expected = "on";
+    else if (strcmp(action, "off") == 0) expected = "off";
+    else return -1;
+    if (length == 0UL || length > MAX_XML_BYTES || !valid_utf8(xml, (size_t)length)) return -1;
+    parser.input = xml; parser.length = (size_t)length;
+    if (parse_document(&parser) != 0) return -1;
+    for (index = 0U; index < parser.outlet_count; ++index)
+        if (strcmp(parser.outlets[index].identity, identity) == 0)
+            return strcmp(parser.outlets[index].state, expected) == 0 ? 0 : -1;
+    return -1;
+}
+
+int pm3000_confirm_pdu_action(const unsigned char *xml, unsigned long length,
+                              const char *identity, const char *action) {
+    struct parser parser;
+    size_t index;
+    memset(&parser, 0, sizeof(parser)); parser.mode = 1;
+    if (strcmp(action, "on") != 0 && strcmp(action, "off") != 0) return -1;
+    if (length == 0UL || length > MAX_XML_BYTES || !valid_utf8(xml, (size_t)length)) return -1;
+    parser.input = xml; parser.length = (size_t)length;
+    if (parse_document(&parser) != 0) return -1;
+    for (index = 0U; index < parser.pdu_count; ++index) {
+        const struct pdu *pdu = &parser.pdus[index];
+        if (strcmp(pdu->identity, identity) != 0) continue;
+        if (strcmp(action, "on") == 0) return pdu->outlets_on == pdu->outlet_count ? 0 : -1;
+        return pdu->outlets_on == 0U ? 0 : -1;
+    }
+    return -1;
+}
+
+int pm3000_resolve_pdu_identity(const unsigned char *xml, unsigned long length,
+                                const char *pdu_id, const char *revision,
+                                char *identity, size_t identity_size,
+                                char *error, unsigned int error_size) {
+    struct parser parser;
+    char *identities[MAX_PDUS];
+    char current_revision[PM3000_ID_LENGTH + 1U];
+    size_t index;
+    memset(&parser, 0, sizeof(parser)); parser.mode = 1;
+    if (strlen(pdu_id) != PM3000_ID_LENGTH || strlen(revision) != PM3000_ID_LENGTH ||
+        length == 0UL || length > MAX_XML_BYTES || !valid_utf8(xml, (size_t)length)) return -1;
+    parser.input = xml; parser.length = (size_t)length;
+    if (parse_document(&parser) != 0) return -1;
+    for (index = 0; index < parser.pdu_count; ++index) identities[index] = parser.pdus[index].identity;
+    if (pm3000_inventory_revision(identities, parser.pdu_count, current_revision) != 0 ||
+        strcmp(current_revision, revision) != 0) {
+        (void)snprintf(error, error_size, "inventory revision is stale"); return 1;
+    }
+    for (index = 0; index < parser.pdu_count; ++index) {
+        if (strcmp(parser.pdus[index].id, pdu_id) == 0) {
+            if (parser.pdu_on != 1U || parser.pdu_off != 1U || parser.pdu_cycle != 1U) {
+                (void)snprintf(error, error_size, "PDU control denied"); return 4;
+            }
+            if (strlen(parser.pdus[index].identity) + 1U > identity_size) return -1;
+            strcpy(identity, parser.pdus[index].identity); return 0;
+        }
+    }
+    (void)snprintf(error, error_size, "PDU not found"); return 2;
 }
 
 int pm3000_project_detail_bytes(const unsigned char *xml, unsigned long length,

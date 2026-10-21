@@ -189,6 +189,11 @@ rest=$work/release/bin/pm3000-rest
 "$helper" --verify-regular "$helper"
 "$helper" --verify-regular "$rest"
 "$helper" --verify-release "$work/release"
+"$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest
+"$helper" --verify-private-directory /etc/pm3000-rest
+"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json
+"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json.lock
+"$helper" --verify-private-regular /etc/pm3000-rest/controller.credentials
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on "$rest")
 case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
     *) echo "REST health compatibility check failed" >&2; exit 1;;

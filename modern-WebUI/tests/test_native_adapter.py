@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / "native"
 BINARY = NATIVE / "build" / "pm3000-rest-host"
 OBSERVED = ROOT / "fixtures" / "observed" / "topology-get-response.xml"
+PDU_OBSERVED = ROOT / "fixtures" / "observed" / "pdu-management-get-response.xml"
 LOGIN_RESPONSE = ROOT / "fixtures" / "observed" / "login-submit-response.xml"
 NAVIGATION_RESPONSE = ROOT / "fixtures" / "observed" / "navigation-response.xml"
 LOGOUT_RESPONSE = ROOT / "fixtures" / "observed" / "logout-response.xml"
@@ -851,31 +852,448 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIsNone(store.authenticate(delivered["token"]))
             self.assertEqual([], list(store_path.parent.glob(".tokens.*")))
 
-    def test_outlet_action_is_authenticated_then_disabled_without_backend_contact(self) -> None:
+    def test_pdu_inventory_and_session_action_use_observed_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            socket_path = root / "pdu-read.sock"
+            with FakeAvtransController(socket_path, [PDU_OBSERVED.read_bytes()]):
+                result = self.run_cgi(
+                    "GET", "/api/v1/pdus", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            _headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", result.stdout)
+            self.assertEqual("v1", payload["apiVersion"])
+            self.assertEqual(1, len(payload["pdus"]))
+            pdu = payload["pdus"][0]
+            self.assertEqual("Avocent", pdu["vendor"])
+            self.assertEqual("PM3000/10/16A", pdu["model"])
+            self.assertEqual(1, pdu["outletsOn"])
+            self.assertEqual(10, pdu["outletCount"])
+            self.assertEqual(["on", "off", "cycle"], pdu["availableActions"])
+            self.assertNotIn("thresholds", pdu)
+
+            socket_path = root / "pdu-action.sock"
+            body = json.dumps({
+                "action": "cycle",
+                "inventoryRevision": payload["inventoryRevision"],
+            }).encode()
+            with FakeAvtransController(socket_path, [PDU_OBSERVED.read_bytes(), PDU_OBSERVED.read_bytes()]) as controller:
+                action_result = self.run_cgi(
+                    "POST", f"/api/v1/pdus/{pdu['id']}/actions", cookie=cookie,
+                    body=body, content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        "HTTP_X_CSRF_TOKEN": session["csrfToken"],
+                    },
+                )
+            _headers, outcome = self.cgi_json(action_result)
+            self.assertIn(b"Status: 503", action_result.stdout)
+            self.assertEqual("action_outcome_unknown", outcome["code"])
+            self.assertEqual(2, len(controller.requests))
+            request = controller.requests[1][1].decode("utf-8")
+            self.assertIn("<action>cycle</action>", request)
+            self.assertIn("<path>units.powermanagement.pdu_management</path>", request)
+            self.assertIn('<section structure="table" id="pdu_devices_table">', request)
+            self.assertIn('<array id="[REDACTED]"></array>', request)
+
+    def test_pdu_bearer_action_requires_unrestricted_control_and_logs_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
+            credentials_path = root / "service.credentials"
+            socket_path = root / "pdu-service.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
-            outlet_id = "A" * 22
-            controller = store.create_token(
-                administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
-            )
-            socket_path = root / "must-not-open.sock"
-            result = self.run_cgi(
-                "POST", f"/api/v1/outlets/{outlet_id}/actions",
-                authorization=f"Bearer {controller.plaintext}",
-                body=b'{"action":"on","inventoryRevision":"AAAAAAAAAAAAAAAAAAAAAA"}',
+            restricted = store.create_token(administrator.plaintext, label="Restricted", scope="control", outlets=[])
+            unrestricted = store.create_token(administrator.plaintext, label="PDU Controller", scope="control")
+            credentials_path.write_text("service-user\nservice-password\n")
+            credentials_path.chmod(0o600)
+
+            denied = self.run_cgi(
+                "POST", "/api/v1/pdus/AAAAAAAAAAAAAAAAAAAAAA/actions",
+                authorization=f"Bearer {restricted.plaintext}",
+                body=json.dumps({"action": "off", "inventoryRevision": "A" * 22}).encode(),
                 content_type="application/json",
                 extra_environment={
                     "PM3000_TOKEN_STORE": str(store_path),
+                    "PM3000_CREDENTIALS": str(credentials_path),
                     "PM3000_AVTRANS_SOCKET": str(socket_path),
                 },
             )
-            _headers, response = self.cgi_json(result)
-            self.assertIn(b"Status: 503", result.stdout)
-            self.assertEqual("action_contract_unverified", response["code"])
-            self.assertFalse(socket_path.exists())
+            self.assertIn(b"Status: 403", denied.stdout)
+
+            pdu_id = self.run_adapter("--derive", "pdu", "[REDACTED]").stdout.decode().strip()
+            revision = self.run_adapter("--revision", "[REDACTED]").stdout.decode().strip()
+            confirmed_off = PDU_OBSERVED.read_bytes().replace(b'label="1/10">1/10</value>', b'label="0/10">0/10</value>', 1)
+            responses = [
+                LOGIN_RESPONSE.read_bytes(), NAVIGATION_RESPONSE.read_bytes(),
+                PDU_OBSERVED.read_bytes(), confirmed_off, LOGOUT_RESPONSE.read_bytes(),
+            ]
+            with FakeAvtransController(socket_path, responses) as controller:
+                result = self.run_cgi(
+                    "POST", f"/api/v1/pdus/{pdu_id}/actions",
+                    authorization=f"Bearer {unrestricted.plaintext}",
+                    body=json.dumps({"action": "off", "inventoryRevision": revision}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_CREDENTIALS": str(credentials_path),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(5, len(controller.requests))
+            requests = [request for _, request in controller.requests]
+            self.assertIn(b"<action>off</action>", requests[3])
+            self.assertIn(b"<action>logout</action>", requests[4])
+            self.assertNotIn(unrestricted.plaintext.encode(), b"".join(requests))
+
+    def test_outlet_action_uses_firmware_derived_topology_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            credentials_path = root / "service.credentials"
+            socket_path = root / "avtrans.sock"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            inventory = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+            outlet_id = inventory["outlets"][0]["id"]
+            revision = inventory["inventoryRevision"]
+            controller_token = store.create_token(
+                administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
+            )
+            credentials_path.write_text("service-user\nservice-password\n")
+            credentials_path.chmod(0o600)
+            responses = [
+                LOGIN_RESPONSE.read_bytes(),
+                OBSERVED.read_bytes(),
+                OBSERVED.read_bytes(),
+                LOGOUT_RESPONSE.read_bytes(),
+            ]
+            with FakeAvtransController(socket_path, responses) as controller:
+                result = self.run_cgi(
+                    "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                    authorization=f"Bearer {controller_token.plaintext}",
+                    body=json.dumps({"action": "on", "inventoryRevision": revision}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_CREDENTIALS": str(credentials_path),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(4, len(controller.requests))
+            requests = [request.decode("utf-8") for _, request in controller.requests]
+            self.assertIn("<action>login</action>", requests[0])
+            self.assertIn("<action>get</action>", requests[1])
+            self.assertIn("<path>units.topology</path>", requests[1])
+            self.assertIn("<action>targPowerOn</action>", requests[2])
+            self.assertIn('<section structure="table" id="topologyTable">', requests[2])
+            self.assertIn("<array id=", requests[2])
+            self.assertNotIn("<action>on</action>", requests[2])
+            self.assertIn("<action>logout</action>", requests[3])
+            self.assertNotIn(controller_token.plaintext, "".join(requests))
+
+    def test_outlet_action_rejects_controller_error_wrong_action_path_and_missing_payload(self) -> None:
+        observed = OBSERVED.read_bytes()
+        rejected_responses = (
+            observed.replace(b"<payload", b'<error severity="error" label="Denied"/><payload', 1),
+            observed.replace(b"<action>content</action>", b"<action>navigation</action>", 1),
+            observed.replace(b"<path>units.topology</path>", b"<path>units.overview</path>", 1),
+            b"<avtrans><action>content</action><paths><path>units.topology</path></paths></avtrans>",
+        )
+        for action_response in rejected_responses:
+            with self.subTest(response=action_response[:80]), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                store_path = root / "rest" / "tokens.json"
+                credentials_path = root / "service.credentials"
+                socket_path = root / "avtrans.sock"
+                store = token_store.TokenStore(store_path)
+                administrator = store.bootstrap("Administrator")
+                inventory = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+                outlet_id = inventory["outlets"][0]["id"]
+                controller_token = store.create_token(
+                    administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
+                )
+                credentials_path.write_text("service-user\nservice-password\n")
+                credentials_path.chmod(0o600)
+                with FakeAvtransController(socket_path, [
+                    LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(),
+                    action_response, LOGOUT_RESPONSE.read_bytes(),
+                ]) as controller:
+                    result = self.run_cgi(
+                        "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                        authorization=f"Bearer {controller_token.plaintext}",
+                        body=json.dumps({
+                            "action": "off",
+                            "inventoryRevision": inventory["inventoryRevision"],
+                        }).encode(),
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_TOKEN_STORE": str(store_path),
+                            "PM3000_CREDENTIALS": str(credentials_path),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                _headers, response = self.cgi_json(result)
+                self.assertIn(b"Status: 503", result.stdout)
+                self.assertEqual("action_outcome_unknown", response["code"])
+                self.assertEqual(4, len(controller.requests))
+                self.assertIn(b"<action>targPowerOff</action>", controller.requests[2][1])
+
+    def test_session_password_change_uses_closed_firmware_form_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            socket_path = root / "password.sock"
+            response = (
+                b'<avtrans><action>content</action><paths><path>units.change_password.changedPassword</path></paths>'
+                b'<payload><section id="changedPassword" structure="standard">'
+                b'<section id="infoForm" structure="form"><parameter id="title" structure="title">'
+                b'<parameter id="message" structure="notice"></parameter>'
+                b'</parameter></section></section></payload></avtrans>'
+            )
+            body = json.dumps({
+                "oldPassword": "old&<password",
+                "newPassword": "new>password",
+                "confirmation": "new>password",
+            }).encode()
+            with FakeAvtransController(socket_path, [response]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/session/password", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body,
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(1, len(controller.requests))
+            request = controller.requests[0][1]
+            self.assertIn(b"<action>save</action>", request)
+            self.assertIn(b"<path>units.change_password</path>", request)
+            self.assertIn(b'<section structure="form">', request)
+            self.assertIn(b'<parameter id="oldpassword" structure="password"><value>old&amp;&lt;password</value></parameter>', request)
+            self.assertIn(b'<parameter id="newpassword" structure="password"><value>new&gt;password</value></parameter>', request)
+            self.assertIn(b'<parameter id="confirmpassword" structure="password"><value>new&gt;password</value></parameter>', request)
+            self.assertNotIn(b"old&<password", result.stdout)
+            self.assertNotIn(b"new>password", result.stdout)
+
+            invalid_socket = root / "password-invalid-response.sock"
+            invalid_environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(invalid_socket),
+            }
+            invalid_response = b'<avtrans><action>content</action><paths><path>units.change_password.changedPassword</path></paths><payload/></avtrans>'
+            with FakeAvtransController(invalid_socket, [invalid_response]):
+                invalid = self.run_cgi(
+                    "POST", "/api/v1/session/password", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body,
+                    content_type="application/json", extra_environment=invalid_environment,
+                )
+            _headers, error = self.cgi_json(invalid)
+            self.assertIn(b"Status: 503", invalid.stdout)
+            self.assertEqual("action_outcome_unknown", error["code"])
+
+    def test_dsview_setting_get_and_put_use_closed_boolean_form(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            assert isinstance(session, dict)
+            self.assertIn("units.applianceSettings.security.SecurityDSView", session["navigation"]["paths"])
+            socket_path = root / "dsview.sock"
+            page = (
+                b'<avtrans><action>content</action><paths><path>units.applianceSettings.security.SecurityDSView</path></paths>'
+                b'<payload><section id="dsviewControl" structure="form"><parameter id="dsview" structure="title">'
+                b'<parameter id="allowDSView" structure="checkbox"><value>true</value></parameter>'
+                b'</parameter></section></payload></avtrans>'
+            )
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+            with FakeAvtransController(socket_path, [page]) as controller:
+                get_result = self.run_cgi(
+                    "GET", "/api/v1/settings/security/dsview", cookie=cookie,
+                    extra_environment=environment,
+                )
+            get_headers, get_body = self.cgi_json(get_result)
+            self.assertIn(b"Status: 200", get_headers)
+            self.assertEqual({"allowDSView": True}, get_body)
+            self.assertEqual(1, len(controller.requests))
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+            self.assertIn(b"<path>units.applianceSettings.security.SecurityDSView</path>", controller.requests[0][1])
+
+            malformed_socket = root / "dsview-malformed.sock"
+            malformed_environment = dict(environment)
+            malformed_environment["PM3000_AVTRANS_SOCKET"] = str(malformed_socket)
+            malformed_page = page.replace(b'id="dsview" structure="title"', b'id="unexpected" structure="title"')
+            with FakeAvtransController(malformed_socket, [malformed_page]):
+                malformed = self.run_cgi(
+                    "GET", "/api/v1/settings/security/dsview", cookie=cookie,
+                    extra_environment=malformed_environment,
+                )
+            headers, error = self.cgi_json(malformed)
+            self.assertIn(b"Status: 502", headers)
+            self.assertEqual("backend_protocol_error", error["code"])
+
+            saved_page = page.replace(b"<value>true</value>", b"<value>false</value>")
+            put_socket_path = root / "dsview-put.sock"
+            put_environment = dict(environment)
+            put_environment["PM3000_AVTRANS_SOCKET"] = str(put_socket_path)
+            with FakeAvtransController(put_socket_path, [saved_page]) as controller:
+                put_result = self.run_cgi(
+                    "PUT", "/api/v1/settings/security/dsview", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=b'{"allowDSView":false}',
+                    content_type="application/json", extra_environment=put_environment,
+                )
+            self.assertIn(b"Status: 204", put_result.stdout)
+            self.assertEqual(1, len(controller.requests))
+            request = controller.requests[0][1]
+            self.assertIn(b"<action>save</action>", request)
+            self.assertIn(b"<path>units.applianceSettings.security.SecurityDSView</path>", request)
+            self.assertIn(
+                b'<section structure="form"><parameter id="allowDSView" structure="checkbox"><value>false</value></parameter></section>',
+                request,
+            )
+
+            mismatch_socket = root / "dsview-mismatch.sock"
+            put_environment["PM3000_AVTRANS_SOCKET"] = str(mismatch_socket)
+            with FakeAvtransController(mismatch_socket, [page]):
+                mismatch = self.run_cgi(
+                    "PUT", "/api/v1/settings/security/dsview", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=b'{"allowDSView":false}',
+                    content_type="application/json", extra_environment=put_environment,
+                )
+            self.assertIn(b"Status: 503", mismatch.stdout)
+
+    def test_nis_setting_get_and_put_use_closed_complete_form(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            assert isinstance(session, dict)
+            permission = "units.authentication.authenticationservers.nis"
+            navigation = session["navigation"]
+            assert isinstance(navigation, dict)
+            self.assertIn(permission, navigation["paths"])
+            page = (
+                b'<avtrans><action>content</action><paths><path>units.authentication.authenticationservers.nis</path></paths>'
+                b'<payload><section id="nisserver" structure="form">'
+                b'<parameter id="domainname" structure="text"><value>example</value></parameter>'
+                b'<parameter id="address" structure="text"><value>nis.example.test</value></parameter>'
+                b'</section></payload></avtrans>'
+            )
+            get_socket = root / "nis-get.sock"
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(get_socket)}
+            with FakeAvtransController(get_socket, [page]) as controller:
+                result = self.run_cgi("GET", "/api/v1/settings/authentication/nis", cookie=cookie, extra_environment=environment)
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual({"domainName": "example", "address": "nis.example.test"}, payload)
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+
+            malformed_pages = (
+                page.replace(
+                    b'<parameter id="domainname" structure="text"><value>example</value></parameter><parameter id="address" structure="text"><value>nis.example.test</value></parameter>',
+                    b'<parameter id="address" structure="text"><value>nis.example.test</value></parameter><parameter id="domainname" structure="text"><value>example</value></parameter>',
+                ),
+                page.replace(b'id="domainname" structure="text"', b'id="domainname" structure="checkbox"'),
+                page.replace(b'<parameter id="domainname"', b'<section structure="title"><parameter id="domainname"').replace(
+                    b'</parameter><parameter id="address"', b'</parameter></section><parameter id="address"', 1
+                ),
+            )
+            for index, malformed_page in enumerate(malformed_pages):
+                malformed_socket = root / f"nis-malformed-{index}.sock"
+                malformed_environment = dict(environment)
+                malformed_environment["PM3000_AVTRANS_SOCKET"] = str(malformed_socket)
+                with FakeAvtransController(malformed_socket, [malformed_page]):
+                    malformed = self.run_cgi(
+                        "GET", "/api/v1/settings/authentication/nis", cookie=cookie,
+                        extra_environment=malformed_environment,
+                    )
+                headers, error = self.cgi_json(malformed)
+                self.assertIn(b"Status: 502", headers)
+                self.assertEqual("backend_protocol_error", error["code"])
+
+            put_socket = root / "nis-put.sock"
+            environment["PM3000_AVTRANS_SOCKET"] = str(put_socket)
+            body = b'{"domainName":"example2","address":"broadcast"}'
+            saved_page = page.replace(
+                b"<value>example</value>", b"<value>example2</value>"
+            ).replace(
+                b"<value>nis.example.test</value>", b"<value>broadcast</value>"
+            )
+            with FakeAvtransController(put_socket, [saved_page]) as controller:
+                result = self.run_cgi(
+                    "PUT", "/api/v1/settings/authentication/nis", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body,
+                    content_type="application/json", extra_environment=environment,
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            request = controller.requests[0][1]
+            self.assertIn(b"<path>units.authentication.authenticationservers.nis</path>", request)
+            self.assertIn(b'<parameter id="domainname" structure="text"><value>example2</value></parameter>', request)
+            self.assertIn(b'<parameter id="address" structure="text"><value>broadcast</value></parameter>', request)
+
+            mismatch_socket = root / "nis-mismatch.sock"
+            environment["PM3000_AVTRANS_SOCKET"] = str(mismatch_socket)
+            with FakeAvtransController(mismatch_socket, [page]):
+                mismatch = self.run_cgi(
+                    "PUT", "/api/v1/settings/authentication/nis", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body,
+                    content_type="application/json", extra_environment=environment,
+                )
+            self.assertIn(b"Status: 503", mismatch.stdout)
+
+            for invalid_body in (
+                b'{"domainName":"bad domain","address":"broadcast"}',
+                b'{"domainName":"example","address":"bad/address"}',
+                b'{"domainName":"' + (b"a" * 100) + b'","address":"broadcast"}',
+            ):
+                rejected = self.run_cgi(
+                    "PUT", "/api/v1/settings/authentication/nis", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=invalid_body,
+                    content_type="application/json", extra_environment=environment,
+                )
+                self.assertIn(b"Status: 400", rejected.stdout)
+
+    def test_session_password_change_rejects_bearer_csrf_and_confirmation_errors_before_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+            }
+            body = b'{"oldPassword":"old","newPassword":"new","confirmation":"different"}'
+            mismatch = self.run_cgi(
+                "POST", "/api/v1/session/password", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=body,
+                content_type="application/json", extra_environment=environment,
+            )
+            missing_csrf = self.run_cgi(
+                "POST", "/api/v1/session/password", cookie=cookie,
+                body=b'{"oldPassword":"old","newPassword":"new","confirmation":"new"}',
+                content_type="application/json", extra_environment=environment,
+            )
+            bearer = self.run_cgi(
+                "POST", "/api/v1/session/password", cookie=cookie,
+                authorization="Bearer forbidden", csrf=str(session["csrfToken"]),
+                body=b'{"oldPassword":"old","newPassword":"new","confirmation":"new"}',
+                content_type="application/json", extra_environment=environment,
+            )
+            self.assertIn(b"Status: 400", mismatch.stdout)
+            self.assertIn(b"Status: 403", missing_csrf.stdout)
+            self.assertIn(b"Status: 401", bearer.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
 
     def test_action_request_is_validated_before_disabled_response_without_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -980,7 +1398,10 @@ class NativeAdapterTests(unittest.TestCase):
             _headers, error = self.cgi_json(invalid)
             self.assertEqual("backend_protocol_error", error["code"])
 
-    def test_production_binary_excludes_authorize_helper(self) -> None:
+    def test_production_binary_excludes_authorize_helper_and_uses_installed_credentials(self) -> None:
+        source = (NATIVE / "main.c").read_text(encoding="utf-8")
+        self.assertNotIn("/mnt/hdUser/pm3000-revive/rest/service.credentials", source)
+        self.assertGreaterEqual(source.count("/etc/pm3000-rest/controller.credentials"), 4)
         subprocess.run(["make", "-C", str(NATIVE), "target"], check=True)
         production = (NATIVE / "build" / "pm3000-rest-ppc32").read_bytes()
         self.assertNotIn(b"--authorize", production)

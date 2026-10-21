@@ -531,6 +531,9 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('base=$root/webui', installer)
         self.assertIn('chmod 755 "$root" "$base" "$releases"', installer)
         self.assertIn("--verify-release \"$release\"", installer)
+        self.assertIn('--verify-private-directory "$root/rest"', installer)
+        self.assertIn('--verify-private-directory /etc/pm3000-rest', installer)
+        self.assertIn('--verify-private-regular "$prerequisite"', installer)
         self.assertIn("st_uid != geteuid()", atomic_source)
         self.assertIn('package_snapshot=$work/release.tar', installer)
         self.assertNotIn('package path must be absolute', installer)
@@ -580,6 +583,16 @@ class ScriptStructureTests(unittest.TestCase):
             regular = root / "regular"
             regular.write_bytes(b"safe")
             subprocess.run([str(helper), "--verify-regular", str(regular)], check=True)
+            private_regular = root / "private-regular"
+            private_regular.write_bytes(b"secret")
+            private_regular.chmod(0o600)
+            subprocess.run([str(helper), "--verify-private-regular", str(private_regular)], check=True)
+            private_regular.chmod(0o640)
+            self.assertNotEqual(
+                subprocess.run([str(helper), "--verify-private-regular", str(private_regular)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
             symlink = root / "symlink"
             symlink.symlink_to("regular")
             self.assertNotEqual(
@@ -677,10 +690,19 @@ class ScriptStructureTests(unittest.TestCase):
             releases.mkdir(parents=True)
             (releases / "r1").mkdir()
             (base / "current").symlink_to("releases/r1")
+            rest = mnt / "hdUser/pm3000-revive/rest"
+            rest.mkdir(mode=0o700)
+            for name in ("tokens.json", "tokens.json.lock"):
+                (rest / name).write_bytes(b"{}\n")
+                (rest / name).chmod(0o600)
             apache = root / "apache2"
             (apache / "conf.d").mkdir(parents=True)
             config = apache / "conf.d/pm3000-revive.conf"
             config.write_bytes(b"old-config\n")
+            credentials = root / "pm3000-rest"
+            credentials.mkdir(mode=0o700)
+            (credentials / "controller.credentials").write_bytes(b"user\npassword\n")
+            (credentials / "controller.credentials").chmod(0o600)
             tmp_root = root / "tmp"
             package_tree = tmp_root / "input/tree"
             for directory in (package_tree / "apache", package_tree / "bin", package_tree / "web"):
@@ -689,7 +711,7 @@ class ScriptStructureTests(unittest.TestCase):
             helper.write_text(
                 "#!/bin/sh\n"
                 "set -eu\n"
-                "case \"$1\" in --verify-regular|--verify-release) exit 0;; esac\n"
+                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular) exit 0;; esac\n"
                 "parent=$1; source=$2; destination=$3; expected_type=$4\n"
                 "rm -rf \"$parent/$destination\"\n"
                 "mv \"$parent/$source\" \"$parent/$destination\"\n"
@@ -753,8 +775,9 @@ class ScriptStructureTests(unittest.TestCase):
                 path.chmod(0o755)
             command = [
                 "bwrap", "--unshare-user", "--uid", "0", "--gid", "0",
-                "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+                "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/etc",
                 "--bind", str(mnt), "/mnt", "--bind", str(apache), "/etc/apache2",
+                "--bind", str(credentials), "/etc/pm3000-rest",
                 "--bind", str(tmp_root), "/tmp", "--bind", str(usr_sbin), "/usr/sbin",
                 "--bind", str(init_d), "/etc/init.d",
                 "/bin/sh", "/tmp/input/installer", "/tmp/input/release.tar", digest, "r2",

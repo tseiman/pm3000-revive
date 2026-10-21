@@ -98,11 +98,51 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("new Set(outlets).size", self.javascript)
         self.assertIn("/actions`,", self.javascript)
         self.assertIn("inventoryRevision: state.inventoryRevision", self.javascript)
-        self.assertIn("const powerActionsEnabled = false", self.javascript)
+        self.assertIn("const powerActionsEnabled = true", self.javascript)
         self.assertIn("powerActionsEnabled && state.session.navigation.canControlPower", self.javascript)
         self.assertIn('actionButton(outlet, "on")', self.javascript)
         self.assertIn('actionButton(outlet, "off")', self.javascript)
         self.assertIn('actionButton(outlet, "cycle")', self.javascript)
+
+    def test_ui_exposes_rights_gated_pdu_inventory_and_actions(self) -> None:
+        self.assertIn('id="pdus-view"', self.html)
+        self.assertIn('id="pdu-grid"', self.html)
+        self.assertIn('path === "units.powermanagement.pdu_management" ? "pdus"', self.javascript)
+        self.assertIn('api("/api/v1/pdus")', self.javascript)
+        self.assertIn('`/api/v1/pdus/${encodeURIComponent(pdu.id)}/actions`', self.javascript)
+        self.assertIn("inventoryRevision: state.pduInventoryRevision", self.javascript)
+        self.assertIn("Array.isArray(pdu.availableActions)", self.javascript)
+        self.assertIn("state.session.navigation.canControlPower", self.javascript)
+
+    def test_ui_exposes_rights_gated_nis_complete_setting(self) -> None:
+        self.assertIn('id="nis-view"', self.html)
+        self.assertIn('id="nis-form"', self.html)
+        self.assertIn('path === "units.authentication.authenticationservers.nis" ? "nis"', self.javascript)
+        self.assertIn('api("/api/v1/settings/authentication/nis")', self.javascript)
+        self.assertIn('domainName: $("nis-domain").value', self.javascript)
+        self.assertIn('$("nis-domain").value = ""; $("nis-address").value = ""', self.javascript)
+        self.assertIn('button.disabled = !loaded', self.javascript)
+        self.assertIn('await loadNisSetting()', self.javascript)
+
+    def test_ui_exposes_rights_gated_dsview_boolean_setting(self) -> None:
+        self.assertIn('id="dsview-view"', self.html)
+        self.assertIn('id="dsview-form"', self.html)
+        self.assertIn('path === "units.applianceSettings.security.SecurityDSView" ? "dsview"', self.javascript)
+        self.assertIn('api("/api/v1/settings/security/dsview")', self.javascript)
+        self.assertIn('JSON.stringify({ allowDSView:', self.javascript)
+        self.assertIn('$("allow-dsview").checked = false', self.javascript)
+        self.assertIn('await loadDsviewSetting()', self.javascript)
+
+    def test_ui_exposes_rights_gated_password_change_without_browser_storage(self) -> None:
+        self.assertIn('id="password-change-view"', self.html)
+        self.assertIn('id="password-change-form"', self.html)
+        self.assertIn('autocomplete="current-password"', self.html)
+        self.assertIn('autocomplete="new-password"', self.html)
+        self.assertIn('path === "units.change_password" ? "password"', self.javascript)
+        self.assertIn('api("/api/v1/session/password"', self.javascript)
+        self.assertIn('$("old-password").value = ""', self.javascript)
+        self.assertIn('$("new-password").value = ""', self.javascript)
+        self.assertIn('$("confirm-password").value = ""', self.javascript)
 
     def test_navigation_and_dialog_controls_are_native_and_labelled(self) -> None:
         self.assertIn('aria-label="Primary navigation"', self.html)

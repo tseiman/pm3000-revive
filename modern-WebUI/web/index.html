@@ -58,6 +58,18 @@
           </div>
         </section>
 
+        <section id="pdus-view" class="view" aria-labelledby="pdus-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Power management</span><h1 id="pdus-title">PDU status</h1><p>Live PDU inventory and rights-gated device control.</p></div>
+            <button id="refresh-pdus" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <div class="panel-heading"><div><h2>Power distribution units</h2><p id="pdu-inventory-revision">Inventory revision —</p></div><span id="pdu-updated-at">Not refreshed</span></div>
+            <div id="pdu-grid" class="outlet-grid" aria-live="polite"></div>
+            <div id="pdu-empty" class="empty-state" hidden>No PDUs are visible to this user.</div>
+          </div>
+        </section>
+
         <section id="tokens-view" class="view" aria-labelledby="tokens-title" hidden>
           <div class="page-heading">
             <div><span class="eyebrow">Administration</span><h1 id="tokens-title">REST API tokens</h1><p>Create and manage narrowly scoped credentials.</p></div>
@@ -70,6 +82,42 @@
               <table><thead><tr><th>Label</th><th>Scope</th><th>Outlet access</th><th>Status</th><th>Token ID</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="token-rows"></tbody></table>
             </div>
             <div id="token-empty" class="empty-state" hidden>No token records are available.</div>
+          </div>
+        </section>
+
+        <section id="nis-view" class="view" aria-labelledby="nis-title" hidden>
+          <div class="page-heading"><div><span class="eyebrow">Authentication</span><h1 id="nis-title">NIS server</h1><p>Configure the complete NIS domain and server address.</p></div></div>
+          <div class="panel">
+            <form id="nis-form">
+              <label for="nis-domain">Domain name</label><input id="nis-domain" maxlength="99" required>
+              <label for="nis-address">Server address</label><input id="nis-address" maxlength="99" required>
+              <p id="nis-error" class="form-error" role="alert"></p>
+              <button id="save-nis" class="primary-button" type="submit">Save setting</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="dsview-view" class="view" aria-labelledby="dsview-title" hidden>
+          <div class="page-heading"><div><span class="eyebrow">Security</span><h1 id="dsview-title">DSView access</h1><p>Control whether DSView is allowed through the HTTPS service.</p></div></div>
+          <div class="panel">
+            <form id="dsview-form">
+              <label class="check-row"><input id="allow-dsview" type="checkbox"><span><strong>Allow DSView</strong><small>Changes the appliance HTTPS DSView allowance.</small></span></label>
+              <p id="dsview-error" class="form-error" role="alert"></p>
+              <button id="save-dsview" class="primary-button" type="submit">Save setting</button>
+            </form>
+          </div>
+        </section>
+
+        <section id="password-change-view" class="view" aria-labelledby="password-change-title" hidden>
+          <div class="page-heading"><div><span class="eyebrow">Account security</span><h1 id="password-change-title">Change password</h1><p>Update the password of the signed-in PM3000 user.</p></div></div>
+          <div class="panel">
+            <form id="password-change-form">
+              <label for="old-password">Current password</label><input id="old-password" type="password" autocomplete="current-password" maxlength="256" required>
+              <label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" maxlength="256" required>
+              <label for="confirm-password">Confirm new password</label><input id="confirm-password" type="password" autocomplete="new-password" maxlength="256" required>
+              <p id="password-change-error" class="form-error" role="alert"></p>
+              <button id="submit-password-change" class="primary-button" type="submit">Change password</button>
+            </form>
           </div>
         </section>
 

@@ -6,15 +6,20 @@ The machine-readable source is [`../api/openapi-v1.json`](../api/openapi-v1.json
 
 - `GET /api/v1/health`
 - `POST|GET|DELETE /api/v1/session`
+- `POST /api/v1/session/password`
+- `GET|PUT /api/v1/settings/security/dsview`
+- `GET|PUT /api/v1/settings/authentication/nis`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
+- `GET /api/v1/pdus`
+- `POST /api/v1/pdus/{pduId}/actions`
 - `GET|POST /api/v1/tokens`
 - `POST /api/v1/tokens/{tokenId}/disable`
 - `POST /api/v1/tokens/{tokenId}/enable`
 - `DELETE /api/v1/tokens/{tokenId}`
 
-There is no generic backend path, XML passthrough, token recovery, PDU-wide operation, reset, reboot, factory-default, or firmware-update route.
+There is no generic backend path, XML passthrough, token recovery, reset, reboot, factory-default, or firmware-update route.
 
 ## Authentication boundaries
 
@@ -41,9 +46,9 @@ base64url(SHA-256("pm3000-rest-v1\0outlet\0" || backendRowId))[0:22]
 
 PDU and inventory revisions use separate domain prefixes. Every detail lookup and action resolves the opaque ID against a fresh, validated topology. Duplicate, missing, malformed, oversized, ambiguous, or colliding identities fail closed.
 
-## Outlet actions
+## Outlet and PDU actions
 
-Backend dispatch is currently disabled. The route retains its closed input, authentication, authorization, and CSRF boundary, but every otherwise valid request returns `503 action_contract_unverified` before opening the Avtrans socket.
+Outlet actions map public `on`, `off`, and `cycle` to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` at `units.topology` / `topologyTable`. PDU actions use firmware controls `on`, `off`, and `cycle` at `units.powermanagement.pdu_management` / `pdu_devices_table`.
 
 The only request shape is:
 
@@ -59,12 +64,24 @@ Rules:
 - `action` is exactly `on`, `off`, or `cycle`;
 - both fields are required; unknown and duplicate fields are rejected;
 - body limit is 1,024 bytes of UTF-8 JSON;
-- bearer callers require `control` scope and allowlist membership;
+- outlet bearer callers require `control` scope and allowlist membership;
+- PDU bearer callers require `control` scope and an unrestricted outlet policy;
 - browser callers require a valid session, PM3000-derived power capability, and CSRF;
-- no controller request is sent;
-- observed topology controls use `targPowerOn`, `targPowerOff`, and `targCycle`, while plain `on`, `off`, and `cycle` belong to PDU/outlet detail tables;
-- a sanitized browser-generated action request plus success/error responses must resolve path, table, action, row identity, and confirmation semantics before dispatch can be implemented;
-- future actions must never be retried automatically, especially `cycle`.
+- the supplied opaque ID is resolved against a fresh validated inventory; raw controller row IDs are never accepted;
+- the revision supplied by the client must match the fresh inventory;
+- `on` and `off` succeed only when a validated operation-specific inventory response reports the targeted outlet or PDU in the requested state;
+- `cycle` has no stable read-back state and therefore returns `action_outcome_unknown` after dispatch; clients must not retry it automatically;
+- any malformed, unrelated, mismatching, or failed response after dispatch likewise returns `action_outcome_unknown` and is never retried automatically.
+
+## Password change
+
+`POST /api/v1/session/password` accepts only the closed object `oldPassword`, `newPassword`, and `confirmation`. It is available only to a browser PM3000 session with the concrete `units.change_password` navigation right and matching CSRF token; bearer authentication is rejected. Confirmation mismatch is rejected before backend contact. Success requires the exact firmware-derived `changedPassword` / `infoForm` / title / notice hierarchy; an unrelated or empty payload is an unknown outcome. Password values are not logged or stored and are cleared from browser buffers and through non-optimizable native wiping after use.
+
+## Typed settings
+
+`/api/v1/settings/security/dsview` is a complete boolean resource with the sole field `allowDSView`. `/api/v1/settings/authentication/nis` is a complete two-field resource with required `domainName` and `address` printable-ASCII strings of at most 99 bytes. Unknown, duplicate, missing, oversized, or incorrectly typed members are rejected before Avtrans.
+
+These initial settings endpoints are browser-session-only: they reject an Authorization header, require their exact PM3000 navigation path and CSRF for PUT, and never map a REST bearer scope onto a PM3000 configuration right. GET validates the exact response path, form, and unique parameter values. PUT emits fixed `save` requests in firmware field order and returns success only when the content response contains an exact read-back match for every submitted field; any mismatch, missing value, duplicate, or dispatch uncertainty returns `action_outcome_unknown` and is never retried automatically.
 
 ## Token administration
 
@@ -84,6 +101,6 @@ All responses disable caching and content sniffing. Errors use a closed JSON obj
 
 Important failures include malformed input, unsupported media type, oversized body, authentication/authorization denial, missing outlet, stale inventory, backend protocol/unavailability, unknown action outcome, final-administrator protection, token limit, and unavailable token storage. Exact status codes and the complete vocabulary are in OpenAPI.
 
-## Writable settings
+## Further writable settings
 
-No generic settings route exists. A setting is added only after a sanitized real `get` response and matching `save` request prove the complete closed form, including server-generated and conditional fields. The known Network Settings form is deliberately deferred because its checkbox payload includes additional unobserved parameters; sending a partial form could remove state or make the appliance unreachable.
+No generic settings route exists. Offline firmware analysis identified fixed and dynamic form families. Each additional fixed operation must become a typed or compile-time-allowlisted route with exact path, action, form structure, validation, permission, and response semantics. Dynamic row/form families remain deferred until a fresh GET can unambiguously select and preserve every required value.

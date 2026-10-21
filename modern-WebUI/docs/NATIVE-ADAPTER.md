@@ -6,7 +6,7 @@ This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contrac
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-The current session/token/read-only candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution. Outlet action dispatch is disabled.
+The current candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution. No test has contacted a PM3000 or issued a real write.
 
 ## Implemented routes
 
@@ -14,12 +14,14 @@ The current session/token/read-only candidate has not been installed on a device
 - `POST /api/v1/session`
 - `GET /api/v1/session`
 - `DELETE /api/v1/session`
+- `POST /api/v1/session/password`
+- `GET|PUT /api/v1/settings/security/dsview`
+- `GET|PUT /api/v1/settings/authentication/nis`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
 - `POST /api/v1/outlets/{outletId}/actions`
-  - validates closed `on`, `off`, and `cycle` input
-  - validates authentication, authorization, and browser CSRF
-  - returns `503 action_contract_unverified` without controller access
+- `GET /api/v1/pdus`
+- `POST /api/v1/pdus/{pduId}/actions`
 - `GET /api/v1/tokens`
 - `POST /api/v1/tokens`
 - `POST /api/v1/tokens/{tokenId}/enable`
@@ -108,7 +110,7 @@ Status: 200 OK
 
 ### Backend projection
 
-The Avtrans client has no generic proxy or free-form command interface. Active routes emit only closed, observed login, navigation, topology, and logout requests. Both retained outlet-action helpers return before login or socket access, and the HTTP route is separately fail-closed. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. The topology projector maps only approved fields to REST v1.
+The Avtrans client has no generic proxy or free-form command interface. Active routes emit only fixed login, navigation, topology, PDU inventory, password-change, typed DSView/NIS setting, power-action, and logout requests. A bounded structural XML parser rejects comments, duplicate control fields, malformed/trailing documents, explicit controller errors, and mismatched actions or paths. Projectors map only approved fields to REST v1 and never expose raw controller row IDs or hidden PDU threshold data.
 
 Malformed, oversized, ambiguous, duplicate, or unexpected backend data fails closed. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
 
@@ -130,11 +132,13 @@ The native reader and writer enforce the Stage 3 canonical store contract:
 
 A created bearer value appears only in its one-time `201` response. While the exclusive lock is held, the candidate store is first written and `fsync`ed to a same-directory temporary file. The response is then written and flushed before the atomic rename. A response-delivery failure removes the candidate and preserves the old store byte-for-byte. A subsequent pre-rename failure can leave the client with an inactive credential, but cannot leave an active credential whose plaintext was not delivered. Once rename succeeds, directory-`fsync` uncertainty is reported locally and never rolled back; the already delivered credential remains the authoritative result. List responses contain metadata only. Error responses and tests must not contain token plaintext or digests.
 
-### Power actions
+### Power actions and password change
 
-The action route validates HTTPS, session or bearer authorization, scope/right, outlet permission, route shape, and CSRF, then returns `503 action_contract_unverified` without opening the controller socket. The observed topology page defines `targPowerOn`, `targPowerOff`, and `targCycle`; `on`, `off`, and `cycle` are defined for PDU/outlet detail tables. Existing read-only fixtures do not prove which full request/response contract should back the REST action.
+Power routes validate HTTPS, session or bearer authorization, scope/right, outlet policy, route shape, closed JSON, and browser CSRF. The server refreshes the relevant inventory, resolves the opaque ID to one row, verifies the client revision, checks the advertised firmware control, and emits a fixed table payload. Topology actions map to `targPowerOn`, `targPowerOff`, and `targCycle`; PDU-wide actions use `on`, `off`, and `cycle`.
 
-No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed. A future implementation requires sanitized browser-generated action and response fixtures and must preserve the existing no-retry/unknown-outcome safety model.
+Password change is session-only, requires `units.change_password`, matching CSRF, and matching new-password confirmation. It emits only the fixed `save` form, accepts only the firmware-derived success-form hierarchy, and clears secret buffers with a non-optimizable wipe.
+
+Power `on`/`off` responses must be valid operation-specific inventories that report the targeted object in the requested state. `cycle` has no stable confirmation state and therefore reports `action_outcome_unknown` after dispatch. A malformed, unrelated, or unexpected response after any write is likewise unknown; no write is retried automatically. No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed.
 
 ## Deployment preconditions
 
@@ -146,6 +150,8 @@ Before installing a write-capable candidate, the installer must independently pr
 4. an Apache mapping that preserves the existing vendor Web UI as a fallback;
 5. HTTPS-only access and the required CGI environment;
 6. a staged health check before exposing any additional route.
+
+The compatibility gate and installer fail before activation unless both private directories and all three write-capable runtime files (token store, token lock, and controller credentials) satisfy these ownership, link-count, regular-file, and mode requirements.
 
 Do not deploy by overwriting vendor files in place.
 

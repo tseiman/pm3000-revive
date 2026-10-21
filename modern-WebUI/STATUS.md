@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-The compact session, token-administration, and read-only inventory candidate is complete offline. The previously installed `0.1` pilot remains the live baseline; no current session, token-admin, or outlet-action code has been installed or executed on the appliance. Outlet action dispatch is fail-closed pending observed action request/response fixtures.
+The current offline candidate implements PM3000-backed WebUI sessions, token administration, validated outlet and PDU inventory, fixed power actions, self-service password change, and typed DSView/NIS settings. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
 
 ## Implemented
 
@@ -10,36 +10,34 @@ The compact session, token-administration, and read-only inventory candidate is 
 - Existing-PM3000 username/password login, server-side GSP sessions, 15-minute idle expiry, hardened cookie, CSRF, logout, and bounded session cleanup.
 - Server-derived, fixed-allowlist navigation and conservative rights gates.
 - External REST bearer authentication with `read`, `control`, and `admin` scopes and optional outlet allowlists.
-- Token list/create/enable/disable/revoke; digest-only persistence, one-time secret output, final-administrator protection, and preserved production store at `/mnt/hdUser/pm3000-revive/rest/tokens.json`.
-- Outlet inventory plus authenticated validation of `on`, `off`, and `cycle` JSON requests. No action reaches Avtrans: the available evidence exposes conflicting action families and does not prove a response contract.
-- Dependency-free browser UI using PM3000 sessions rather than bearer-token login.
-- Full rights-filtered observed navigation; non-migrated pages continue through the legacy UI.
-- Backup-first one-command host installer using a temporary OpenSSH ControlMaster; manual rollback remains separate.
-- Firmware update is not implemented.
+- Token list/create/enable/disable/revoke with digest-only persistence, one-time secret output, final-administrator protection, and preservation of `/mnt/hdUser/pm3000-revive/rest/tokens.json`.
+- Outlet inventory and `on`, `off`, and `cycle`. Public actions map to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` on `units.topology` / `topologyTable` after a fresh server-side row lookup.
+- PDU inventory plus PDU-wide `on`, `off`, and `cycle` on `units.powermanagement.pdu_management` / `pdu_devices_table`, also using a fresh server-side row lookup.
+- Inventory-revision checks reject stale client mappings. Neither outlet nor PDU APIs accept raw controller row IDs.
+- Power `on`/`off` writes return success only when a validated operation-specific inventory response reports the targeted outlet or PDU in the requested state. A `cycle` cannot be confirmed from a stable state and therefore returns `action_outcome_unknown` after dispatch. Password changes require the exact firmware-derived success-form hierarchy; settings writes require exact typed read-back of every submitted field. A transport failure, mismatch, or unexpected response after dispatch is never retried automatically.
+- Session-only password change with `units.change_password` authorization, CSRF, old password, matching new-password confirmation, secret zeroing, and expected response path `units.change_password.changedPassword`.
+- Session-only complete-replacement settings for DSView HTTPS allowance (`SecurityDSView` / `dsviewControl`) and NIS (`nis` / `nisserver`). Both use fixed paths, actions, form structure/order, PM3000 navigation rights, CSRF, closed JSON, fresh-read UI gating, and fail-closed response parsing. They do not infer PM3000 configuration rights from REST bearer scopes. DSView remains supported at this level but is not a priority for further expansion.
+- Dependency-free browser UI for outlet and PDU inventory/actions, password change, and REST-token administration. Non-migrated pages remain available through the legacy UI.
+- Backup-first host installer using a temporary OpenSSH ControlMaster; manual rollback remains separate.
+
+## Static write-contract analysis
+
+Offline correlation of `avrel.xml`, the legacy JavaScript/XSL serializer, feature modules, validation definitions, and observed sanitized reads found 30 `COMPLETE_STATIC` contracts: 20 fixed settings actions and 10 fixed create/save flows. They are not all implemented yet. Dynamic object-edit families remain deferred until each runtime row/path/form variant can be resolved from a fresh GET without guessing.
+
+Firmware update, setup wizard, reboot, reset, shutdown, factory default, and configuration restore remain excluded.
 
 ## Current verification
 
-- Repository suite: 156 tests passing.
-- Host C99 build: `-Wall -Wextra -Werror -pedantic` passing.
-- Static PPC target build and QEMU `-cpu e300c3` health/utility checks passing.
-- PPC REST binary: 197,876 bytes.
-- Production Web assets: 36,568 bytes.
-- Deterministic candidate release archive: 317,440 bytes.
-- Release allowlist contains only manifests, Apache configuration, two PPC binaries, and three Web assets.
-- Added-line secret/injection scan: no matches.
+- Current complete repository suite: 169 tests passing.
+- Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
+- Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
+- QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.
+- Two independent read-only review passes completed. Findings on production credential paths and prerequisites, stale settings UI state, exact XML form validation, operation-specific write confirmation, password-success parsing and secret wiping, transport/protocol status separation, and OpenAPI consistency are resolved; the final review reports no release blocker. The proposed 100-character NIS change was rejected because the firmware contract is strictly `< 100`, i.e. at most 99 payload bytes.
 
 ## Controlled device-validation boundary
 
-The next operation is not automatic. It requires an approved maintenance window and must stop after each minimal check:
-
-1. Install a new candidate through `deploy/stage7-install.sh` using the completed private backup.
-2. Verify Apache syntax, `/`, `/modern/`, and `/api/v1/health` without changing settings.
-3. Verify login/logout and navigation first with an administrator, then a restricted PM3000 account.
-4. Verify token create/list/disable/enable/revoke and confirm the secret is shown once.
-5. Capture and sanitize the legacy browser-generated request and response for one explicitly approved action without replaying it. Only after the topology/detail action contract is resolved may a separately reviewed test build enable one designated test outlet.
-
-No writable modern settings form is enabled yet. Firmware evidence proves the Network Settings `save` path and primary fields, but checkbox sections contain additional server-generated parameters. A sanitized real `get` response and matching `save` request are required before implementing a closed serializer; partial saves are intentionally rejected rather than risk network loss. See `DEFERRED-IMPROVEMENTS.md`.
+No appliance action is automatic. A future device test requires an approved maintenance window and a designated target. Because no sanitized successful or failed write-response capture exists, the first approved test must capture and sanitize the response and compare it with the static response parser before any broader rollout.
 
 ## Safety statement
 
-Offline development and tests never contacted `/dev/avtrans_socket`, changed a setting, restarted the appliance, switched an outlet, or wrote firmware. Vendor firmware, raw captures, credentials, sessions, private backups, and production token data remain outside Git and release artifacts.
+Offline development and tests have not contacted `/dev/avtrans_socket`, changed a setting, restarted the appliance, switched an outlet, changed a password, or written firmware. Vendor firmware, raw captures, credentials, sessions, private backups, and production token data remain outside Git and release artifacts.

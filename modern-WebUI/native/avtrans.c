@@ -27,6 +27,11 @@ static void set_error(char *error, unsigned int size, const char *format, ...) {
     va_end(arguments);
 }
 
+static void secure_zero(void *memory, size_t size) {
+    volatile unsigned char *cursor = (volatile unsigned char *)memory;
+    while (size-- > 0U) *cursor++ = 0U;
+}
+
 
 static int read_credentials(const char *path, char username[129], char password[257],
                             char *error, unsigned int error_size) {
@@ -156,9 +161,10 @@ static int exchange(const char *socket_path, const char *request,
 }
 
 
-int pm3000_fetch_topology(const char *socket_path, const char *credentials_path,
-                          unsigned char **response, size_t *response_length,
-                          char *error, unsigned int error_size) {
+static int fetch_page(const char *socket_path, const char *credentials_path,
+                      const char *page_path, unsigned char **response,
+                      size_t *response_length, char *error,
+                      unsigned int error_size) {
     char username[129], password[257], escaped_user[650], escaped_password[1300];
     char login[MAX_REQUEST], topology[MAX_REQUEST], logout[MAX_REQUEST], sid[129];
     unsigned char *login_response = NULL, *logout_response = NULL;
@@ -170,10 +176,10 @@ int pm3000_fetch_topology(const char *socket_path, const char *credentials_path,
         xml_escape(password, escaped_password, sizeof(escaped_password)) != 0) goto cleanup;
     if (snprintf(login, sizeof(login),
         "<avtrans><sid/><action>login</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>units.topology</path></paths><payload><section structure=\"login\">"
+        "<paths><path>%s</path></paths><payload><section structure=\"login\">"
         "<parameter id=\"username\" structure=\"RWtext\"><value>%s</value></parameter>"
         "<parameter id=\"password\" structure=\"password\"><value>%s</value></parameter>"
-        "</section></payload></avtrans>", escaped_user, escaped_password) >= (int)sizeof(login)) goto cleanup;
+        "</section></payload></avtrans>", page_path, escaped_user, escaped_password) >= (int)sizeof(login)) goto cleanup;
     memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));
     if (exchange(socket_path, login, &login_response, &login_length, error, error_size) != 0 ||
         pm3000_xml_login_sid(login_response, login_length, sid) != 0) {
@@ -181,7 +187,7 @@ int pm3000_fetch_topology(const char *socket_path, const char *credentials_path,
     }
     if (snprintf(topology, sizeof(topology),
         "<avtrans><sid>%s</sid><action>get</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>units.topology</path></paths></avtrans>", sid) >= (int)sizeof(topology) ||
+        "<paths><path>%s</path></paths></avtrans>", sid, page_path) >= (int)sizeof(topology) ||
         snprintf(logout, sizeof(logout),
         "<avtrans><sid>%s</sid><action>logout</action><agents><src>wmi</src><dest>controller</dest></agents>"
         "<paths><path>login</path></paths></avtrans>", sid) >= (int)sizeof(logout)) goto cleanup;
@@ -199,6 +205,21 @@ cleanup:
     return result;
 }
 
+int pm3000_fetch_topology(const char *socket_path, const char *credentials_path,
+                          unsigned char **response, size_t *response_length,
+                          char *error, unsigned int error_size) {
+    return fetch_page(socket_path, credentials_path, "units.topology", response,
+                      response_length, error, error_size);
+}
+
+int pm3000_fetch_pdus(const char *socket_path, const char *credentials_path,
+                      unsigned char **response, size_t *response_length,
+                      char *error, unsigned int error_size) {
+    return fetch_page(socket_path, credentials_path,
+                      "units.powermanagement.pdu_management", response,
+                      response_length, error, error_size);
+}
+
 int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_path,
                                const char *outlet_id, const char *revision,
                                const char *action, char *error,
@@ -211,10 +232,13 @@ int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_
     unsigned char *action_response = NULL, *logout_response = NULL;
     size_t login_length = 0, topology_length = 0, action_length = 0, logout_length = 0;
     int result = -1, resolution;
+    const char *controller_action;
     error[0] = '\0';
-    set_error(error, error_size, "outlet action contract unverified");
-    return -1;
-    if ((strcmp(action, "on") != 0 && strcmp(action, "off") != 0 && strcmp(action, "cycle") != 0) ||
+    if (strcmp(action, "on") == 0) controller_action = "targPowerOn";
+    else if (strcmp(action, "off") == 0) controller_action = "targPowerOff";
+    else if (strcmp(action, "cycle") == 0) controller_action = "targCycle";
+    else controller_action = NULL;
+    if (controller_action == NULL ||
         read_credentials(credentials_path, username, password, error, error_size) != 0 ||
         xml_escape(username, escaped_user, sizeof(escaped_user)) != 0 ||
         xml_escape(password, escaped_password, sizeof(escaped_password)) != 0) goto cleanup_action;
@@ -244,7 +268,7 @@ int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_
         snprintf(request, sizeof(request),
         "<avtrans><sid>%s</sid><action>%s</action><agents><src>wmi</src><dest>controller</dest></agents>"
         "<paths><path>units.topology</path></paths><payload><section structure=\"table\" id=\"topologyTable\">"
-        "<array id=\"%s\"></array></section></payload></avtrans>", sid, action, escaped_identity) >= (int)sizeof(request)) goto logout_action;
+        "<array id=\"%s\"></array></section></payload></avtrans>", sid, controller_action, escaped_identity) >= (int)sizeof(request)) goto logout_action;
     {
         int dispatched = 0;
         if (exchange_internal(socket_path, request, &action_response, &action_length,
@@ -253,8 +277,8 @@ int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_
             goto logout_action;
         }
     }
-    if (!pm3000_xml_confirm(action_response, action_length, action,
-                            "units.topology")) {
+    if (pm3000_confirm_outlet_action(action_response, (unsigned long)action_length,
+                                     identity, action) != 0) {
         set_error(error, error_size, "controller action outcome unknown");
         result = 3;
         goto logout_action;
@@ -343,9 +367,10 @@ done:
     return result;
 }
 
-int pm3000_fetch_topology_session(const char *socket_path, const char *sid,
-                                  unsigned char **response, size_t *response_length,
-                                  char *error, unsigned int error_size) {
+static int fetch_session_page(const char *socket_path, const char *sid,
+                              const char *page_path, unsigned char **response,
+                              size_t *response_length, char *error,
+                              unsigned int error_size) {
     char escaped_sid[650], request[MAX_REQUEST];
     error[0] = '\0';
     *response = NULL;
@@ -353,9 +378,42 @@ int pm3000_fetch_topology_session(const char *socket_path, const char *sid,
     if (xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0 ||
         snprintf(request, sizeof(request),
                  "<avtrans><sid>%s</sid><action>get</action><agents><src>wmi</src><dest>controller</dest></agents>"
-                 "<paths><path>units.topology</path></paths></avtrans>", escaped_sid) >= (int)sizeof(request))
+                 "<paths><path>%s</path></paths></avtrans>", escaped_sid, page_path) >= (int)sizeof(request))
         return -1;
     return exchange(socket_path, request, response, response_length, error, error_size);
+}
+
+int pm3000_fetch_topology_session(const char *socket_path, const char *sid,
+                                  unsigned char **response, size_t *response_length,
+                                  char *error, unsigned int error_size) {
+    return fetch_session_page(socket_path, sid, "units.topology", response,
+                              response_length, error, error_size);
+}
+
+int pm3000_fetch_pdus_session(const char *socket_path, const char *sid,
+                               unsigned char **response, size_t *response_length,
+                               char *error, unsigned int error_size) {
+    return fetch_session_page(socket_path, sid,
+                               "units.powermanagement.pdu_management", response,
+                               response_length, error, error_size);
+}
+
+int pm3000_fetch_dsview_setting_session(const char *socket_path, const char *sid,
+                                         unsigned char **response,
+                                         size_t *response_length, char *error,
+                                         unsigned int error_size) {
+    return fetch_session_page(socket_path, sid,
+                              "units.applianceSettings.security.SecurityDSView",
+                              response, response_length, error, error_size);
+}
+
+int pm3000_fetch_nis_setting_session(const char *socket_path, const char *sid,
+                                     unsigned char **response,
+                                     size_t *response_length, char *error,
+                                     unsigned int error_size) {
+    return fetch_session_page(socket_path, sid,
+                              "units.authentication.authenticationservers.nis",
+                              response, response_length, error, error_size);
 }
 
 int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
@@ -366,10 +424,13 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
     unsigned char *topology = NULL, *response = NULL;
     size_t topology_length = 0U, response_length = 0U;
     int resolution, result = -1;
+    const char *controller_action;
     error[0] = '\0';
-    set_error(error, error_size, "outlet action contract unverified");
-    return -1;
-    if ((strcmp(action, "on") != 0 && strcmp(action, "off") != 0 && strcmp(action, "cycle") != 0) ||
+    if (strcmp(action, "on") == 0) controller_action = "targPowerOn";
+    else if (strcmp(action, "off") == 0) controller_action = "targPowerOff";
+    else if (strcmp(action, "cycle") == 0) controller_action = "targCycle";
+    else controller_action = NULL;
+    if (controller_action == NULL ||
         pm3000_fetch_topology_session(socket_path, sid, &topology, &topology_length,
                                       error, error_size) != 0) goto done;
     resolution = pm3000_resolve_outlet_identity(topology, (unsigned long)topology_length,
@@ -382,7 +443,7 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
                  "<avtrans><sid>%s</sid><action>%s</action><agents><src>wmi</src><dest>controller</dest></agents>"
                  "<paths><path>units.topology</path></paths><payload><section structure=\"table\" id=\"topologyTable\">"
                  "<array id=\"%s\"></array></section></payload></avtrans>",
-                 escaped_sid, action, escaped_identity) >= (int)sizeof(request))
+                 escaped_sid, controller_action, escaped_identity) >= (int)sizeof(request))
         goto done;
     {
         int dispatched = 0;
@@ -392,8 +453,8 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
             goto done;
         }
     }
-    if (!pm3000_xml_confirm(response, response_length, action,
-                            "units.topology")) {
+    if (pm3000_confirm_outlet_action(response, (unsigned long)response_length,
+                                     identity, action) != 0) {
         set_error(error, error_size, "controller action outcome unknown");
         result = 3;
         goto done;
@@ -401,6 +462,209 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
     result = 0;
 done:
     free(topology);
+    free(response);
+    return result;
+}
+
+int pm3000_apply_pdu_action_session(const char *socket_path, const char *sid,
+                                    const char *pdu_id, const char *revision,
+                                    const char *action, char *error,
+                                    unsigned int error_size) {
+    char escaped_sid[650], request[MAX_REQUEST], identity[256], escaped_identity[1300];
+    unsigned char *pdus = NULL, *response = NULL;
+    size_t pdus_length = 0U, response_length = 0U;
+    int resolution, dispatched = 0, result = -1;
+    error[0] = '\0';
+    if ((strcmp(action, "on") != 0 && strcmp(action, "off") != 0 && strcmp(action, "cycle") != 0) ||
+        pm3000_fetch_pdus_session(socket_path, sid, &pdus, &pdus_length,
+                                  error, error_size) != 0) goto done_pdu;
+    resolution = pm3000_resolve_pdu_identity(pdus, (unsigned long)pdus_length,
+                                              pdu_id, revision, identity,
+                                              sizeof(identity), error, error_size);
+    if (resolution != 0) { result = resolution; goto done_pdu; }
+    if (xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0 ||
+        xml_escape(identity, escaped_identity, sizeof(escaped_identity)) != 0 ||
+        snprintf(request, sizeof(request),
+                 "<avtrans><sid>%s</sid><action>%s</action><agents><src>wmi</src><dest>controller</dest></agents>"
+                 "<paths><path>units.powermanagement.pdu_management</path></paths><payload>"
+                 "<section structure=\"table\" id=\"pdu_devices_table\"><array id=\"%s\"></array>"
+                 "</section></payload></avtrans>", escaped_sid, action, escaped_identity) >= (int)sizeof(request))
+        goto done_pdu;
+    if (exchange_internal(socket_path, request, &response, &response_length, &dispatched,
+                          error, error_size) != 0) {
+        result = dispatched ? 3 : -1; goto done_pdu;
+    }
+    if (pm3000_confirm_pdu_action(response, (unsigned long)response_length,
+                                  identity, action) != 0) {
+        set_error(error, error_size, "controller PDU action outcome unknown");
+        result = 3; goto done_pdu;
+    }
+    result = 0;
+done_pdu:
+    free(pdus); free(response);
+    return result;
+}
+
+int pm3000_apply_pdu_action(const char *socket_path, const char *credentials_path,
+                            const char *pdu_id, const char *revision,
+                            const char *action, char *error,
+                            unsigned int error_size) {
+    char username[129], password[257], sid[129];
+    unsigned char *navigation = NULL;
+    size_t navigation_length = 0U;
+    int result = -1;
+    if (read_credentials(credentials_path, username, password, error, error_size) != 0) return -1;
+    if (pm3000_login_session(socket_path, username, password, sid, &navigation,
+                             &navigation_length, error, error_size) != 0) goto done_service_pdu;
+    result = pm3000_apply_pdu_action_session(socket_path, sid, pdu_id, revision,
+                                             action, error, error_size);
+    {
+        char logout_error[160] = {0};
+        if (pm3000_logout_session(socket_path, sid, logout_error, sizeof(logout_error)) != 0 && result == 0) {
+            set_error(error, error_size, "controller logout rejected"); result = 3;
+        }
+    }
+done_service_pdu:
+    memset(password, 0, sizeof(password)); free(navigation);
+    return result;
+}
+
+int pm3000_change_password_session(const char *socket_path, const char *sid,
+                                   const char *old_password,
+                                   const char *new_password,
+                                   const char *confirmation,
+                                   char *error, unsigned int error_size) {
+    char escaped_sid[650], escaped_old[1300], escaped_new[1300],
+         escaped_confirmation[1300], request[MAX_REQUEST];
+    unsigned char *response = NULL;
+    size_t response_length = 0U;
+    int dispatched = 0, result = -1;
+    error[0] = '\0';
+    memset(escaped_old, 0, sizeof(escaped_old));
+    memset(escaped_new, 0, sizeof(escaped_new));
+    memset(escaped_confirmation, 0, sizeof(escaped_confirmation));
+    memset(request, 0, sizeof(request));
+    if (old_password[0] == '\0' || new_password[0] == '\0' ||
+        strcmp(new_password, confirmation) != 0 ||
+        xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0 ||
+        xml_escape(old_password, escaped_old, sizeof(escaped_old)) != 0 ||
+        xml_escape(new_password, escaped_new, sizeof(escaped_new)) != 0 ||
+        xml_escape(confirmation, escaped_confirmation,
+                   sizeof(escaped_confirmation)) != 0 ||
+        snprintf(request, sizeof(request),
+                 "<avtrans><sid>%s</sid><action>save</action><agents><src>wmi</src><dest>controller</dest></agents>"
+                 "<paths><path>units.change_password</path></paths><payload><section structure=\"form\">"
+                 "<parameter id=\"oldpassword\" structure=\"password\"><value>%s</value></parameter>"
+                 "<parameter id=\"newpassword\" structure=\"password\"><value>%s</value></parameter>"
+                 "<parameter id=\"confirmpassword\" structure=\"password\"><value>%s</value></parameter>"
+                 "</section></payload></avtrans>", escaped_sid, escaped_old,
+                 escaped_new, escaped_confirmation) >= (int)sizeof(request))
+        goto done_password;
+    if (exchange_internal(socket_path, request, &response, &response_length,
+                          &dispatched, error, error_size) != 0) {
+        result = dispatched ? 3 : -1;
+        goto done_password;
+    }
+    if (!pm3000_xml_password_changed(response, response_length)) {
+        set_error(error, error_size, "controller password outcome unknown");
+        result = 3;
+        goto done_password;
+    }
+    result = 0;
+done_password:
+    secure_zero(escaped_old, sizeof(escaped_old));
+    secure_zero(escaped_new, sizeof(escaped_new));
+    secure_zero(escaped_confirmation, sizeof(escaped_confirmation));
+    secure_zero(request, sizeof(request));
+    free(response);
+    return result;
+}
+
+int pm3000_save_dsview_setting_session(const char *socket_path, const char *sid,
+                                       int allow_dsview, char *error,
+                                       unsigned int error_size) {
+    char escaped_sid[650], request[MAX_REQUEST];
+    unsigned char *response = NULL;
+    size_t response_length = 0U;
+    int dispatched = 0, result = -1;
+    static const char path[] = "units.applianceSettings.security.SecurityDSView";
+    error[0] = '\0';
+    if ((allow_dsview != 0 && allow_dsview != 1) ||
+        xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0 ||
+        snprintf(request, sizeof(request),
+                 "<avtrans><sid>%s</sid><action>save</action><agents><src>wmi</src><dest>controller</dest></agents>"
+                 "<paths><path>%s</path></paths><payload><section structure=\"form\">"
+                 "<parameter id=\"allowDSView\" structure=\"checkbox\"><value>%s</value></parameter>"
+                 "</section></payload></avtrans>", escaped_sid, path,
+                 allow_dsview ? "true" : "false") >= (int)sizeof(request))
+        return -1;
+    if (exchange_internal(socket_path, request, &response, &response_length,
+                          &dispatched, error, error_size) != 0) {
+        result = dispatched ? 3 : -1;
+        goto done_dsview;
+    }
+    {
+        int confirmed = 0;
+        if (pm3000_xml_dsview_value(response, response_length, path,
+                                     &confirmed) != 0 ||
+            confirmed != allow_dsview) {
+            set_error(error, error_size, "controller did not confirm the DSView setting");
+            result = 3;
+            goto done_dsview;
+        }
+    }
+    result = 0;
+done_dsview:
+    memset(request, 0, sizeof(request));
+    free(response);
+    return result;
+}
+
+int pm3000_save_nis_setting_session(const char *socket_path, const char *sid,
+                                    const char *domain_name,
+                                    const char *address, char *error,
+                                    unsigned int error_size) {
+    char escaped_sid[650], escaped_domain[512], escaped_address[512];
+    char request[MAX_REQUEST];
+    unsigned char *response = NULL;
+    size_t response_length = 0U;
+    int dispatched = 0, result = -1;
+    static const char path[] = "units.authentication.authenticationservers.nis";
+    error[0] = '\0';
+    if (sid == NULL || domain_name == NULL || address == NULL ||
+        domain_name[0] == '\0' || address[0] == '\0' ||
+        strlen(domain_name) >= 100U || strlen(address) >= 100U ||
+        xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0 ||
+        xml_escape(domain_name, escaped_domain, sizeof(escaped_domain)) != 0 ||
+        xml_escape(address, escaped_address, sizeof(escaped_address)) != 0 ||
+        snprintf(request, sizeof(request),
+                 "<avtrans><sid>%s</sid><action>save</action><agents><src>wmi</src><dest>controller</dest></agents>"
+                 "<paths><path>%s</path></paths><payload><section structure=\"form\">"
+                 "<parameter id=\"domainname\" structure=\"text\"><value>%s</value></parameter>"
+                 "<parameter id=\"address\" structure=\"text\"><value>%s</value></parameter>"
+                 "</section></payload></avtrans>", escaped_sid, path,
+                 escaped_domain, escaped_address) >= (int)sizeof(request))
+        return -1;
+    if (exchange_internal(socket_path, request, &response, &response_length,
+                          &dispatched, error, error_size) != 0) {
+        result = dispatched ? 3 : -1;
+        goto done_nis;
+    }
+    {
+        char confirmed_domain[100], confirmed_address[100];
+        if (pm3000_xml_nis_values(response, response_length, path,
+                                   confirmed_domain, sizeof(confirmed_domain),
+                                   confirmed_address, sizeof(confirmed_address)) != 0 ||
+            strcmp(confirmed_domain, domain_name) != 0 ||
+            strcmp(confirmed_address, address) != 0) {
+            set_error(error, error_size, "controller did not confirm the NIS setting");
+            result = 3;
+            goto done_nis;
+        }
+    }
+    result = 0;
+done_nis:
+    memset(request, 0, sizeof(request));
     free(response);
     return result;
 }

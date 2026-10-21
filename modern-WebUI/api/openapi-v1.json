@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.1.0",
-    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, read-only inventory, and rights-gated outlet actions."
+    "version": "1.2.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, and session-only password change."
   },
   "servers": [
     {
@@ -138,7 +138,7 @@
       ],
       "post": {
         "operationId": "requestOutletAction",
-        "summary": "Validate an outlet action request without dispatching it",
+        "summary": "Dispatch a firmware-derived outlet power action against a freshly resolved topology row",
         "security": [
           {
             "bearerAuth": []
@@ -159,6 +159,17 @@
           }
         },
         "responses": {
+          "204": {
+            "description": "Controller returned validated refreshed topology content.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/BadRequest"
           },
@@ -171,7 +182,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
-
+          "409": {
+            "$ref": "#/components/responses/InventoryChanged"
+          },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
           },
@@ -179,34 +192,13 @@
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "503": {
-            "description": "Outlet dispatch is disabled because the controller action contract is unverified.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "headers": {
-              "Cache-Control": {
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              },
-              "X-Content-Type-Options": {
-                "schema": {
-                  "type": "string",
-                  "const": "nosniff"
-                }
-              }
-            }
+            "$ref": "#/components/responses/BackendUnavailable"
           }
         },
         "x-required-scope": "control",
         "x-outlet-allowlist-behavior": "require-membership",
-        "x-backend-template": "disabled: topology uses targPowerOn|targPowerOff|targCycle while the observed PDU page and firmware detail tables use on|off|cycle",
-        "x-action-contract-status": "unverified-no-dispatch",
+        "x-backend-template": "path=units.topology;table=topologyTable;actions=on:targPowerOn,off:targPowerOff,cycle:targCycle;target=fresh-server-resolved-array-id",
+        "x-action-contract-status": "firmware-derived-fixed-dispatch",
         "x-csrf-required-for-cookie-auth": true
       }
     },
@@ -572,6 +564,368 @@
         "operationId": "deleteSession",
         "x-csrf-required": true
       }
+    },
+    "/api/v1/pdus": {
+      "get": {
+        "operationId": "listPdus",
+        "summary": "List validated PDU inventory from a fresh controller read",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-required-scope": "read",
+        "x-token-policy": "unrestricted-only",
+        "x-backend-template": "action=get;path=units.powermanagement.pdu_management;projection=pdu-list",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/PduCollection"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/pdus/{pduId}/actions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/PduId"
+        }
+      ],
+      "post": {
+        "operationId": "requestPduAction",
+        "summary": "Dispatch a PDU power action against a freshly resolved PDU row",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-required-scope": "control",
+        "x-token-policy": "unrestricted-only",
+        "x-csrf-required-for-cookie-auth": true,
+        "x-max-body-bytes": 1024,
+        "x-backend-template": "path=units.powermanagement.pdu_management;table=pdu_devices_table;actions=on,off,cycle;target=fresh-server-resolved-array-id",
+        "x-action-contract-status": "firmware-derived-fixed-dispatch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutletActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Controller returned validated refreshed PDU-management content.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/InventoryChanged"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/session/password": {
+      "post": {
+        "operationId": "changeSessionPassword",
+        "summary": "Change the password of the currently signed-in PM3000 user",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-required-navigation-path": "units.change_password",
+        "x-csrf-required": true,
+        "x-max-body-bytes": 1024,
+        "x-backend-template": "action=save;path=units.change_password;form=change_password_form;responsePath=units.change_password.changedPassword",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Controller returned the validated changed-password content page.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/security/dsview": {
+      "get": {
+        "operationId": "getDsviewSecuritySetting",
+        "summary": "Read the DSView HTTPS allowance",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current setting",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DsviewSecuritySetting"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceDsviewSecuritySetting",
+        "summary": "Replace the DSView HTTPS allowance through the fixed firmware form",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DsviewSecuritySetting"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Setting confirmed by the controller",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/authentication/nis": {
+      "get": {
+        "operationId": "getNisAuthenticationSetting",
+        "summary": "Read the complete NIS server setting",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current setting",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NisAuthenticationSetting"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceNisAuthenticationSetting",
+        "summary": "Replace the complete NIS server setting",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NisAuthenticationSetting"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Setting confirmed by the controller",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -596,6 +950,14 @@
         "description": "Project-owned opaque identifier resolved only through the current inventory.",
         "schema": {
           "$ref": "#/components/schemas/OutletId"
+        }
+      },
+      "PduId": {
+        "name": "pduId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/PduId"
         }
       }
     },
@@ -749,10 +1111,9 @@
           "not_acceptable",
           "unsupported_media_type",
           "payload_too_large",
-          "inventory_stale",
+          "inventory_changed",
           "backend_unavailable",
           "backend_protocol_error",
-          "action_contract_unverified",
           "action_outcome_unknown",
           "internal_error",
           "last_administrator",
@@ -957,6 +1318,162 @@
             }
           }
         }
+      },
+      "Pdu": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "vendor",
+          "model",
+          "position",
+          "outletsOn",
+          "outletCount",
+          "currentAmps",
+          "powerWatts",
+          "alarm",
+          "availableActions"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/PduId"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "vendor": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outletsOn": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "outletCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currentAmps": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "powerWatts": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "alarm": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "availableActions": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/OutletAction"
+            }
+          }
+        }
+      },
+      "PduCollection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "apiVersion",
+          "inventoryRevision",
+          "pdus"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "v1"
+          },
+          "inventoryRevision": {
+            "$ref": "#/components/schemas/InventoryRevision"
+          },
+          "pdus": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "$ref": "#/components/schemas/Pdu"
+            }
+          }
+        }
+      },
+      "PasswordChangeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 3,
+        "maxProperties": 3,
+        "required": [
+          "oldPassword",
+          "newPassword",
+          "confirmation"
+        ],
+        "properties": {
+          "oldPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "writeOnly": true
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "writeOnly": true
+          },
+          "confirmation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "writeOnly": true
+          }
+        }
+      },
+      "DsviewSecuritySetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "allowDSView"
+        ],
+        "properties": {
+          "allowDSView": {
+            "type": "boolean"
+          }
+        }
+      },
+      "NisAuthenticationSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "domainName",
+          "address"
+        ],
+        "properties": {
+          "domainName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 99,
+            "pattern": "^[A-Za-z0-9._-]+$"
+          },
+          "address": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 99,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        }
       }
     },
     "responses": {
@@ -998,24 +1515,6 @@
       },
       "UnsupportedMediaType": {
         "description": "The request is not unencoded UTF-8 application/json.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/ApiError"
-            }
-          }
-        },
-        "headers": {
-          "Cache-Control": {
-            "$ref": "#/components/headers/CacheControlNoStore"
-          },
-          "X-Content-Type-Options": {
-            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
-          }
-        }
-      },
-      "InventoryStale": {
-        "description": "The supplied inventory revision does not match the current validated identity mapping.",
         "content": {
           "application/json": {
             "schema": {
@@ -1257,6 +1756,42 @@
               "code": "token_store_unavailable",
               "message": "Token administration is unavailable."
             }
+          }
+        }
+      },
+      "PduCollection": {
+        "description": "Current validated PDU inventory.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PduCollection"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+          }
+        }
+      },
+      "InventoryChanged": {
+        "description": "The submitted inventory revision is stale; refresh before retrying.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "X-Content-Type-Options": {
+            "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
           }
         }
       }

@@ -67,7 +67,7 @@ tmp=$releases/.$release_id.stage6-tmp
 config_dir=/etc/apache2/conf.d
 config=$config_dir/pm3000-revive.conf
 work=/tmp/stage6-install-$$
-for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
+for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/pm3000-rest /etc/apache2 "$config_dir"; do
     [ ! -L "$parent" ] || { echo "unsafe parent symlink: $parent" >&2; exit 1; }
 done
 [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { echo "transaction temporary exists" >&2; exit 1; }
@@ -161,6 +161,14 @@ atomic_helper=$work/pm3000-atomic-publish
 cp "$packaged_helper" "$atomic_helper"
 chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
+"$atomic_helper" --verify-private-directory "$root/rest" || { echo "unsafe or missing REST private directory" >&2; exit 1; }
+"$atomic_helper" --verify-private-directory /etc/pm3000-rest || { echo "unsafe or missing credentials directory" >&2; exit 1; }
+for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do
+    "$atomic_helper" --verify-private-regular "$prerequisite" || {
+        echo "unsafe or missing write-capable runtime prerequisite: $prerequisite" >&2
+        exit 1
+    }
+done
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
     bin/pm3000-atomic-publish bin/pm3000-rest web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$tmp/$member" || {

@@ -123,6 +123,26 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (argc == 3 && strcmp(argv[1], "--verify-private-regular") == 0) {
+        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW);
+        if (file_fd < 0) {
+            perror("open private regular file");
+            return 1;
+        }
+        if (fstat(file_fd, &source) != 0 || !S_ISREG(source.st_mode)
+                || source.st_nlink != 1 || source.st_uid != geteuid()
+                || (source.st_mode & 07777) != 0600) {
+            fprintf(stderr, "file is not trusted owner-only storage\n");
+            close(file_fd);
+            return 1;
+        }
+        if (close(file_fd) != 0) {
+            perror("close private regular file");
+            return 1;
+        }
+        return 0;
+    }
+
     if (argc == 3 && strcmp(argv[1], "--verify-regular") == 0) {
         int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW);
         if (file_fd < 0) {

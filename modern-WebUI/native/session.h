@@ -30,6 +30,7 @@ int pm3000_session_load(const char *directory, const char *identifier,
 int pm3000_session_delete(const char *directory, const char *identifier,
                           char *error, unsigned int error_size);
 int pm3000_session_csrf_matches(const pm3000_session *session, const char *value);
+int pm3000_session_has_path(const pm3000_session *session, const char *path);
 int pm3000_session_write_json(FILE *output, const pm3000_session *session);
 
 #endif

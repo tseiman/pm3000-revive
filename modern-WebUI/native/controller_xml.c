@@ -10,11 +10,25 @@
 #define XML_MAX_TEXT 255U
 #define XML_MAX_ATTRS 32U
 #define XML_MAX_PATHS 64U
+#define XML_MAX_PARAMETERS 128U
 
 struct frame {
     char name[XML_MAX_NAME + 1U];
+    char id[XML_MAX_TEXT + 1U];
+    char structure[XML_MAX_NAME + 1U];
     char text[XML_MAX_TEXT + 1U];
     size_t text_length;
+};
+
+struct parameter_value {
+    char form[XML_MAX_TEXT + 1U];
+    char parameter[XML_MAX_TEXT + 1U];
+    char structure[XML_MAX_NAME + 1U];
+    char container_name[XML_MAX_NAME + 1U];
+    char container_id[XML_MAX_TEXT + 1U];
+    char container_structure[XML_MAX_NAME + 1U];
+    unsigned int direct_form_child;
+    char value[XML_MAX_TEXT + 1U];
 };
 
 struct document {
@@ -38,6 +52,12 @@ struct document {
     unsigned int power_on;
     unsigned int power_off;
     unsigned int power_cycle;
+    unsigned int password_changed_section;
+    unsigned int password_info_form;
+    unsigned int password_title;
+    unsigned int password_message;
+    struct parameter_value parameter_values[XML_MAX_PARAMETERS];
+    unsigned int parameter_value_count;
 };
 
 static int valid_utf8(const unsigned char *input, size_t length) {
@@ -153,6 +173,16 @@ static int has_ancestor(const struct document *document, const char *name) {
     return 0;
 }
 
+static const char *ancestor_form_id(const struct document *document) {
+    size_t index = document->depth;
+    while (index > 0U) {
+        const struct frame *frame = &document->stack[--index];
+        if (strcmp(frame->name, "section") == 0 &&
+            strcmp(frame->structure, "form") == 0) return frame->id;
+    }
+    return NULL;
+}
+
 static int remember_navigation_path(struct document *document,
                                     const char *path) {
     unsigned int index;
@@ -173,6 +203,32 @@ static int close_element(struct document *document, const char *name) {
     if (strcmp(name, "path") == 0 &&
         !(document->depth == 3U && ancestor_is(document, 2U, "paths") &&
           ancestor_is(document, 3U, "avtrans"))) return -1;
+    if (strcmp(name, "value") == 0 && document->depth >= 2U &&
+        strcmp(document->stack[document->depth - 2U].name, "parameter") == 0 &&
+        has_ancestor(document, "payload")) {
+        const char *form = ancestor_form_id(document);
+        struct frame *parameter = &document->stack[document->depth - 2U];
+        if (form != NULL) {
+            struct parameter_value *record;
+            if (form[0] == '\0' || parameter->id[0] == '\0' ||
+                document->parameter_value_count >= XML_MAX_PARAMETERS) return -1;
+            record = &document->parameter_values[document->parameter_value_count++];
+            strcpy(record->form, form);
+            strcpy(record->parameter, parameter->id);
+            strcpy(record->structure, parameter->structure);
+            if (document->depth >= 3U) {
+                const struct frame *container = &document->stack[document->depth - 3U];
+                strcpy(record->container_name, container->name);
+                strcpy(record->container_id, container->id);
+                strcpy(record->container_structure, container->structure);
+                record->direct_form_child =
+                    strcmp(container->name, "section") == 0 &&
+                    strcmp(container->id, form) == 0 &&
+                    strcmp(container->structure, "form") == 0;
+            }
+            strcpy(record->value, frame->text);
+        }
+    }
     if (document->depth == 2U && strcmp(name, "action") == 0) {
         if (++document->actions != 1U) return -1;
         strcpy(document->action, frame->text);
@@ -241,6 +297,30 @@ static int start_element(struct document *document, int *self_closing) {
         if (++document->payloads != 1U) return -1;
         strcpy(document->payload_structure, structure);
     }
+    strcpy(frame->id, id);
+    strcpy(frame->structure, structure);
+    if (document->depth == 2U && strcmp(frame->name, "section") == 0 &&
+        strcmp(id, "changedPassword") == 0 && strcmp(structure, "standard") == 0 &&
+        strcmp(document->stack[1].name, "payload") == 0)
+        ++document->password_changed_section;
+    else if (document->depth == 3U && strcmp(frame->name, "section") == 0 &&
+             strcmp(id, "infoForm") == 0 && strcmp(structure, "form") == 0 &&
+             strcmp(document->stack[2].name, "section") == 0 &&
+             strcmp(document->stack[2].id, "changedPassword") == 0 &&
+             strcmp(document->stack[2].structure, "standard") == 0)
+        ++document->password_info_form;
+    else if (document->depth == 4U && strcmp(frame->name, "parameter") == 0 &&
+             strcmp(id, "title") == 0 && strcmp(structure, "title") == 0 &&
+             strcmp(document->stack[3].name, "section") == 0 &&
+             strcmp(document->stack[3].id, "infoForm") == 0 &&
+             strcmp(document->stack[3].structure, "form") == 0)
+        ++document->password_title;
+    else if (document->depth == 5U && strcmp(frame->name, "parameter") == 0 &&
+             strcmp(id, "message") == 0 && strcmp(structure, "notice") == 0 &&
+             strcmp(document->stack[4].name, "parameter") == 0 &&
+             strcmp(document->stack[4].id, "title") == 0 &&
+             strcmp(document->stack[4].structure, "title") == 0)
+        ++document->password_message;
     if (strcmp(frame->name, "section") == 0 && strcmp(structure, "nav") == 0 &&
         path[0] != '\0' && has_ancestor(document, "payload")) {
         if (remember_navigation_path(document, path) != 0) return -1;
@@ -282,7 +362,9 @@ static int parse_document(const unsigned char *xml, size_t length,
                      (strcmp(frame->name, "action") == 0 ||
                       strcmp(frame->name, "sid") == 0)) ||
                     (document->depth == 3U && strcmp(frame->name, "path") == 0 &&
-                     ancestor_is(document, 2U, "paths"))) {
+                     ancestor_is(document, 2U, "paths")) ||
+                    (strcmp(frame->name, "value") == 0 &&
+                     ancestor_form_id(document) != NULL)) {
                     if (decode(document->input + start, document->offset - start,
                                frame->text, &frame->text_length,
                                sizeof(frame->text)) != 0) return -1;
@@ -374,4 +456,112 @@ int pm3000_xml_confirm(const unsigned char *xml, size_t length,
     return parse_document(xml, length, &document) == 0 &&
            strcmp(document.action, action) == 0 &&
            strcmp(document.path, path) == 0;
+}
+
+int pm3000_xml_content_result(const unsigned char *xml, size_t length,
+                              const char *path) {
+    struct document document;
+    return parse_document(xml, length, &document) == 0 &&
+           strcmp(document.action, "content") == 0 &&
+           strcmp(document.path, path) == 0 && document.payloads == 1U;
+}
+
+int pm3000_xml_password_changed(const unsigned char *xml, size_t length) {
+    struct document document;
+    return parse_document(xml, length, &document) == 0 &&
+           strcmp(document.action, "content") == 0 &&
+           strcmp(document.path, "units.change_password.changedPassword") == 0 &&
+           document.payloads == 1U && document.password_changed_section == 1U &&
+           document.password_info_form == 1U && document.password_title == 1U &&
+           document.password_message == 1U;
+}
+
+int pm3000_xml_form_value(const unsigned char *xml, size_t length,
+                           const char *path, const char *form,
+                           const char *parameter, char *value,
+                           size_t value_size) {
+    struct document document;
+    unsigned int index, matches = 0U;
+    const char *selected = NULL;
+    if (value_size == 0U || parse_document(xml, length, &document) != 0 ||
+        strcmp(document.action, "content") != 0 ||
+        strcmp(document.path, path) != 0 || document.payloads != 1U)
+        return -1;
+    for (index = 0U; index < document.parameter_value_count; ++index) {
+        const struct parameter_value *record = &document.parameter_values[index];
+        if (strcmp(record->form, form) != 0 ||
+            strcmp(record->parameter, parameter) != 0) continue;
+        if (++matches != 1U) return -1;
+        selected = record->value;
+    }
+    if (matches != 1U || selected == NULL || strlen(selected) >= value_size)
+        return -1;
+    strcpy(value, selected);
+    return 0;
+}
+
+int pm3000_xml_boolean_form_value(const unsigned char *xml, size_t length,
+                                  const char *path, const char *form,
+                                  const char *parameter, int *value) {
+    char parsed[6];
+    if (pm3000_xml_form_value(xml, length, path, form, parameter,
+                              parsed, sizeof(parsed)) != 0) return -1;
+    if (strcmp(parsed, "true") == 0) *value = 1;
+    else if (strcmp(parsed, "false") == 0) *value = 0;
+    else return -1;
+    return 0;
+}
+
+int pm3000_xml_dsview_value(const unsigned char *xml, size_t length,
+                            const char *path, int *value) {
+    struct document document;
+    unsigned int index, matches = 0U;
+    const struct parameter_value *selected = NULL;
+    if (parse_document(xml, length, &document) != 0 ||
+        strcmp(document.action, "content") != 0 ||
+        strcmp(document.path, path) != 0 || document.payloads != 1U) return -1;
+    for (index = 0U; index < document.parameter_value_count; ++index) {
+        const struct parameter_value *record = &document.parameter_values[index];
+        if (strcmp(record->form, "dsviewControl") != 0 ||
+            strcmp(record->parameter, "allowDSView") != 0) continue;
+        if (++matches != 1U) return -1;
+        selected = record;
+    }
+    if (matches != 1U || selected == NULL ||
+        strcmp(selected->structure, "checkbox") != 0 ||
+        strcmp(selected->container_name, "parameter") != 0 ||
+        strcmp(selected->container_id, "dsview") != 0 ||
+        strcmp(selected->container_structure, "title") != 0) return -1;
+    if (strcmp(selected->value, "true") == 0) *value = 1;
+    else if (strcmp(selected->value, "false") == 0) *value = 0;
+    else return -1;
+    return 0;
+}
+
+int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
+                          const char *path, char *domain, size_t domain_size,
+                          char *address, size_t address_size) {
+    struct document document;
+    unsigned int index, found = 0U;
+    if (domain_size == 0U || address_size == 0U ||
+        parse_document(xml, length, &document) != 0 ||
+        strcmp(document.action, "content") != 0 ||
+        strcmp(document.path, path) != 0 || document.payloads != 1U) return -1;
+    for (index = 0U; index < document.parameter_value_count; ++index) {
+        const struct parameter_value *record = &document.parameter_values[index];
+        const char *expected;
+        char *output;
+        size_t capacity;
+        if (strcmp(record->form, "nisserver") != 0) continue;
+        if (found >= 2U) return -1;
+        expected = found == 0U ? "domainname" : "address";
+        output = found == 0U ? domain : address;
+        capacity = found == 0U ? domain_size : address_size;
+        if (strcmp(record->parameter, expected) != 0 ||
+            strcmp(record->structure, "text") != 0 ||
+            !record->direct_form_child || strlen(record->value) >= capacity) return -1;
+        strcpy(output, record->value);
+        ++found;
+    }
+    return found == 2U ? 0 : -1;
 }

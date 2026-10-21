@@ -1,4 +1,5 @@
 #include "avtrans.h"
+#include "controller_xml.h"
 #include "identifiers.h"
 #include "projector.h"
 #include "session.h"
@@ -9,8 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-enum { ACTION_CONTRACT_UNVERIFIED = 4 };
 
 static void cgi_headers_extra(unsigned int status, const char *reason,
                               const char *cookie) {
@@ -174,6 +173,147 @@ static int parse_action_request(const unsigned char *body, size_t length,
     }
     json_space(&cursor);
     return cursor.offset == cursor.length && have_action && have_revision ? 0 : -1;
+}
+
+static int parse_boolean_setting_request(const unsigned char *body, size_t length,
+                                         const char *expected_key, int *value) {
+    struct json_cursor cursor = {body, length, 0U};
+    char key[64];
+    int parsed;
+    if (length == 0U || json_character(&cursor, '{') != 0) return -1;
+    json_space(&cursor);
+    if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+        strcmp(key, expected_key) != 0 || json_character(&cursor, ':') != 0)
+        return -1;
+    json_space(&cursor);
+    if (cursor.offset + 4U <= cursor.length &&
+        memcmp(cursor.data + cursor.offset, "true", 4U) == 0) {
+        parsed = 1; cursor.offset += 4U;
+    } else if (cursor.offset + 5U <= cursor.length &&
+               memcmp(cursor.data + cursor.offset, "false", 5U) == 0) {
+        parsed = 0; cursor.offset += 5U;
+    } else return -1;
+    if (json_character(&cursor, '}') != 0) return -1;
+    json_space(&cursor);
+    if (cursor.offset != cursor.length) return -1;
+    *value = parsed;
+    return 0;
+}
+
+struct json_string_field {
+    const char *key;
+    char *value;
+    size_t capacity;
+    int allow_empty;
+    int seen;
+};
+
+static int parse_string_object(const unsigned char *body, size_t length,
+                               struct json_string_field *fields,
+                               size_t field_count) {
+    struct json_cursor cursor = {body, length, 0U};
+    int first = 1;
+    size_t index;
+    if (field_count == 0U || field_count > 16U || length == 0U ||
+        json_character(&cursor, '{') != 0) return -1;
+    for (index = 0U; index < field_count; ++index) fields[index].seen = 0;
+    for (;;) {
+        char key[64];
+        struct json_string_field *field = NULL;
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset; break;
+        }
+        if (!first && json_character(&cursor, ',') != 0) return -1;
+        first = 0; json_space(&cursor);
+        if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+            json_character(&cursor, ':') != 0) return -1;
+        for (index = 0U; index < field_count; ++index)
+            if (strcmp(key, fields[index].key) == 0) field = &fields[index];
+        if (field == NULL || field->seen) return -1;
+        json_space(&cursor);
+        if (json_ascii_string(&cursor, field->value, field->capacity) != 0 ||
+            (!field->allow_empty && field->value[0] == '\0')) return -1;
+        field->seen = 1;
+    }
+    json_space(&cursor);
+    if (cursor.offset != cursor.length) return -1;
+    for (index = 0U; index < field_count; ++index)
+        if (!fields[index].seen) return -1;
+    return 0;
+}
+
+static int parse_nis_setting_request(const unsigned char *body, size_t length,
+                                     char domain_name[100], char address[100]) {
+    struct json_string_field fields[] = {
+        {"domainName", domain_name, 100U, 0, 0},
+        {"address", address, 100U, 0, 0}
+    };
+    return parse_string_object(body, length, fields,
+                               sizeof(fields) / sizeof(fields[0]));
+}
+
+static int valid_nis_component(const char *value, int allow_colon) {
+    const unsigned char *cursor = (const unsigned char *)value;
+    if (*cursor == '\0') return 0;
+    while (*cursor != '\0') {
+        unsigned char c = *cursor++;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ||
+              (allow_colon && c == ':'))) return 0;
+    }
+    return 1;
+}
+
+static int write_json_ascii_string(FILE *output, const char *value) {
+    const unsigned char *cursor = (const unsigned char *)value;
+    if (fputc('"', output) == EOF) return -1;
+    while (*cursor != '\0') {
+        unsigned char c = *cursor++;
+        if (c < 0x20U || c >= 0x80U) return -1;
+        if (c == '"' || c == '\\') {
+            if (fputc('\\', output) == EOF) return -1;
+        }
+        if (fputc((int)c, output) == EOF) return -1;
+    }
+    return fputc('"', output) == EOF ? -1 : 0;
+}
+
+static int parse_password_request(const unsigned char *body, size_t length,
+                                  char old_password[257], char new_password[257],
+                                  char confirmation[257]) {
+    struct json_cursor cursor = {body, length, 0U};
+    int first = 1, have_old = 0, have_new = 0, have_confirmation = 0;
+    if (length == 0U || json_character(&cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[32];
+        char *destination = NULL;
+        int *present = NULL;
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset;
+            break;
+        }
+        if (!first && json_character(&cursor, ',') != 0) return -1;
+        first = 0;
+        json_space(&cursor);
+        if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+            json_character(&cursor, ':') != 0) return -1;
+        json_space(&cursor);
+        if (strcmp(key, "oldPassword") == 0) {
+            destination = old_password; present = &have_old;
+        } else if (strcmp(key, "newPassword") == 0) {
+            destination = new_password; present = &have_new;
+        } else if (strcmp(key, "confirmation") == 0) {
+            destination = confirmation; present = &have_confirmation;
+        } else return -1;
+        if (*present || json_ascii_string(&cursor, destination, 257U) != 0 ||
+            destination[0] == '\0') return -1;
+        *present = 1;
+    }
+    json_space(&cursor);
+    return cursor.offset == cursor.length && have_old && have_new &&
+           have_confirmation && strcmp(new_password, confirmation) == 0 ? 0 : -1;
 }
 
 static int ascii_equal_range(const char *value, size_t length, const char *literal) {
@@ -585,6 +725,200 @@ static int run_cgi(void) {
             configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"));
     }
     if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/session/password") == 0) {
+        unsigned char body[1025] = {0};
+        char old_password[257] = {0}, new_password[257] = {0}, confirmation[257] = {0};
+        size_t body_length = 0U;
+        int body_result, result;
+        if (strcmp(method, "POST") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for password changes.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized", "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, "units.change_password"))
+            return cgi_error(403U, "Forbidden", "forbidden", "Password change is not permitted.");
+        if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+            return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+        body_result = read_json_body(body, 1024U, &body_length);
+        if (body_result == 415) {
+            memset(body, 0, sizeof(body));
+            return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                             "Content-Type must be application/json without content encoding.");
+        }
+        if (body_result == 413) {
+            memset(body, 0, sizeof(body));
+            return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                             "The request body is too large.");
+        }
+        if (body_result != 0 || parse_password_request(
+                body, body_length, old_password, new_password, confirmation) != 0) {
+            memset(body, 0, sizeof(body));
+            memset(old_password, 0, sizeof(old_password));
+            memset(new_password, 0, sizeof(new_password));
+            memset(confirmation, 0, sizeof(confirmation));
+            return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
+        }
+        result = pm3000_change_password_session(
+            configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+            gui_session.sid, old_password, new_password, confirmation,
+            error, sizeof(error));
+        memset(body, 0, sizeof(body));
+        memset(old_password, 0, sizeof(old_password));
+        memset(new_password, 0, sizeof(new_password));
+        memset(confirmation, 0, sizeof(confirmation));
+        if (result == 3)
+            return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                             "The password change may have been dispatched; do not retry automatically.");
+        if (result != 0)
+            return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                             "The password change was not confirmed.");
+        cgi_headers(204U, "No Content");
+        return ferror(stdout) ? 1 : 0;
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/settings/security/dsview") == 0) {
+        static const char permission[] = "units.applianceSettings.security.SecurityDSView";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this browser setting.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "DSView security configuration is not permitted.");
+        if (strcmp(method, "GET") == 0) {
+            int allow_dsview;
+            if (pm3000_fetch_dsview_setting_session(
+                    socket_path, gui_session.sid, &response, &response_length,
+                    error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The DSView setting backend was unavailable.");
+            if (pm3000_xml_dsview_value(response, response_length,
+                                         permission, &allow_dsview) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The DSView setting response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fprintf(stdout, "{\"allowDSView\":%s}\n", allow_dsview ? "true" : "false");
+            return ferror(stdout) ? 1 : 0;
+        }
+        if (strcmp(method, "PUT") == 0) {
+            unsigned char body[1025] = {0};
+            size_t body_length = 0U;
+            int allow_dsview, body_result, result;
+            if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+                return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+            body_result = read_json_body(body, 1024U, &body_length);
+            if (body_result == 415)
+                return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                                 "Content-Type must be application/json without content encoding.");
+            if (body_result == 413)
+                return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                                 "The request body is too large.");
+            if (body_result != 0 || parse_boolean_setting_request(
+                    body, body_length, "allowDSView", &allow_dsview) != 0)
+                return cgi_error(400U, "Bad Request", "bad_request",
+                                 "Expected exactly one allowDSView boolean.");
+            result = pm3000_save_dsview_setting_session(
+                socket_path, gui_session.sid, allow_dsview, error, sizeof(error));
+            if (result == 3)
+                return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                                 "The DSView setting may have been dispatched; do not retry automatically.");
+            if (result != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The DSView setting was not confirmed.");
+            cgi_headers(204U, "No Content");
+            return ferror(stdout) ? 1 : 0;
+        }
+        return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/settings/authentication/nis") == 0) {
+        static const char permission[] = "units.authentication.authenticationservers.nis";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this browser setting.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "NIS configuration is not permitted.");
+        if (strcmp(method, "GET") == 0) {
+            char domain_name[100], address[100];
+            if (pm3000_fetch_nis_setting_session(
+                    socket_path, gui_session.sid, &response, &response_length,
+                    error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The NIS setting backend was unavailable.");
+            if (pm3000_xml_nis_values(response, response_length, permission,
+                                       domain_name, sizeof(domain_name),
+                                       address, sizeof(address)) != 0 ||
+                !valid_nis_component(domain_name, 0) ||
+                !valid_nis_component(address, 1)) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The NIS setting response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"domainName\":", stdout);
+            if (write_json_ascii_string(stdout, domain_name) != 0) return 1;
+            fputs(",\"address\":", stdout);
+            if (write_json_ascii_string(stdout, address) != 0) return 1;
+            fputs("}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+        if (strcmp(method, "PUT") == 0) {
+            unsigned char body[1025] = {0};
+            size_t body_length = 0U;
+            char domain_name[100], address[100];
+            int body_result, result;
+            if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+                return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+            body_result = read_json_body(body, 1024U, &body_length);
+            if (body_result == 415)
+                return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                                 "Content-Type must be application/json without content encoding.");
+            if (body_result == 413)
+                return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                                 "The request body is too large.");
+            if (body_result != 0 || parse_nis_setting_request(
+                    body, body_length, domain_name, address) != 0 ||
+                !valid_nis_component(domain_name, 0) ||
+                !valid_nis_component(address, 1))
+                return cgi_error(400U, "Bad Request", "bad_request",
+                                 "Expected complete non-empty domainName and address strings.");
+            result = pm3000_save_nis_setting_session(
+                socket_path, gui_session.sid, domain_name, address,
+                error, sizeof(error));
+            memset(domain_name, 0, sizeof(domain_name));
+            memset(address, 0, sizeof(address));
+            if (result == 3)
+                return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                                 "The NIS setting may have been dispatched; do not retry automatically.");
+            if (result != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The NIS setting was not confirmed.");
+            cgi_headers(204U, "No Content");
+            return ferror(stdout) ? 1 : 0;
+        }
+        return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    }
+    if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/tokens") == 0 ||
          strncmp(path, "/api/v1/tokens/", 15U) == 0)) {
         const pm3000_session *session = NULL;
@@ -600,6 +934,78 @@ static int run_cgi(void) {
             method, path,
             configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
             session);
+    }
+    if (method != NULL && path != NULL && strcmp(path, "/api/v1/pdus") == 0) {
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+        header = getenv("HTTP_AUTHORIZATION");
+        if (header != NULL) {
+            if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' || strchr(header + 7, ' ') != NULL)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+            auth_result = pm3000_authorize(configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+                                           header + 7, "read", NULL, &authorization, error, sizeof(error));
+            if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
+            if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
+            if (!authorization.authorized || !authorization.unrestricted)
+                return cgi_error(403U, "Forbidden", "forbidden", "PDU inventory requires an unrestricted token.");
+            auth_result = pm3000_fetch_pdus(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                                            configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
+                                            &response, &response_length, error, sizeof(error));
+        } else {
+            if (load_request_session(configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"), 1, &gui_session) != 0)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Session or Bearer authentication required.");
+            if (!pm3000_session_has_path(&gui_session, "units.powermanagement.pdu_management"))
+                return cgi_error(403U, "Forbidden", "forbidden", "PDU inventory is not permitted.");
+            auth_result = pm3000_fetch_pdus_session(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                                                    gui_session.sid, &response, &response_length, error, sizeof(error));
+        }
+        if (auth_result != 0) { free(response); return cgi_error(503U, "Service Unavailable", "backend_unavailable", "PDU backend unavailable."); }
+        if (pm3000_project_pdus_bytes(response, (unsigned long)response_length, NULL, error, sizeof(error)) != 0) {
+            free(response); return cgi_error(502U, "Bad Gateway", "backend_protocol_error", "Backend response rejected.");
+        }
+        cgi_headers(200U, "OK");
+        auth_result = pm3000_project_pdus_bytes(response, (unsigned long)response_length, stdout, error, sizeof(error));
+        free(response); return auth_result == 0 && !ferror(stdout) ? 0 : 1;
+    }
+    if (method != NULL && path != NULL && strlen(path) == 43U &&
+        memcmp(path, "/api/v1/pdus/", 13U) == 0 && memcmp(path + 35U, "/actions", 8U) == 0) {
+        char pdu_id[23], action[6], revision[23]; unsigned char body[1025]; size_t body_length = 0U; int body_result;
+        if (!opaque_outlet_id(path + 13U, pdu_id)) return cgi_error(404U, "Not Found", "not_found", "PDU not found.");
+        if (strcmp(method, "POST") != 0) return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+        body_result = read_json_body(body, 1024U, &body_length);
+        if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type", "Content-Type must be application/json without content encoding.");
+        if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large", "The request body is too large.");
+        if (body_result != 0 || parse_action_request(body, body_length, action, revision) != 0)
+            return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
+        header = getenv("HTTP_AUTHORIZATION");
+        if (header != NULL) {
+            if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' || strchr(header + 7, ' ') != NULL)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
+            auth_result = pm3000_authorize(configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+                                           header + 7, "control", NULL, &authorization, error, sizeof(error));
+            if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
+            if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
+            if (!authorization.authorized || !authorization.unrestricted)
+                return cgi_error(403U, "Forbidden", "forbidden", "PDU actions require an unrestricted control token.");
+            auth_result = pm3000_apply_pdu_action(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                                                  configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
+                                                  pdu_id, revision, action, error, sizeof(error));
+        } else {
+            if (load_request_session(configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"), 1, &gui_session) != 0)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Session or Bearer authentication required.");
+            if (!pm3000_session_has_path(&gui_session, "units.powermanagement.pdu_management"))
+                return cgi_error(403U, "Forbidden", "forbidden", "PDU control is not permitted.");
+            if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+                return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+            auth_result = pm3000_apply_pdu_action_session(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                                                          gui_session.sid, pdu_id, revision, action, error, sizeof(error));
+        }
+        if (auth_result == 1) return cgi_error(409U, "Conflict", "inventory_changed", "Inventory changed; refresh before retrying.");
+        if (auth_result == 2) return cgi_error(404U, "Not Found", "not_found", "PDU not found.");
+        if (auth_result == 4) return cgi_error(403U, "Forbidden", "forbidden", "PDU control is not permitted.");
+        if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The PDU action may have been dispatched; do not retry automatically.");
+        if (auth_result != 0) return cgi_error(503U, "Service Unavailable", "backend_unavailable", "PDU action was not confirmed.");
+        cgi_headers(204U, "No Content"); return ferror(stdout) ? 1 : 0;
     }
     if (method != NULL && path != NULL && strlen(path) == 46U &&
         memcmp(path, "/api/v1/outlets/", 16U) == 0 && memcmp(path + 38U, "/actions", 8U) == 0) {
@@ -622,7 +1028,10 @@ static int run_cgi(void) {
             if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
             if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
             if (!authorization.authorized) return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet action.");
-            auth_result = ACTION_CONTRACT_UNVERIFIED;
+            auth_result = pm3000_apply_outlet_action(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
+                outlet_id, revision, action, error, sizeof(error));
         } else {
             if (load_request_session(
                     configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
@@ -633,11 +1042,10 @@ static int run_cgi(void) {
                 return cgi_error(403U, "Forbidden", "forbidden", "Power control is not permitted.");
             if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
                 return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
-            auth_result = ACTION_CONTRACT_UNVERIFIED;
+            auth_result = pm3000_apply_outlet_action_session(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                gui_session.sid, outlet_id, revision, action, error, sizeof(error));
         }
-        if (auth_result == ACTION_CONTRACT_UNVERIFIED)
-            return cgi_error(503U, "Service Unavailable", "action_contract_unverified",
-                             "Outlet actions are disabled until an observed controller contract is available.");
         if (auth_result == 1) return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
         if (auth_result == 2) return cgi_error(409U, "Conflict", "inventory_changed", "Refresh the outlet inventory and retry.");
         if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The outlet action may have been dispatched; do not retry automatically.");

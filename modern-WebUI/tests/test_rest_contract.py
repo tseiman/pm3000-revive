@@ -26,11 +26,16 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/outlets",
                 "/api/v1/outlets/{outletId}",
                 "/api/v1/outlets/{outletId}/actions",
+                "/api/v1/pdus",
+                "/api/v1/pdus/{pduId}/actions",
                 "/api/v1/tokens",
                 "/api/v1/tokens/{tokenId}",
                 "/api/v1/tokens/{tokenId}/disable",
                 "/api/v1/tokens/{tokenId}/enable",
                 "/api/v1/session",
+                "/api/v1/session/password",
+                "/api/v1/settings/security/dsview",
+                "/api/v1/settings/authentication/nis",
             },
             set(paths),
         )
@@ -38,11 +43,49 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get"}, set(paths["/api/v1/outlets"]))
         self.assertEqual({"get", "parameters"}, set(paths["/api/v1/outlets/{outletId}"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/outlets/{outletId}/actions"]))
+        self.assertEqual({"get"}, set(paths["/api/v1/pdus"]))
+        self.assertEqual({"post", "parameters"}, set(paths["/api/v1/pdus/{pduId}/actions"]))
         self.assertEqual({"get", "post"}, set(paths["/api/v1/tokens"]))
         self.assertEqual({"delete", "parameters"}, set(paths["/api/v1/tokens/{tokenId}"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/disable"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/tokens/{tokenId}/enable"]))
         self.assertEqual({"post", "get", "delete"}, set(paths["/api/v1/session"]))
+        self.assertEqual({"post"}, set(paths["/api/v1/session/password"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/security/dsview"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/authentication/nis"]))
+
+    def test_all_operation_security_requirements_reference_defined_schemes(self) -> None:
+        schemes = set(self.contract["components"]["securitySchemes"])
+        for path, item in self.contract["paths"].items():
+            for method, operation in item.items():
+                if method == "parameters":
+                    continue
+                for requirement in operation.get("security", []):
+                    with self.subTest(path=path, method=method):
+                        self.assertLessEqual(set(requirement), schemes)
+
+    def test_dsview_setting_is_a_closed_session_only_boolean_resource(self) -> None:
+        route = self.contract["paths"]["/api/v1/settings/security/dsview"]
+        self.assertEqual([{"cookieAuth": []}], route["get"]["security"])
+        self.assertEqual([{"cookieAuth": []}], route["put"]["security"])
+        self.assertIn("502", route["get"]["responses"])
+        self.assertEqual(
+            "#/components/responses/BackendProtocolError",
+            route["get"]["responses"]["502"]["$ref"],
+        )
+        nis_get = self.contract["paths"]["/api/v1/settings/authentication/nis"]["get"]
+        self.assertEqual(
+            "#/components/responses/BackendProtocolError",
+            nis_get["responses"]["502"]["$ref"],
+        )
+        schema = self.contract["components"]["schemas"]["DsviewSecuritySetting"]
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(["allowDSView"], schema["required"])
+        self.assertEqual("boolean", schema["properties"]["allowDSView"]["type"])
+        self.assertEqual(
+            {"204", "400", "401", "403", "405", "413", "415", "503"},
+            set(route["put"]["responses"]),
+        )
 
     def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
         paths = self.contract["paths"]
@@ -153,18 +196,26 @@ class RestV1ContractTests(unittest.TestCase):
             derivation["testVectors"],
         )
 
-    def test_action_shape_is_closed_but_backend_dispatch_is_disabled(self) -> None:
+    def test_power_action_contracts_are_closed_and_dispatched_through_fixed_templates(self) -> None:
         operation = self.contract["paths"]["/api/v1/outlets/{outletId}/actions"]["post"]
         self.assertEqual(1024, operation["x-max-body-bytes"])
         self.assertEqual(
-            "disabled: topology uses targPowerOn|targPowerOff|targCycle while the observed PDU page and firmware detail tables use on|off|cycle",
+            "path=units.topology;table=topologyTable;actions=on:targPowerOn,off:targPowerOff,cycle:targCycle;target=fresh-server-resolved-array-id",
             operation["x-backend-template"],
         )
-        self.assertEqual("unverified-no-dispatch", operation["x-action-contract-status"])
+        self.assertEqual("firmware-derived-fixed-dispatch", operation["x-action-contract-status"])
         self.assertEqual(
-            {"400", "401", "403", "404", "413", "415", "503"},
+            {"204", "400", "401", "403", "404", "409", "413", "415", "503"},
             set(operation["responses"]),
         )
+
+        pdu = self.contract["paths"]["/api/v1/pdus/{pduId}/actions"]["post"]
+        self.assertEqual(
+            "path=units.powermanagement.pdu_management;table=pdu_devices_table;actions=on,off,cycle;target=fresh-server-resolved-array-id",
+            pdu["x-backend-template"],
+        )
+        self.assertEqual("firmware-derived-fixed-dispatch", pdu["x-action-contract-status"])
+        self.assertTrue(pdu["x-csrf-required-for-cookie-auth"])
 
         schema = self.contract["components"]["schemas"]["OutletActionRequest"]
         self.assertFalse(schema["additionalProperties"])
@@ -179,6 +230,9 @@ class RestV1ContractTests(unittest.TestCase):
             "Outlet",
             "OutletCollection",
             "OutletActionRequest",
+            "Pdu",
+            "PduCollection",
+            "PasswordChangeRequest",
             "TokenCreateRequest",
             "TokenMetadata",
             "TokenCreated",
@@ -200,10 +254,9 @@ class RestV1ContractTests(unittest.TestCase):
                 "not_acceptable",
                 "unsupported_media_type",
                 "payload_too_large",
-                "inventory_stale",
+                "inventory_changed",
                 "backend_unavailable",
                 "backend_protocol_error",
-                "action_contract_unverified",
                 "action_outcome_unknown",
                 "internal_error",
                 "last_administrator",
@@ -219,6 +272,8 @@ class RestV1ContractTests(unittest.TestCase):
             ("/api/v1/outlets", "get"),
             ("/api/v1/outlets/{outletId}", "get"),
             ("/api/v1/outlets/{outletId}/actions", "post"),
+            ("/api/v1/pdus", "get"),
+            ("/api/v1/pdus/{pduId}/actions", "post"),
             ("/api/v1/tokens", "get"),
             ("/api/v1/tokens", "post"),
             ("/api/v1/tokens/{tokenId}", "delete"),
@@ -234,6 +289,10 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual([], session["post"]["security"])
         self.assertEqual([{"cookieAuth": []}], session["get"]["security"])
         self.assertEqual([{"cookieAuth": []}], session["delete"]["security"])
+        self.assertEqual(
+            [{"cookieAuth": []}],
+            self.contract["paths"]["/api/v1/session/password"]["post"]["security"],
+        )
 
     def test_every_response_disables_caching_and_content_sniffing(self) -> None:
         responses = list(self.contract["components"]["responses"].items())
@@ -271,7 +330,6 @@ class RestV1ContractTests(unittest.TestCase):
             "firmware upgrade",
             "rebootpdu",
             "reset hardware",
-            "/pdus/{",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, serialized)

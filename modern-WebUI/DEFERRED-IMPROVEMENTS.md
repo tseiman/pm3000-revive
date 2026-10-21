@@ -1,25 +1,40 @@
 # Deferred improvements
 
-This file records deliberately deferred work that is not required for the compact, safe core release.
+This file records work intentionally left outside the currently implemented, narrow contracts.
 
-## Requires controlled PM3000 fixtures
+## Statically classified but not yet implemented
 
-- **Legacy menu modernization:** the complete 43-page leaf-menu cross-check, current implementation status, static read/write evidence, and prioritized safe expansion are documented in [`docs/MENU-CAPABILITY-CROSSCHECK.md`](docs/MENU-CAPABILITY-CROSSCHECK.md).
-- **Writable Network Settings page:** firmware evidence proves the `save` action, path `units.network.networkSettings`, and primary fields (`hostname`, `primarydns`, `secondarydns`, `domain`, `enableIpv6`, `dhcpv6-dns`, `dhcpv6-domain`). A sanitized real `get` response and matching browser `save` request are still required because checkbox sections contain additional server-generated parameters. Do not issue a partial save: it may remove hidden state or make the appliance unreachable.
-- **Additional writable settings:** capture one sanitized `get`/`save` pair per page before implementing a closed serializer. Never add a generic Avtrans proxy.
-- **Power action contract:** backend dispatch is disabled. The observed topology page exposes `targPowerOn`, `targPowerOff`, and `targCycle`; plain `on`, `off`, and `cycle` belong to PDU/outlet detail tables. Capture sanitized browser-generated action requests and success/error responses before selecting a path/table/action tuple or enabling a designated test outlet.
-- **Navigation capability comparison:** compare the modern fixed allowlist with at least one administrator and one restricted PM3000 account.
+- The full offline mutation inventory is summarized in `docs/MENU-CAPABILITY-CROSSCHECK.md`. Of the 20 fixed `COMPLETE_STATIC` settings contracts, DSView security (C03) and NIS (C14) are now implemented; the other 18 fixed settings and 10 fixed create/save flows remain.
+- Implement each fixed contract as a separate typed REST operation or a compile-time allowlisted schema entry. Never expose a client-selected Avtrans path, action, form ID, parameter structure, or raw XML body.
+- Settings that preserve hidden, conditional, or server-generated state must begin with a fresh GET and carry forward only fields allowed by the exact firmware contract. Reject ambiguous variants rather than submitting a partial form.
+
+## Requires runtime object/form resolution
+
+The following families have dynamic row IDs, drilldown `pathvar` values, memberships, or model-specific forms. They remain blocked until a fresh GET can unambiguously select the concrete contract and preserve all required state:
+
+- PDU model-specific configuration and thresholds.
+- Outlet-group membership and group CRUD.
+- Device-detail, route, host, firewall-rule, SNMP-entry, user, group, event, and active-session mutations.
+- Any edit/delete action whose target depends on a selected runtime table row.
+
+A generic Avtrans write proxy is prohibited.
+
+## Requires controlled PM3000 response fixtures
+
+- Outlet and PDU request contracts are implemented from closed static maps. `on`/`off` require operation-specific state confirmation; `cycle` remains an unknown outcome after dispatch because no stable read-back state exists. Password change requires the exact statically derived success-form hierarchy. Before release, capture sanitized successful, validation-error, authorization-error, pending-warning, and cycle responses during an explicitly approved device test to validate these response semantics empirically.
+- Compare modern navigation and action availability with at least one administrator and one restricted PM3000 account.
 
 ## Non-critical UI improvements
 
 - Add localized labels after the appliance-language contract is observed.
-- Add modern read/write forms for settings only after their closed contracts are captured.
-- Replace the legacy fallback links incrementally; keep `/` available throughout migration.
+- Replace legacy fallback pages incrementally as typed settings endpoints become available.
 - Improve compact/mobile navigation for accounts with many authorized legacy pages.
 
 ## Explicitly out of scope
 
+- Setup wizard.
 - Firmware upload or upgrade.
+- Reboot, shutdown, hardware reset, factory default, and automatic configuration restore.
 - Automatic rollback.
 - Browser login with REST bearer tokens.
 - A second user or role database.

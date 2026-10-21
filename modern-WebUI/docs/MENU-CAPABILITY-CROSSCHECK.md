@@ -12,7 +12,7 @@ This document compares the firmware 2.0.1.23 navigation model with the compact m
 
 No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed.
 
-The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Only `units.topology` has a corresponding native capability: read-only outlet inventory. `units.powermanagement.pdu_management` is temporarily aliased to that outlet view but has no PDU API, projector, or native page and is therefore not implemented. Every other visible legacy leaf opens a local placeholder. The legacy UI remains separately available at `/`.
+The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), and self-service password change (`units.change_password`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
 
 ## Classification
 
@@ -29,8 +29,8 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 ### Access and power management
 
 - **Access** — `units.topology`
-  - **Current:** Implemented read view. `on`, `off`, and `cycle` request input is validated, but browser controls and backend dispatch are disabled.
-  - **Evidence:** the observed topology response proves row identities and controls, but its action IDs are `targPowerOn`, `targPowerOff`, and `targCycle`. Plain `on`, `off`, and `cycle` occur on the observed PDU page and firmware-defined detail tables, so they cannot be inferred as the topology outlet-action contract. No action request or response was observed.
+  - **Current:** Implemented inventory and rights-gated `on`, `off`, and `cycle` controls.
+  - **Evidence:** the firmware maps public operations to topology controls `targPowerOn`, `targPowerOff`, and `targCycle`. Dispatch uses `units.topology`, `topologyTable`, a fresh server-resolved row ID, inventory revision, and strict expected-content response parsing.
   - **Not implemented:** serial viewer and outlet `lock`/`unlock`.
   - **Decision:** keep `lock`/`unlock` deferred until explicitly requested and captured; serial viewer is not suitable for the compact REST UI without a separately designed streaming boundary.
 
@@ -40,9 +40,9 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** firmware is excluded. Reboot, shutdown, factory default, restore, and viewer launch remain deferred because they are destructive, stateful, or require dynamic multi-step/session contracts. A configuration-download function may be considered separately after a sanitized request/response fixture.
 
 - **PDUs** — `units.powermanagement.pdu_management`
-  - **Current:** Not implemented. The menu is temporarily aliased to the implemented Access/outlet inventory view; there is no `/api/v1/pdus` route, PDU-response projector, or native PDU page.
-  - **Not implemented:** PDU rename, PDU-wide power, reset, factory default, PDU firmware, detailed current/voltage/phase/circuit/environment pages, or threshold settings.
-  - **Decision:** the observed sanitized PDU GET request/response makes model/status/current/power/alarm the safest next implementation. Do not expose the hidden `thresholds` value or backend row ID. Every mutation requires runtime path/row and response fixtures. Firmware remains excluded.
+  - **Current:** Implemented `/api/v1/pdus` inventory and PDU-wide `on`, `off`, and `cycle` controls in a dedicated native page.
+  - **Evidence:** the observed response closes model, vendor, position, outlet count/status, current, power, alarm, row identity, and the three action controls. Dispatch uses `pdu_devices_table`, a fresh server-resolved row ID, inventory revision, and strict expected-content response parsing.
+  - **Not exposed:** hidden `thresholds`, backend row IDs, reset, factory default, PDU firmware, or model-specific detail/configuration forms.
 
 - **Power Settings** — `units.powermanagement.powerprofile_login`
   - **Current:** Placeholder.
@@ -67,9 +67,9 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** read candidate with sensitive-field filtering; writes require a complete form pair because service/profile choices can alter remote access.
 
 - **DSView** — `units.applianceSettings.security.SecurityDSView`
-  - **Current:** Placeholder.
-  - **Static schema:** DSView control form.
-  - **Decision:** read candidate; write requires a complete form pair and explicit remote-management risk review.
+  - **Current:** Implemented as session-only `GET|PUT /api/v1/settings/security/dsview` and a rights-gated browser form. Retained at this scope; no further DSView expansion is prioritized.
+  - **Static schema:** exact boolean `allowDSView` in `dsviewControl`; fixed `save` path and strict content response.
+  - **Decision:** complete replacement only; PM3000 navigation right plus CSRF; no bearer-to-PM3000-right inference.
 
 - **Date and Time** — `units.applianceSettings.date_and_time.date_time`
   - **Current:** Placeholder.
@@ -151,11 +151,15 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 - **TACACS+** — `units.authentication.authenticationservers.Tacacsplus`
 - **LDAP(S)/AD** — `units.authentication.authenticationservers.ldap_ad`
 - **Kerberos** — `units.authentication.authenticationservers.kerberos`
-- **NIS** — `units.authentication.authenticationservers.nis`
 - **DSView server** — `units.authentication.authenticationservers.dsviewsrv`
   - **Current:** All placeholders.
   - **Static contract:** fixed `save` paths and backend schemas are known. RADIUS, TACACS+, and LDAP include secrets, confirmations, conditional mappings, or hidden state.
   - **Decision:** a redacted read summary is possible. No secret value may be returned. Writes remain fixture-gated because an incomplete mutation can lock out all administrators; secret fields must use explicit keep/replace semantics.
+
+- **NIS** — `units.authentication.authenticationservers.nis`
+  - **Current:** Implemented as session-only `GET|PUT /api/v1/settings/authentication/nis` and a rights-gated browser form.
+  - **Static contract:** exact complete `domainname`, `address` form in firmware order; no secrets, hidden state, or runtime choice list.
+  - **Decision:** complete replacement only; closed printable-ASCII values, PM3000 navigation right, CSRF, and strict content response.
 
 ### Users and authorization
 
@@ -214,9 +218,9 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 ### Current-user password
 
 - **Change Password** — `units.change_password`
-  - **Current:** Placeholder.
-  - **Static contract:** `save` with `oldpassword`, `newpassword`, and `confirmpassword`.
-  - **Decision:** this is structurally narrow but not yet enableable. It still requires sanitized request and success/error responses, a structural parser, memory clearing, no logging, CSRF/session binding, and a controlled user-run device test. A password change must not silently leave the browser session in an ambiguous state.
+  - **Current:** Implemented as session-only `/api/v1/session/password` with no Bearer-token access.
+  - **Static contract:** `save` with `oldpassword`, `newpassword`, and `confirmpassword`; expected content path `units.change_password.changedPassword`.
+  - **Safety:** requires the concrete navigation right and CSRF token, rejects mismatched confirmation before backend contact, clears browser/native password buffers, stores no password in browser storage, and reports unexpected post-dispatch responses as an unknown outcome without retry.
 
 ## Prioritized implementation conclusion
 

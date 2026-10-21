@@ -1,6 +1,6 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, tokenRequest: 0, outlets: [], tokens: [], inventoryRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, tokenRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "" };
 const $ = (id) => document.getElementById(id);
-const powerActionsEnabled = false;
+const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
 let loginPending = false;
 let logoutPending = false;
@@ -81,11 +81,12 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.tokenRequest += 1;
-  state.session = null; state.csrf = ""; state.outlets = []; state.tokens = []; state.inventoryRevision = "";
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.tokenRequest += 1;
+  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
-  clearOneTimeSecret(); clear($("outlet-grid")); clear($("token-rows")); clear($("navigation"));
+  clearOneTimeSecret(); clear($("outlet-grid")); clear($("pdu-grid")); clear($("token-rows")); clear($("navigation"));
+  $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = ""; $("password-change-error").textContent = "";
   $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
   setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
   const allowLogin = enableLogin && !tokenIssuancePending;
@@ -125,7 +126,13 @@ function renderNavigation() {
     const button = document.createElement("button"); button.type = "button"; button.className = "nav-item legacy-nav";
     button.style.paddingLeft = `${12 + Math.min(path.split(".").length - 2, 3) * 13}px`;
     button.dataset.path = path; button.textContent = text;
-    button.addEventListener("click", () => switchView(path === "units.topology" || path === "units.powermanagement.pdu_management" ? "outlets" : "legacy", path, text));
+    button.addEventListener("click", () => switchView(
+      path === "units.change_password" ? "password" :
+      path === "units.authentication.authenticationservers.nis" ? "nis" :
+      path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
+      path === "units.powermanagement.pdu_management" ? "pdus" :
+      path === "units.topology" ? "outlets" : "legacy",
+      path, text));
     node.appendChild(button);
   }
   if (state.session.navigation.canManageTokens) {
@@ -137,13 +144,16 @@ function renderNavigation() {
 
 function switchView(view, path = "", label = "") {
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("tokens-view").hidden = view !== "tokens"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("password-change-view").hidden = view !== "password"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
   if (!active && view === "outlets") active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === "units.topology");
   if (active) active.setAttribute("aria-current", "page");
   if (view === "tokens") loadTokens();
+  if (view === "pdus") loadPdus();
+  if (view === "nis") loadNisSetting();
+  if (view === "dsview") loadDsviewSetting();
   if (view === "legacy") { setText("legacy-title", label); setText("legacy-path", path); }
 }
 
@@ -192,6 +202,53 @@ async function loadOutlets() {
   finally { if (request === state.outletRequest) $("refresh-outlets").disabled = false; }
 }
 
+function pduActionButton(pdu, action) {
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
+  button.addEventListener("click", async () => {
+    if (!window.confirm(`${button.textContent} ${pdu.name || `PDU ${pdu.position}`}?`)) return;
+    button.disabled = true;
+    try {
+      await api(`/api/v1/pdus/${encodeURIComponent(pdu.id)}/actions`, { method: "POST", body: JSON.stringify({ action, inventoryRevision: state.pduInventoryRevision }) });
+      toast(`PDU action ${action} accepted.`); await loadPdus();
+    } catch (error) { toast(error.message); button.disabled = false; }
+  });
+  return button;
+}
+
+function renderPdus(collection) {
+  const pdus = Array.isArray(collection.pdus) ? collection.pdus : [];
+  state.pdus = pdus; state.pduInventoryRevision = collection.inventoryRevision || "";
+  const grid = $("pdu-grid"); clear(grid);
+  for (const pdu of pdus) {
+    const article = document.createElement("article"); article.className = "outlet-card";
+    const header = document.createElement("div"); header.className = "outlet-card-header";
+    const position = document.createElement("span"); position.className = "outlet-position"; position.textContent = `PDU ${String(pdu.position).padStart(2, "0")}`;
+    const alarm = document.createElement("span"); alarm.className = `status-chip${String(pdu.alarm).toLowerCase() === "normal" ? "" : " unknown"}`; alarm.textContent = String(pdu.alarm || "Unknown");
+    const title = document.createElement("h3"); title.textContent = pdu.name || `${pdu.vendor} ${pdu.model}`;
+    const model = document.createElement("p"); model.textContent = `${pdu.vendor} ${pdu.model}`;
+    const load = document.createElement("p"); load.textContent = `${pdu.outletsOn}/${pdu.outletCount} outlets on · ${pdu.currentAmps} A · ${pdu.powerWatts} W`;
+    header.append(position, alarm); article.append(header, title, model, load);
+    const available = Array.isArray(pdu.availableActions) ? pdu.availableActions : [];
+    if (powerActionsEnabled && state.session.navigation.canControlPower && available.length !== 0) {
+      const actions = document.createElement("div"); actions.className = "row-actions";
+      for (const action of ["on", "off", "cycle"]) if (available.includes(action)) actions.appendChild(pduActionButton(pdu, action));
+      article.appendChild(actions);
+    }
+    grid.appendChild(article);
+  }
+  setText("pdu-inventory-revision", `Inventory revision ${state.pduInventoryRevision || "—"}`);
+  setText("pdu-updated-at", `Updated ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date())}`);
+  $("pdu-empty").hidden = pdus.length !== 0;
+}
+
+async function loadPdus() {
+  const request = ++state.pduRequest;
+  $("refresh-pdus").disabled = true;
+  try { const payload = await api("/api/v1/pdus"); if (request === state.pduRequest) renderPdus(payload); }
+  catch (error) { if (request === state.pduRequest && state.session) toast(error.message); }
+  finally { if (request === state.pduRequest) $("refresh-pdus").disabled = false; }
+}
+
 function tokenActionButton(record, action) {
   const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "revoke" ? " danger" : ""}`; button.textContent = action === "revoke" ? "Revoke" : record.enabled ? "Disable" : "Enable";
   button.addEventListener("click", async () => {
@@ -222,6 +279,103 @@ async function loadTokens() {
   finally { if (request === state.tokenRequest) $("refresh-tokens").disabled = false; }
 }
 
+async function loadNisSetting() {
+  const request = ++state.nisRequest;
+  const button = $("save-nis"); let loaded = false;
+  button.disabled = true; $("nis-error").textContent = "";
+  try {
+    const payload = await api("/api/v1/settings/authentication/nis");
+    if (request === state.nisRequest) {
+      $("nis-domain").value = payload.domainName;
+      $("nis-address").value = payload.address;
+      loaded = true;
+    }
+  } catch (error) {
+    if (request === state.nisRequest) {
+      $("nis-domain").value = ""; $("nis-address").value = "";
+      if (state.session) $("nis-error").textContent = error.message;
+    }
+  } finally {
+    if (request === state.nisRequest) button.disabled = !loaded;
+  }
+}
+
+$("nis-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("save-nis"); if (button.disabled) return;
+  button.disabled = true; $("nis-error").textContent = "";
+  try {
+    await api("/api/v1/settings/authentication/nis", { method: "PUT", body: JSON.stringify({ domainName: $("nis-domain").value, address: $("nis-address").value }) });
+    toast("NIS setting saved."); await loadNisSetting();
+  } catch (error) {
+    const message = error.message;
+    await loadNisSetting();
+    $("nis-error").textContent = message;
+  }
+});
+
+async function loadDsviewSetting() {
+  const request = ++state.dsviewRequest;
+  const button = $("save-dsview"); let loaded = false;
+  button.disabled = true; $("dsview-error").textContent = "";
+  try {
+    const payload = await api("/api/v1/settings/security/dsview");
+    if (request === state.dsviewRequest) {
+      $("allow-dsview").checked = payload.allowDSView === true;
+      loaded = true;
+    }
+  } catch (error) {
+    if (request === state.dsviewRequest) {
+      $("allow-dsview").checked = false;
+      if (state.session) $("dsview-error").textContent = error.message;
+    }
+  } finally {
+    if (request === state.dsviewRequest) button.disabled = !loaded;
+  }
+}
+
+$("dsview-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("save-dsview"); if (button.disabled) return;
+  button.disabled = true; $("dsview-error").textContent = "";
+  try {
+    await api("/api/v1/settings/security/dsview", { method: "PUT", body: JSON.stringify({ allowDSView: $("allow-dsview").checked }) });
+    toast("DSView setting saved."); await loadDsviewSetting();
+  } catch (error) {
+    const message = error.message;
+    await loadDsviewSetting();
+    $("dsview-error").textContent = message;
+  }
+});
+
+$("password-change-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("submit-password-change");
+  if (button.disabled) return;
+  let oldPassword = $("old-password").value;
+  let newPassword = $("new-password").value;
+  let confirmation = $("confirm-password").value;
+  $("password-change-error").textContent = "";
+  if (newPassword !== confirmation) {
+    $("password-change-error").textContent = "The new passwords do not match.";
+    return;
+  }
+  let requestBody = JSON.stringify({ oldPassword, newPassword, confirmation });
+  oldPassword = ""; newPassword = ""; confirmation = "";
+  $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = "";
+  button.disabled = true;
+  try {
+    const request = api("/api/v1/session/password", { method: "POST", body: requestBody });
+    requestBody = "";
+    await request;
+    toast("Password changed.");
+  } catch (error) {
+    $("password-change-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loginTransition() {
   $("login-error").textContent = ""; state.generation += 1;
   const username = $("username-input").value; let password = $("password-input").value;
@@ -248,7 +402,7 @@ $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);
-}); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-tokens").addEventListener("click", loadTokens);
+}); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-pdus").addEventListener("click", loadPdus); $("refresh-tokens").addEventListener("click", loadTokens);
 $("open-create-token").addEventListener("click", () => { $("create-error").textContent = ""; $("create-token-dialog").showModal(); $("token-label").focus(); });
 $("cancel-create").addEventListener("click", () => $("create-token-dialog").close()); $("close-create-title").addEventListener("click", () => $("create-token-dialog").close());
 $("all-outlets").addEventListener("change", () => { $("token-outlets").disabled = $("all-outlets").checked; if (!$("token-outlets").disabled) $("token-outlets").focus(); });
