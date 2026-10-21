@@ -2,13 +2,15 @@
 
 Stages describe the project lifecycle. Large stages may be split into smaller, independently reviewed milestones. Finish, verify, commit, and push each named milestone before starting the next one. A milestone release is an offline, reproducible repository checkpoint; only Stage 10 is the final appliance cutover and product release.
 
-## Stage 0 — Analysis baseline
+**Legend:** ✅ completed · 🟡 in progress or offline implementation complete with a live-device gate still open · ⬜ pending
+
+## ✅ Stage 0 — Analysis baseline
 
 - Preserve verified architecture, footprint, security boundaries, and unknowns.
 - Publish no vendor payload or private device data.
 - **Deliverables:** `ANALYSIS.md`, this file, `docs/PROTOCOL.md`, `STATUS.md`.
 
-## Stage 1 — Sanitized protocol evidence
+## ✅ Stage 1 — Sanitized protocol evidence
 
 **Status:** complete for the read-only contract. Reviewed `observed-sanitized` firmware 2.0.1.23 fixtures cover login/header, navigation, topology, PDU/outlet inventory, status, and logout. State-changing captures remain deferred to Stage 8 and require explicit hardware approval.
 
@@ -18,7 +20,7 @@ Stages describe the project lifecycle. Large stages may be split into smaller, i
 - Do not transmit outlet actions automatically.
 - **Gate:** no credential/SID data and no unsupported schema assumptions.
 
-## Stage 2 — Strict REST contract
+## ✅ Stage 2 — Strict REST contract
 
 **Status:** complete. The tested OpenAPI contract exposes local health, fixed read-only outlet list/detail projections, and a closed individual-action request shape that Stage 2 always rejects without constructing or sending Avtrans XML.
 
@@ -27,7 +29,7 @@ Stages describe the project lifecycle. Large stages may be split into smaller, i
 - Explicitly exclude PDU-wide actions, reboot, firmware, factory default, and generic configuration.
 - **Gate:** every read request maps to one fixed backend template; health is local-only; Stage 2 actions have no backend template and no success response.
 
-## Stage 3 — Multiple bearer tokens
+## ✅ Stage 3 — Multiple bearer tokens
 
 **Status:** complete for the persistent model, host administration tool, and REST contract. The Stage 4 native adapter must port the validated store reader/writer and authorization semantics; the visual administration submenu remains a Stage 5 deliverable.
 
@@ -36,7 +38,7 @@ Stages describe the project lifecycle. Large stages may be split into smaller, i
 - Create the first admin token via a host-side bootstrap command; expose only closed `admin`-only management operations for the later Web UI submenu.
 - **Gate:** atomic fault-tested persistence retains the previous valid token set after every pre-commit failure and reports post-rename durability uncertainty distinctly.
 
-## Stage 4 — Read-only native adapter
+## ✅ Stage 4 — Read-only native adapter
 
 **Status:** complete. The native adapter, token administration, disabled-action boundary, PPC target, failure semantics, and security/boundary matrix are locally verified and independently reviewed with PASS.
 
@@ -45,7 +47,7 @@ Stages describe the project lifecycle. Large stages may be split into smaller, i
 - Start with inventory and status only.
 - **Gate:** static target verification and fake-controller tests; state-changing code remains disabled.
 
-## Stage 5 — Read-only modern UI
+## ✅ Stage 5 — Read-only modern UI
 
 **Status:** complete. The REST-v1-only Web UI, token administration flows, in-memory secret lifecycle, responsive layout, fake adapter, and Firefox browser gates are locally verified and independently reviewed with PASS.
 
@@ -54,7 +56,7 @@ Stages describe the project lifecycle. Large stages may be split into smaller, i
 - Use safe DOM APIs, keyboard-accessible controls, and compact bundled SVG only where useful.
 - **Gate:** fake-adapter browser check at desktop and narrow widths; release remains within the size budget.
 
-## Stage 6 — Backup-first deployment and rollback
+## ✅ Stage 6 — Backup-first deployment and rollback
 
 **Status:** complete, independently reviewed, committed, and published. The host entry points remain
 simulation-only and fail closed for remote targets. Live SSH/SCP and appliance
@@ -67,7 +69,7 @@ installation remain blocked on the Stage 7 observations below.
 - Never reboot or switch an outlet.
 - **Gate:** isolated failure-injection simulation proves no install write before backup, exact release-tree validation, recovery from real process exits at publication boundaries, and byte-identical rollback.
 
-## Stage 7 — Manual read-only device pilot
+## ✅ Stage 7 — Manual read-only device pilot
 
 **Status:** release `0.1` is the installed read-only pilot and remains the live baseline. The current Stage 9 candidate, including every write-capable route, has not been installed or executed on the appliance. No real setting write or power action has been performed. Backup, rollback, and Apache acceptance gates remain explicit operator checks for every later candidate.
 
@@ -81,7 +83,7 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 - Verify Apache Authorization-header handling rather than assuming it.
 - **Gate:** user-approved read-only report and successful rollback.
 
-## Stage 8 — Individual outlet control
+## 🟡 Stage 8 — Individual outlet control
 
 **Status:** implemented and independently reviewed offline. Outlet and PDU `on`, `off`, and `cycle` use fixed contracts, fresh server-side identity resolution, revisions, rights, and no automatic retry. The live gate remains open because no real device action has been approved or executed.
 
@@ -90,7 +92,7 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 - A timeout after dispatch is reported as an unknown result.
 - **Gate:** the user explicitly chooses a non-critical outlet and approves one manual action at a time.
 
-## Stage 9 — Legacy-function parity
+## 🟡 Stage 9 — Legacy-function parity
 
 **Status:** in progress through the resumable milestones below. Development may continue offline, but no write-capable milestone is considered device-validated until its explicit Stage 8/9 operator gate has been completed.
 
@@ -99,14 +101,14 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 - Never use a generic backend-path executor to obtain apparent parity.
 - **Gate:** user-approved parity matrix; every required function has a focused contract test or an explicit working legacy fallback.
 
-### Stage 9 milestone 1 — Typed read-only system and monitoring
+### ✅ Stage 9 milestone 1 — Typed read-only system and monitoring
 
 **Status:** complete, independently reviewed, committed, and published as `20d7b66`.
 
 - Adds seven session-only typed reads for system information, memory, flash, network devices, IPv4/IPv6 routes, and serial-port statistics.
 - Rejects bearer authentication before backend access and exposes no raw XML, backend IDs, hidden fields, or private serial number.
 
-### Stage 9 milestone 2A — Fixed-form foundation and first revisioned settings
+### ✅ Stage 9 milestone 2A — Fixed-form foundation and first revisioned settings
 
 **Status:** complete, independently reviewed with `BLOCKERS: NO`, committed, and published as `d2c97e6`.
 
@@ -115,23 +117,23 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 - The full suite contains 195 passing tests; strict host C99, OpenAPI, JavaScript, PPC32 big-endian, and QEMU e300c3 gates pass.
 - No real PM3000 setting write was performed; synthetic fixtures do not replace an approved device test.
 
-### Stage 9 milestone 2B — Remaining low-risk fixed settings
+### ⬜ Stage 9 milestone 2B — Remaining low-risk fixed settings
 
 **Status:** next. Add further fixed authentication, policy, logging, and network contracts one bounded resource at a time. Lockout-sensitive writes require a documented recovery path and explicit device-test approval.
 
-### Stage 9 milestone 3 — Static create/save flows
+### ⬜ Stage 9 milestone 3 — Static create/save flows
 
 **Status:** pending. Implement only statically closed create/save contracts with field-specific request, authorization, and success semantics.
 
-### Stage 9 milestone 4 — Runtime-resolved CRUD
+### ⬜ Stage 9 milestone 4 — Runtime-resolved CRUD
 
 **Status:** pending. Dynamic object edits require a fresh validated GET, opaque project IDs, revisions, complete state preservation, and exact operation-specific confirmation.
 
-### Stage 9 milestone 5 — Parity closure
+### ⬜ Stage 9 milestone 5 — Parity closure
 
 **Status:** pending. Reconcile all 43 terminal legacy menu entries as migrated, intentionally retained, or excluded, then repeat complete platform, security, documentation, and independent release review gates.
 
-## Stage 10 — Cutover and release
+## ⬜ Stage 10 — Cutover and release
 
 **Status:** not started. Stage 9 milestone releases are not Stage 10 or proof of live firmware behavior.
 
