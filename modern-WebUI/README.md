@@ -4,7 +4,7 @@ This directory contains the clean-room implementation of a compact modern Web UI
 
 ## Current status
 
-Stage 9 milestone 2A is published and independently reviewed. The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, outlet/PDU inventory and fixed power actions, self-service password change, typed DSView/NIS settings, revisioned Help and Language and Data Buffering settings, and seven typed system/monitoring reads are implemented offline. Release `0.1` remains the installed read-only pilot; none of the current write-capable code has been deployed or run on the appliance. The vendor UI at `/` remains the fallback. Stage 10 cutover and final product release have not started.
+Stage 9 milestone 2A is published and independently reviewed. Milestone 2B is in progress with an offline-only conditional Appliance Logging candidate in the working tree. The backup-first installer, native REST runtime, PM3000-backed Web sessions, rights-filtered navigation, REST-token administration, outlet/PDU inventory and fixed power actions, self-service password change, typed DSView/NIS settings, revisioned Help and Language, Data Buffering, and Appliance Logging settings, and seven typed system/monitoring reads are implemented offline. Release `0.1` remains the installed read-only pilot; none of the current write-capable routes has been installed or executed on the appliance. The vendor UI at `/` remains the fallback. Stage 10 cutover and final product release have not started.
 
 Confirmed legacy/vendor architecture:
 

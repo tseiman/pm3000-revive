@@ -18,41 +18,41 @@ struct fixed_descriptor {
     const unsigned char *json_types;
     unsigned int field_count;
     unsigned int parameter_count;
-    int choice_field;
+    uint32_t choice_field_mask;
 };
 
 static const struct pm3000_xml_fixed_field help_fields[] = {
-    {"applanguage", "combo", NULL},
-    {"url", "RWtext", NULL}
+    {"applanguage", "combo", NULL, NULL},
+    {"url", "RWtext", NULL, NULL}
 };
 static const struct pm3000_xml_fixed_parameter help_parameters[] = {
-    {"applanguage", "combo", NULL},
-    {"url", "RWtext", NULL}
+    {"applanguage", "combo", NULL, NULL},
+    {"url", "RWtext", NULL, NULL}
 };
 static const char *const help_keys[] = {"applianceLanguage", "url"};
 static const unsigned char help_types[] = {0U, 0U};
 
 static const struct pm3000_xml_fixed_field buffering_fields[] = {
-    {"local_size", "RWtext", "local"},
-    {"local_segments", "RWtext", "local"},
-    {"nfs_server", "RWtext", "nfs"},
-    {"nfs_path", "RWtext", "nfs"},
-    {"nfs_size", "RWtext", "nfs"},
-    {"nfs_segments", "RWtext", "nfs"},
-    {"syslog_facility", "combo", "syslog"}
+    {"local_size", "RWtext", "local", NULL},
+    {"local_segments", "RWtext", "local", NULL},
+    {"nfs_server", "RWtext", "nfs", NULL},
+    {"nfs_path", "RWtext", "nfs", NULL},
+    {"nfs_size", "RWtext", "nfs", NULL},
+    {"nfs_segments", "RWtext", "nfs", NULL},
+    {"syslog_facility", "combo", "syslog", NULL}
 };
 static const struct pm3000_xml_fixed_parameter buffering_parameters[] = {
-    {"local", "title", NULL},
-    {"local_size", "RWtext", "local"},
-    {"local_segments", "RWtext", "local"},
-    {"nfs", "title", NULL},
-    {"nfs_notice", "notice", "nfs"},
-    {"nfs_server", "RWtext", "nfs"},
-    {"nfs_path", "RWtext", "nfs"},
-    {"nfs_size", "RWtext", "nfs"},
-    {"nfs_segments", "RWtext", "nfs"},
-    {"syslog", "title", NULL},
-    {"syslog_facility", "combo", "syslog"}
+    {"local", "title", NULL, NULL},
+    {"local_size", "RWtext", "local", NULL},
+    {"local_segments", "RWtext", "local", NULL},
+    {"nfs", "title", NULL, NULL},
+    {"nfs_notice", "notice", "nfs", NULL},
+    {"nfs_server", "RWtext", "nfs", NULL},
+    {"nfs_path", "RWtext", "nfs", NULL},
+    {"nfs_size", "RWtext", "nfs", NULL},
+    {"nfs_segments", "RWtext", "nfs", NULL},
+    {"syslog", "title", NULL, NULL},
+    {"syslog_facility", "combo", "syslog", NULL}
 };
 static const char *const buffering_keys[] = {
     "localSize", "localSegments", "nfsServer", "nfsPath", "nfsSize",
@@ -60,19 +60,60 @@ static const char *const buffering_keys[] = {
 };
 static const unsigned char buffering_types[] = {1U, 1U, 0U, 0U, 1U, 1U, 0U};
 
+static const struct pm3000_xml_fixed_field logging_fields[] = {
+    {"sessionlogenable", "checkbox", "sessiontitle", "title"},
+    {"destination", "combo", "sessionlogenable", "checkbox"},
+    {"enabletimestamp", "combo", "sessionlogenable", "checkbox"},
+    {"alertenable", "checkbox", "sessionlogenable", "checkbox"},
+    {"alertstring1", "RWtext", "alertenable", "checkbox"},
+    {"alertstring2", "RWtext", "alertenable", "checkbox"},
+    {"alertstring3", "RWtext", "alertenable", "checkbox"},
+    {"alertstring4", "RWtext", "alertenable", "checkbox"},
+    {"alertstring5", "RWtext", "alertenable", "checkbox"},
+    {"alertstring6", "RWtext", "alertenable", "checkbox"},
+    {"alertstring7", "RWtext", "alertenable", "checkbox"},
+    {"alertstring8", "RWtext", "alertenable", "checkbox"},
+    {"alertstring9", "RWtext", "alertenable", "checkbox"},
+    {"alertstring10", "RWtext", "alertenable", "checkbox"}
+};
+static const struct pm3000_xml_fixed_parameter logging_parameters[] = {
+    {"sessiontitle", "title", NULL, NULL},
+    {"sessionlogenable", "checkbox", "sessiontitle", "title"},
+    {"notice", "notice", "sessionlogenable", "checkbox"},
+    {"destination", "combo", "sessionlogenable", "checkbox"},
+    {"enabletimestamp", "combo", "sessionlogenable", "checkbox"},
+    {"alertenable", "checkbox", "sessionlogenable", "checkbox"},
+    {"alertstring1", "RWtext", "alertenable", "checkbox"},
+    {"alertstring2", "RWtext", "alertenable", "checkbox"},
+    {"alertstring3", "RWtext", "alertenable", "checkbox"},
+    {"alertstring4", "RWtext", "alertenable", "checkbox"},
+    {"alertstring5", "RWtext", "alertenable", "checkbox"},
+    {"alertstring6", "RWtext", "alertenable", "checkbox"},
+    {"alertstring7", "RWtext", "alertenable", "checkbox"},
+    {"alertstring8", "RWtext", "alertenable", "checkbox"},
+    {"alertstring9", "RWtext", "alertenable", "checkbox"},
+    {"alertstring10", "RWtext", "alertenable", "checkbox"}
+};
+
 static const struct fixed_descriptor help_descriptor = {
     "units.applianceSettings.help", "sessionform", help_fields, help_parameters,
-    help_keys, help_types, 2U, 2U, 0
+    help_keys, help_types, 2U, 2U, UINT32_C(1) << 0
 };
 static const struct fixed_descriptor buffering_descriptor = {
     "units.event_notification.global_settings_databuffering",
     "global_settings_form", buffering_fields, buffering_parameters,
-    buffering_keys, buffering_types, 7U, 11U, 6
+    buffering_keys, buffering_types, 7U, 11U, UINT32_C(1) << 6
+};
+static const struct fixed_descriptor logging_descriptor = {
+    "units.event_notification.sessions", "sessionform", logging_fields,
+    logging_parameters, NULL, NULL, 14U, 16U,
+    (UINT32_C(1) << 1) | (UINT32_C(1) << 2)
 };
 
 static const struct fixed_descriptor *descriptor(pm3000_fixed_form_kind kind) {
     if (kind == PM3000_FORM_HELP_LANGUAGE) return &help_descriptor;
     if (kind == PM3000_FORM_DATA_BUFFERING) return &buffering_descriptor;
+    if (kind == PM3000_FORM_APPLIANCE_LOGGING) return &logging_descriptor;
     return NULL;
 }
 
@@ -173,6 +214,15 @@ static int facility(const char *value) {
            value[9] >= '0' && value[9] <= '5';
 }
 
+static int boolean_text(const char *value) {
+    return strcmp(value, "true") == 0 || strcmp(value, "false") == 0;
+}
+
+static int destination(const char *value) {
+    return strcmp(value, "local") == 0 || strcmp(value, "nfs") == 0 ||
+           strcmp(value, "syslog") == 0 || strcmp(value, "dsview") == 0;
+}
+
 static int validate_values(pm3000_fixed_form_kind kind,
                            char values[PM3000_FIXED_MAX_FIELDS][PM3000_FIXED_VALUE_SIZE]) {
     unsigned long ignored;
@@ -183,13 +233,21 @@ static int validate_values(pm3000_fixed_form_kind kind,
         return values[0][0] != '\0' && strlen(values[0]) <= 32U &&
                strlen(values[1]) <= 256U && no_space_word(values[1]) ? 0 : -1;
     }
-    if (kind != PM3000_FORM_DATA_BUFFERING ||
-        decimal_value(values[0], 0U, 2048U, &ignored) != 0 ||
-        decimal_value(values[1], 1U, 9U, &ignored) != 0 ||
-        strlen(values[2]) > 100U || !server_name(values[2]) ||
-        strlen(values[3]) > 100U ||
-        decimal_value(values[4], 0U, 99999U, &ignored) != 0 ||
-        decimal_value(values[5], 0U, 99U, &ignored) != 0 || !facility(values[6])) return -1;
+    if (kind == PM3000_FORM_DATA_BUFFERING) {
+        if (decimal_value(values[0], 0U, 2048U, &ignored) != 0 ||
+            decimal_value(values[1], 1U, 9U, &ignored) != 0 ||
+            strlen(values[2]) > 100U || !server_name(values[2]) ||
+            strlen(values[3]) > 100U ||
+            decimal_value(values[4], 0U, 99999U, &ignored) != 0 ||
+            decimal_value(values[5], 0U, 99U, &ignored) != 0 || !facility(values[6])) return -1;
+        return 0;
+    }
+    if (kind != PM3000_FORM_APPLIANCE_LOGGING || !boolean_text(values[0]) ||
+        !destination(values[1]) ||
+        (strcmp(values[2], "yes") != 0 && strcmp(values[2], "no") != 0) ||
+        !boolean_text(values[3])) return -1;
+    for (index = 4U; index < 14U; ++index)
+        if (strlen(values[index]) > 64U) return -1;
     return 0;
 }
 
@@ -220,6 +278,19 @@ static void revision(pm3000_fixed_form_kind kind,
     memset(digest, 0, sizeof(digest));
 }
 
+static int choices_equal(const struct pm3000_fixed_snapshot *snapshot,
+                         unsigned int field, const char *const *expected,
+                         unsigned int expected_count) {
+    unsigned int index, found = 0U;
+    for (index = 0U; index < snapshot->form.choice_count; ++index) {
+        if (snapshot->form.choice_fields[index] != field) continue;
+        if (found >= expected_count || strcmp(snapshot->form.choices[index], expected[found]) != 0)
+            return 0;
+        ++found;
+    }
+    return found == expected_count;
+}
+
 int pm3000_fixed_parse_backend(pm3000_fixed_form_kind kind,
                                const unsigned char *xml, size_t length,
                                struct pm3000_fixed_snapshot *out) {
@@ -229,19 +300,25 @@ int pm3000_fixed_parse_backend(pm3000_fixed_form_kind kind,
         pm3000_xml_fixed_form(xml, length, value->path, value->form,
                               value->fields, value->field_count,
                               value->parameters, value->parameter_count,
-                              value->choice_field, &out->form) != 0 ||
+                              value->choice_field_mask, &out->form) != 0 ||
         validate_values(kind, out->form.values) != 0) return -1;
     if (kind == PM3000_FORM_HELP_LANGUAGE) {
         if (!pm3000_fixed_language_allowed(out, out->form.values[0])) return -1;
         for (index = 0U; index < out->form.choice_count; ++index)
-            if (!valid_xml_text(out->form.choices[index])) return -1;
+            if (out->form.choice_fields[index] != 0U ||
+                !valid_xml_text(out->form.choices[index])) return -1;
+    } else if (kind == PM3000_FORM_DATA_BUFFERING) {
+        static const char *const facilities[] = {
+            "LOG_LOCAL0", "LOG_LOCAL1", "LOG_LOCAL2",
+            "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5"
+        };
+        if (!choices_equal(out, 6U, facilities, 6U)) return -1;
     } else {
-        if (out->form.choice_count != 6U) return -1;
-        for (index = 0U; index < 6U; ++index) {
-            char expected[11];
-            (void)snprintf(expected, sizeof(expected), "LOG_LOCAL%u", index);
-            if (strcmp(out->form.choices[index], expected) != 0) return -1;
-        }
+        static const char *const destinations[] = {"local", "nfs", "syslog", "dsview"};
+        static const char *const timestamps[] = {"yes", "no"};
+        if (!choices_equal(out, 1U, destinations, 4U) ||
+            !choices_equal(out, 2U, timestamps, 2U) ||
+            out->form.choice_count != 6U) return -1;
     }
     revision(kind, out);
     return 0;
@@ -344,14 +421,94 @@ static int json_integer(struct json_cursor *cursor, char *output, size_t capacit
     return 0;
 }
 
+static int json_boolean(struct json_cursor *cursor, char output[PM3000_FIXED_VALUE_SIZE]) {
+    json_space(cursor);
+    if (cursor->offset + 4U <= cursor->length &&
+        memcmp(cursor->data + cursor->offset, "true", 4U) == 0) {
+        strcpy(output, "true"); cursor->offset += 4U; return 0;
+    }
+    if (cursor->offset + 5U <= cursor->length &&
+        memcmp(cursor->data + cursor->offset, "false", 5U) == 0) {
+        strcpy(output, "false"); cursor->offset += 5U; return 0;
+    }
+    return -1;
+}
+
+static int json_alert_strings(struct json_cursor *cursor,
+                              struct pm3000_fixed_input *out) {
+    unsigned int index;
+    if (json_char(cursor, '[') != 0) return -1;
+    for (index = 0U; index < 10U; ++index) {
+        if (index > 0U && json_char(cursor, ',') != 0) return -1;
+        json_space(cursor);
+        if (json_string(cursor, out->values[4U + index],
+                        sizeof(out->values[4U + index])) != 0 ||
+            strlen(out->values[4U + index]) > 64U ||
+            !valid_xml_text(out->values[4U + index])) return -1;
+        out->present[4U + index] = 1U;
+    }
+    return json_char(cursor, ']');
+}
+
+static int parse_logging_request(const unsigned char *json, size_t length,
+                                 struct pm3000_fixed_input *out) {
+    struct json_cursor cursor = {json, length, 0U};
+    unsigned int seen = 0U, members = 0U;
+    if (length == 0U || !valid_utf8(json, length) || json_char(&cursor, '{') != 0)
+        return -1;
+    memset(out, 0, sizeof(*out));
+    for (;;) {
+        char key[64]; unsigned int bit;
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset; break;
+        }
+        if (members++ > 0U && json_char(&cursor, ',') != 0) return -1;
+        json_space(&cursor);
+        if (json_string(&cursor, key, sizeof(key)) != 0 || json_char(&cursor, ':') != 0)
+            return -1;
+        if (strcmp(key, "sessionLoggingEnabled") == 0) bit = 0U;
+        else if (strcmp(key, "destination") == 0) bit = 1U;
+        else if (strcmp(key, "timestampEnabled") == 0) bit = 2U;
+        else if (strcmp(key, "alertsEnabled") == 0) bit = 3U;
+        else if (strcmp(key, "alertStrings") == 0) bit = 4U;
+        else return -1;
+        if ((seen & (1U << bit)) != 0U) return -1;
+        seen |= 1U << bit;
+        json_space(&cursor);
+        if (bit == 0U || bit == 3U) {
+            unsigned int field = bit == 0U ? 0U : 3U;
+            if (json_boolean(&cursor, out->values[field]) != 0) return -1;
+            out->present[field] = 1U;
+        } else if (bit == 1U) {
+            if (json_string(&cursor, out->values[1], sizeof(out->values[1])) != 0 ||
+                !destination(out->values[1])) return -1;
+            out->present[1] = 1U;
+        } else if (bit == 2U) {
+            char boolean[PM3000_FIXED_VALUE_SIZE];
+            if (json_boolean(&cursor, boolean) != 0) return -1;
+            strcpy(out->values[2], strcmp(boolean, "true") == 0 ? "yes" : "no");
+            out->present[2] = 1U;
+        } else if (json_alert_strings(&cursor, out) != 0) return -1;
+    }
+    json_space(&cursor);
+    if (cursor.offset != cursor.length || (seen & 1U) == 0U) return -1;
+    if (strcmp(out->values[0], "false") == 0) return seen == 1U ? 0 : -1;
+    if ((seen & 15U) != 15U) return -1;
+    if (strcmp(out->values[3], "false") == 0) return seen == 15U ? 0 : -1;
+    return seen == 31U ? 0 : -1;
+}
+
 int pm3000_fixed_parse_request(pm3000_fixed_form_kind kind,
                                const unsigned char *json, size_t length,
                                struct pm3000_fixed_input *out) {
     const struct fixed_descriptor *value = descriptor(kind);
     struct json_cursor cursor = {json, length, 0U};
     unsigned int seen[PM3000_FIXED_MAX_FIELDS] = {0}, members = 0U;
-    if (value == NULL || out == NULL || length == 0U || !valid_utf8(json, length) ||
-        json_char(&cursor, '{') != 0) return -1;
+    if (value == NULL || out == NULL || json == NULL || length == 0U) return -1;
+    if (kind == PM3000_FORM_APPLIANCE_LOGGING)
+        return parse_logging_request(json, length, out);
+    if (!valid_utf8(json, length) || json_char(&cursor, '{') != 0) return -1;
     memset(out, 0, sizeof(*out));
     for (;;) {
         char key[64]; unsigned int index;
@@ -366,6 +523,7 @@ int pm3000_fixed_parse_request(pm3000_fixed_form_kind kind,
         json_space(&cursor);
         if ((value->json_types[index] == 0U && json_string(&cursor, out->values[index], sizeof(out->values[index])) != 0) ||
             (value->json_types[index] == 1U && json_integer(&cursor, out->values[index], sizeof(out->values[index])) != 0)) return -1;
+        out->present[index] = 1U;
     }
     json_space(&cursor);
     if (cursor.offset != cursor.length) return -1;
@@ -378,8 +536,23 @@ int pm3000_fixed_language_allowed(const struct pm3000_fixed_snapshot *snapshot,
     unsigned int index;
     if (snapshot == NULL || language == NULL || language[0] == '\0' || strlen(language) > 32U) return 0;
     for (index = 0U; index < snapshot->form.choice_count; ++index)
-        if (strcmp(snapshot->form.choices[index], language) == 0) return 1;
+        if (snapshot->form.choice_fields[index] == 0U &&
+            strcmp(snapshot->form.choices[index], language) == 0) return 1;
     return 0;
+}
+
+int pm3000_fixed_merge_inactive(pm3000_fixed_form_kind kind,
+                                const struct pm3000_fixed_snapshot *snapshot,
+                                struct pm3000_fixed_input *input) {
+    unsigned int index, count = pm3000_fixed_field_count(kind);
+    if (snapshot == NULL || input == NULL || count == 0U) return -1;
+    for (index = 0U; index < count; ++index) {
+        if (input->present[index] == 0U) {
+            if (strlen(snapshot->form.values[index]) >= sizeof(input->values[index])) return -1;
+            strcpy(input->values[index], snapshot->form.values[index]);
+        }
+    }
+    return validate_values(kind, input->values);
 }
 
 int pm3000_fixed_values_match(pm3000_fixed_form_kind kind,
@@ -420,6 +593,36 @@ int pm3000_fixed_serialize(pm3000_fixed_form_kind kind,
     amount = snprintf(output, capacity, "<section structure=\"form\">");
     if (amount < 0 || (size_t)amount >= capacity) return -1;
     used = (size_t)amount;
+    if (kind == PM3000_FORM_APPLIANCE_LOGGING) {
+        amount = snprintf(output + used, capacity - used,
+                          "<parameter id=\"sessionlogenable\" structure=\"checkbox\"><value>%s</value>",
+                          escaped[0]);
+        if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+        used += (size_t)amount;
+        if (strcmp(input->values[0], "true") == 0) {
+            amount = snprintf(output + used, capacity - used,
+                              "<parameter id=\"destination\" structure=\"combo\"><value>%s</value></parameter>"
+                              "<parameter id=\"enabletimestamp\" structure=\"combo\"><value>%s</value></parameter>"
+                              "<parameter id=\"alertenable\" structure=\"checkbox\"><value>%s</value>",
+                              escaped[1], escaped[2], escaped[3]);
+            if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+            used += (size_t)amount;
+            if (strcmp(input->values[3], "true") == 0) {
+                for (index = 4U; index < 14U; ++index) {
+                    amount = snprintf(output + used, capacity - used,
+                                      "<parameter id=\"%s\" structure=\"RWtext\"><value>%s</value></parameter>",
+                                      value->fields[index].id, escaped[index]);
+                    if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+                    used += (size_t)amount;
+                }
+            }
+            amount = snprintf(output + used, capacity - used, "</parameter>");
+            if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+            used += (size_t)amount;
+        }
+        amount = snprintf(output + used, capacity - used, "</parameter></section>");
+        return amount < 0 || (size_t)amount >= capacity - used ? -1 : 0;
+    }
     for (index = 0U; index < value->field_count; ++index) {
         amount = snprintf(output + used, capacity - used,
                           "<parameter id=\"%s\" structure=\"%s\"><value>%s</value></parameter>",

@@ -38,6 +38,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/settings/authentication/nis",
                 "/api/v1/settings/help-language",
                 "/api/v1/settings/data-buffering",
+                "/api/v1/settings/appliance-logging",
                 "/api/v1/system/information",
                 "/api/v1/system/usage/memory",
                 "/api/v1/system/usage/flash",
@@ -64,6 +65,7 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/authentication/nis"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/help-language"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/data-buffering"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/appliance-logging"]))
         for route in (
             "/api/v1/system/information",
             "/api/v1/system/usage/memory",
@@ -191,6 +193,49 @@ class RestV1ContractTests(unittest.TestCase):
             self.assertEqual(xml_text_pattern, schemas[schema_name]["properties"]["nfsPath"]["pattern"])
         for field in ("oldPassword", "newPassword", "confirmation"):
             self.assertEqual("^[ -~]+$", schemas["PasswordChangeRequest"]["properties"][field]["pattern"])
+
+    def test_appliance_logging_is_a_closed_conditional_revisioned_setting(self) -> None:
+        route = self.contract["paths"]["/api/v1/settings/appliance-logging"]
+        schemas = self.contract["components"]["schemas"]
+        for operation in route.values():
+            self.assertEqual([{"cookieAuth": []}], operation["security"])
+            self.assertTrue(operation["x-bearer-rejected"])
+            self.assertEqual("units.event_notification.sessions", operation["x-required-nav-path"])
+            self.assertEqual("configuration.event-notify:w", operation["x-required-write-capability"])
+        put = route["put"]
+        self.assertFalse(put["x-full-replacement"])
+        self.assertTrue(put["x-csrf-required"])
+        self.assertEqual(
+            "exact-read-back-of-active-writes-and-preserved-inactive-fields",
+            put["x-success-confirmation"],
+        )
+        self.assertEqual(
+            "#/components/schemas/ApplianceLoggingReplacement",
+            put["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        )
+        setting = schemas["ApplianceLoggingSetting"]
+        self.assertFalse(setting["additionalProperties"])
+        self.assertEqual(
+            {"sessionLoggingEnabled", "destination", "timestampEnabled", "alertsEnabled", "alertStrings", "allowedDestinations", "revision"},
+            set(setting["required"]),
+        )
+        self.assertEqual(["local", "nfs", "syslog", "dsview"], setting["properties"]["destination"]["enum"])
+        alerts = setting["properties"]["alertStrings"]
+        self.assertEqual((10, 10), (alerts["minItems"], alerts["maxItems"]))
+        self.assertEqual(64, alerts["items"]["x-max-utf8-bytes"])
+        variants = schemas["ApplianceLoggingReplacement"]["oneOf"]
+        self.assertEqual(3, len(variants))
+        for variant, required, enabled, alerts_enabled in (
+            (variants[0], {"sessionLoggingEnabled"}, False, None),
+            (variants[1], {"sessionLoggingEnabled", "destination", "timestampEnabled", "alertsEnabled"}, True, False),
+            (variants[2], {"sessionLoggingEnabled", "destination", "timestampEnabled", "alertsEnabled", "alertStrings"}, True, True),
+        ):
+            self.assertFalse(variant["additionalProperties"])
+            self.assertEqual(required, set(variant["required"]))
+            self.assertEqual(required, set(variant["properties"]))
+            self.assertIs(enabled, variant["properties"]["sessionLoggingEnabled"]["const"])
+            if alerts_enabled is not None:
+                self.assertIs(alerts_enabled, variant["properties"]["alertsEnabled"]["const"])
 
     def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
         paths = self.contract["paths"]

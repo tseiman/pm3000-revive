@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<avtrans>
+  <action>content</action>
+  <paths><path>units.event_notification.sessions</path></paths>
+  <payload>
+    <controls><control id="save" structure="button"/></controls>
+    <section id="sessionform" structure="form">
+      <parameter id="sessiontitle" structure="title">
+        <parameter id="sessionlogenable" structure="checkbox">
+          <value>true</value>
+          <parameter id="notice" structure="notice"/>
+          <parameter id="destination" structure="combo">
+            <value>local</value>
+            <option label="Local">local</option>
+            <option label="NFS">nfs</option>
+            <option label="Syslog">syslog</option>
+            <option label="DSView">dsview</option>
+          </parameter>
+          <parameter id="enabletimestamp" structure="combo">
+            <value>yes</value>
+            <option label="Enabled">yes</option>
+            <option label="Disabled">no</option>
+          </parameter>
+          <parameter id="alertenable" structure="checkbox">
+            <value>true</value>
+            <parameter id="alertstring1" structure="RWtext"><value>alert one</value></parameter>
+            <parameter id="alertstring2" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring3" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring4" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring5" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring6" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring7" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring8" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring9" structure="RWtext"><value/></parameter>
+            <parameter id="alertstring10" structure="RWtext"><value/></parameter>
+          </parameter>
+        </parameter>
+      </parameter>
+    </section>
+  </payload>
+</avtrans>

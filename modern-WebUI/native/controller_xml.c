@@ -112,6 +112,7 @@ struct document {
     unsigned int save_controls;
     unsigned int help_language_capability;
     unsigned int data_buffering_capability;
+    unsigned int appliance_logging_capability;
     char table_id[XML_MAX_NAME + 1U];
     char current_table_id[XML_MAX_NAME + 1U];
     unsigned int table_count;
@@ -623,14 +624,19 @@ static int start_element(struct document *document, int *self_closing) {
             strcmp(access_path, "configuration.appliance.language") == 0 &&
             strcmp(access_rights, "w") == 0)
             document->help_language_capability = 1U;
-        if (strcmp(path, "units.event_notification.global_settings_databuffering") == 0) {
+        if (strcmp(path, "units.event_notification.global_settings_databuffering") == 0 ||
+            strcmp(path, "units.event_notification.sessions") == 0) {
             size_t ancestor;
             for (ancestor = 0U; ancestor < document->depth; ++ancestor) {
                 const struct frame *candidate = &document->stack[ancestor];
                 if (strcmp(candidate->path, "units.event_notification") == 0 &&
                     strcmp(candidate->access_path, "configuration.event-notify") == 0 &&
-                    strcmp(candidate->access_rights, "w") == 0)
-                    document->data_buffering_capability = 1U;
+                    strcmp(candidate->access_rights, "w") == 0) {
+                    if (strcmp(path, "units.event_notification.global_settings_databuffering") == 0)
+                        document->data_buffering_capability = 1U;
+                    else
+                        document->appliance_logging_capability = 1U;
+                }
             }
         }
     }
@@ -793,7 +799,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           const char *const *allowed_paths,
                           unsigned int allowed_count, uint64_t *path_mask,
                           int *can_manage, int *can_help_language,
-                          int *can_data_buffering) {
+                          int *can_data_buffering,
+                          int *can_appliance_logging) {
     struct document document;
     unsigned int index, candidate;
     if (allowed_count > 64U || parse_document(xml, length, &document) != 0 ||
@@ -813,6 +820,7 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                    "units.users.local_accounts.user_names") == 0) *can_manage = 1;
     *can_help_language = document.help_language_capability == 1U;
     *can_data_buffering = document.data_buffering_capability == 1U;
+    *can_appliance_logging = document.appliance_logging_capability == 1U;
     return 0;
 }
 
@@ -1006,7 +1014,7 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
                           const struct pm3000_xml_fixed_field *fields,
                           unsigned int field_count,
                           const struct pm3000_xml_fixed_parameter *parameters,
-                          unsigned int parameter_count, int choice_field,
+                          unsigned int parameter_count, uint32_t choice_field_mask,
                           struct pm3000_xml_fixed_result *out) {
     struct document document;
     unsigned int index, field_index, next_field = 0U, matching_forms = 0U;
@@ -1014,7 +1022,7 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
     if (out == NULL || fields == NULL || parameters == NULL ||
         field_count == 0U || parameter_count == 0U ||
         field_count > PM3000_FIXED_MAX_FIELDS || parameter_count > XML_MAX_PARAMETERS ||
-        choice_field >= (int)field_count ||
+        (field_count < 32U && (choice_field_mask >> field_count) != 0U) ||
         parse_document(xml, length, &document) != 0 ||
         strcmp(document.action, "content") != 0 || strcmp(document.path, path) != 0 ||
         document.payloads != 1U || document.form_count != 1U ||
@@ -1036,6 +1044,7 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
     for (index = 0U; index < parameter_count; ++index) {
         const struct parameter_declaration *record = &document.parameter_declarations[index];
         const struct pm3000_xml_fixed_parameter *expected = &parameters[index];
+        const char *parent_structure = expected->parent_structure == NULL ? "title" : expected->parent_structure;
         if (strcmp(record->form, form) != 0 ||
             strcmp(record->parameter, expected->id) != 0 ||
             strcmp(record->structure, expected->structure) != 0) return -1;
@@ -1043,10 +1052,11 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
             if (!record->direct_form_child) return -1;
         } else if (strcmp(record->container_name, "parameter") != 0 ||
                    strcmp(record->container_id, expected->parent_id) != 0 ||
-                   strcmp(record->container_structure, "title") != 0) return -1;
+                   strcmp(record->container_structure, parent_structure) != 0) return -1;
     }
     for (index = 0U; index < document.parameter_value_count; ++index) {
         const struct parameter_value *record = &document.parameter_values[index];
+        const char *parent_structure;
         if (strcmp(record->form, form) != 0) continue;
         for (field_index = 0U; field_index < field_count; ++field_index)
             if (strcmp(record->parameter, fields[field_index].id) == 0) break;
@@ -1054,28 +1064,36 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
         if (field_index != next_field || ++seen[field_index] != 1U ||
             strcmp(record->structure, fields[field_index].structure) != 0 ||
             strlen(record->value) >= sizeof(out->values[field_index])) return -1;
+        parent_structure = fields[field_index].parent_structure == NULL ? "title" : fields[field_index].parent_structure;
         if (fields[field_index].parent_id == NULL) {
             if (!record->direct_form_child) return -1;
         } else if (strcmp(record->container_name, "parameter") != 0 ||
                    strcmp(record->container_id, fields[field_index].parent_id) != 0 ||
-                   strcmp(record->container_structure, "title") != 0) return -1;
+                   strcmp(record->container_structure, parent_structure) != 0) return -1;
         strcpy(out->values[field_index], record->value);
         ++next_field;
     }
     if (next_field != field_count) return -1;
-    if (choice_field >= 0) {
+    if (choice_field_mask != 0U) {
+        uint32_t seen_choice_fields = 0U;
         for (index = 0U; index < document.option_value_count; ++index) {
             const struct option_value *option = &document.option_values[index];
-            unsigned int previous;
+            unsigned int previous, option_field;
             if (strcmp(option->form, form) != 0) continue;
-            if (strcmp(option->parameter, fields[choice_field].id) != 0) return -1;
+            for (option_field = 0U; option_field < field_count; ++option_field)
+                if (strcmp(option->parameter, fields[option_field].id) == 0) break;
+            if (option_field == field_count ||
+                (choice_field_mask & (UINT32_C(1) << option_field)) == 0U) return -1;
             if (option->value[0] == '\0' || strlen(option->value) >= sizeof(out->choices[0]) ||
                 out->choice_count >= PM3000_FIXED_MAX_CHOICES) return -1;
             for (previous = 0U; previous < out->choice_count; ++previous)
-                if (strcmp(out->choices[previous], option->value) == 0) return -1;
+                if (out->choice_fields[previous] == option_field &&
+                    strcmp(out->choices[previous], option->value) == 0) return -1;
+            out->choice_fields[out->choice_count] = (unsigned char)option_field;
             strcpy(out->choices[out->choice_count++], option->value);
+            seen_choice_fields |= UINT32_C(1) << option_field;
         }
-        if (out->choice_count == 0U) return -1;
+        if (seen_choice_fields != choice_field_mask) return -1;
     }
     return 0;
 }

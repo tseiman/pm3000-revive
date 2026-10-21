@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "" };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -81,12 +81,12 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
-  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = "";
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.applianceLoggingRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
+  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = ""; state.applianceLoggingRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
   clearOneTimeSecret(); clear($("outlet-grid")); clear($("pdu-grid")); clear($("token-rows")); clear($("navigation"));
-  setHelpLanguageLoaded(false); setDataBufferingLoaded(false);
+  setHelpLanguageLoaded(false); setDataBufferingLoaded(false); setApplianceLoggingLoaded(false);
   $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = ""; $("password-change-error").textContent = "";
   $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
   setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
@@ -133,6 +133,7 @@ function renderNavigation() {
       path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
       path === "units.applianceSettings.help" ? "help-language" :
       path === "units.event_notification.global_settings_databuffering" ? "data-buffering" :
+      path === "units.event_notification.sessions" ? "appliance-logging" :
       path === "units.powermanagement.pdu_management" ? "pdus" :
       path === "units.applianceSettings.information" ? "sysinfo" :
       path === "units.applianceSettings.usage.memory" ? "memory" :
@@ -154,7 +155,7 @@ function renderNavigation() {
 
 function switchView(view, path = "", label = "") {
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("appliance-logging-view").hidden = view !== "appliance-logging"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
@@ -166,6 +167,7 @@ function switchView(view, path = "", label = "") {
   if (view === "dsview") loadDsviewSetting();
   if (view === "help-language") loadHelpLanguageSetting();
   if (view === "data-buffering") loadDataBufferingSetting();
+  if (view === "appliance-logging") loadApplianceLoggingSetting();
   if (view === "sysinfo") loadSysinfo();
   if (view === "memory") loadMemory();
   if (view === "flash") loadFlash();
@@ -412,7 +414,7 @@ $("help-language-form").addEventListener("submit", async (event) => {
   } catch (error) { message = error.message; }
   finally {
     state.helpLanguageWritePending = false; $("reload-help-language").disabled = false;
-    if (!state.dataBufferingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    if (!state.dataBufferingWritePending && !state.applianceLoggingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
     await loadHelpLanguageSetting();
     if (message && state.session && generation === state.generation) $("help-language-error").textContent = message;
   }
@@ -472,14 +474,106 @@ $("data-buffering-form").addEventListener("submit", async (event) => {
   } catch (error) { message = error.message; }
   finally {
     state.dataBufferingWritePending = false; $("reload-data-buffering").disabled = false;
-    if (!state.helpLanguageWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    if (!state.helpLanguageWritePending && !state.applianceLoggingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
     await loadDataBufferingSetting();
     if (message && state.session && generation === state.generation) $("data-buffering-error").textContent = message;
   }
 });
 
+const loggingDestinations = ["local", "nfs", "syslog", "dsview"];
+const loggingAlertIds = Array.from({ length: 10 }, (_, index) => `logging-alert-${index + 1}`);
+
+function updateApplianceLoggingConditional() {
+  const loaded = Boolean(state.applianceLoggingRevision) && !state.applianceLoggingWritePending;
+  const enabled = loaded && $("logging-enabled").checked;
+  const alertsEnabled = enabled && $("logging-alerts-enabled").checked;
+  $("logging-options").hidden = !enabled;
+  $("logging-alert-strings").hidden = !alertsEnabled;
+  $("logging-destination").disabled = !enabled; $("logging-timestamp").disabled = !enabled;
+  $("logging-alerts-enabled").disabled = !enabled;
+  for (const id of loggingAlertIds) $(id).disabled = !alertsEnabled;
+}
+
+function setApplianceLoggingLoaded(loaded) {
+  $("logging-enabled").disabled = !loaded; $("save-appliance-logging").disabled = !loaded;
+  if (!loaded) {
+    state.applianceLoggingRevision = ""; $("logging-enabled").checked = false;
+    $("logging-timestamp").checked = false; $("logging-alerts-enabled").checked = false;
+    clear($("logging-destination"));
+    for (const id of loggingAlertIds) $(id).value = "";
+  }
+  updateApplianceLoggingConditional();
+}
+
+async function loadApplianceLoggingSetting() {
+  if (state.applianceLoggingWritePending) return;
+  const request = ++state.applianceLoggingRequest;
+  setApplianceLoggingLoaded(false); $("appliance-logging-error").textContent = ""; setText("appliance-logging-status", "Loading current setting…");
+  try {
+    const payload = await api("/api/v1/settings/appliance-logging");
+    if (request !== state.applianceLoggingRequest) return;
+    if (!strongRevision(payload.revision) || typeof payload.sessionLoggingEnabled !== "boolean" ||
+        typeof payload.timestampEnabled !== "boolean" || typeof payload.alertsEnabled !== "boolean" ||
+        typeof payload.destination !== "string" || !Array.isArray(payload.allowedDestinations) ||
+        payload.allowedDestinations.length !== loggingDestinations.length ||
+        !payload.allowedDestinations.every((value, index) => value === loggingDestinations[index]) ||
+        !payload.allowedDestinations.includes(payload.destination) || !Array.isArray(payload.alertStrings) ||
+        payload.alertStrings.length !== 10 || !payload.alertStrings.every((value) => typeof value === "string" && new TextEncoder().encode(value).length <= 64))
+      throw new Error("The settings response was invalid.");
+    for (const destination of loggingDestinations) {
+      const option = document.createElement("option"); option.value = destination; option.textContent = destination; $("logging-destination").appendChild(option);
+    }
+    $("logging-enabled").checked = payload.sessionLoggingEnabled; $("logging-destination").value = payload.destination;
+    $("logging-timestamp").checked = payload.timestampEnabled; $("logging-alerts-enabled").checked = payload.alertsEnabled;
+    payload.alertStrings.forEach((value, index) => { $(loggingAlertIds[index]).value = value; });
+    state.applianceLoggingRevision = payload.revision;
+    setApplianceLoggingLoaded(true); setText("appliance-logging-status", "Current setting loaded. Inactive nested values are preserved.");
+  } catch (error) {
+    if (request === state.applianceLoggingRequest) {
+      setApplianceLoggingLoaded(false); setText("appliance-logging-status", "Current setting unavailable. Reload before saving.");
+      if (state.session) $("appliance-logging-error").textContent = error.message;
+    }
+  }
+}
+
+$("logging-enabled").addEventListener("change", updateApplianceLoggingConditional);
+$("logging-alerts-enabled").addEventListener("change", updateApplianceLoggingConditional);
+$("appliance-logging-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.applianceLoggingWritePending || $("save-appliance-logging").disabled || !state.applianceLoggingRevision) return;
+  const generation = state.generation;
+  const enabled = $("logging-enabled").checked;
+  const replacement = { sessionLoggingEnabled: enabled };
+  if (enabled) {
+    replacement.destination = $("logging-destination").value;
+    replacement.timestampEnabled = $("logging-timestamp").checked;
+    replacement.alertsEnabled = $("logging-alerts-enabled").checked;
+    if (replacement.alertsEnabled) {
+      replacement.alertStrings = loggingAlertIds.map((id) => $(id).value);
+      if (replacement.alertStrings.some((value) => new TextEncoder().encode(value).length > 64)) {
+        $("appliance-logging-error").textContent = "Each alert string must be at most 64 UTF-8 bytes.";
+        return;
+      }
+    }
+  }
+  state.applianceLoggingWritePending = true; $("reload-appliance-logging").disabled = true; $("disconnect").disabled = true;
+  $("save-appliance-logging").disabled = true; updateApplianceLoggingConditional(); $("appliance-logging-error").textContent = "";
+  let message = "";
+  try {
+    await api("/api/v1/settings/appliance-logging", { method: "PUT", headers: { "If-Match": state.applianceLoggingRevision }, body: JSON.stringify(replacement) });
+    toast("Appliance Logging setting saved.");
+  } catch (error) { message = error.message; }
+  finally {
+    state.applianceLoggingWritePending = false; $("reload-appliance-logging").disabled = false;
+    if (!state.helpLanguageWritePending && !state.dataBufferingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    await loadApplianceLoggingSetting();
+    if (message && state.session && generation === state.generation) $("appliance-logging-error").textContent = message;
+  }
+});
+
 $("reload-help-language").addEventListener("click", loadHelpLanguageSetting);
 $("reload-data-buffering").addEventListener("click", loadDataBufferingSetting);
+$("reload-appliance-logging").addEventListener("click", loadApplianceLoggingSetting);
 
 $("password-change-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -533,7 +627,7 @@ $("connect-form").addEventListener("submit", (event) => {
 
 $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
-  if (state.helpLanguageWritePending || state.dataBufferingWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
+  if (state.helpLanguageWritePending || state.dataBufferingWritePending || state.applianceLoggingWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);
 }); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-pdus").addEventListener("click", loadPdus); $("refresh-tokens").addEventListener("click", loadTokens);

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.4.0",
-    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language and Data Buffering settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
+    "version": "1.5.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language, Data Buffering, and conditional Appliance Logging settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
   },
   "servers": [
     {
@@ -1028,6 +1028,141 @@
         }
       }
     },
+    "/api/v1/settings/appliance-logging": {
+      "get": {
+        "operationId": "getApplianceLoggingSetting",
+        "summary": "Read the complete Appliance Logging setting and destination choices",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.event_notification.sessions",
+        "x-required-write-capability": "configuration.event-notify:w",
+        "x-backend-template": "action=get;path=units.event_notification.sessions;form=sessionform",
+        "responses": {
+          "200": {
+            "description": "Current complete setting, allowed destinations, and strong revision.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/StrongETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplianceLoggingSetting"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceApplianceLoggingSetting",
+        "summary": "Conditionally replace active Appliance Logging fields after a fresh revision check",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.event_notification.sessions",
+        "x-required-write-capability": "configuration.event-notify:w",
+        "x-csrf-required": true,
+        "x-full-replacement": false,
+        "x-max-body-bytes": 4096,
+        "x-success-confirmation": "exact-read-back-of-active-writes-and-preserved-inactive-fields",
+        "x-backend-template": "get-current-revision;conditional-action=save;path=units.event_notification.sessions;form=sessionform;parse-exact-read-back",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "description": "Strong revision returned in the latest successful GET response body and ETag header.",
+            "schema": {
+              "$ref": "#/components/schemas/StrongRevision"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplianceLoggingReplacement"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Active submitted fields and all preserved inactive fields exactly matched the typed controller read-back after save; runtime effect on new sessions is not asserted.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "412": {
+            "$ref": "#/components/responses/RevisionChanged"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/SettingWriteUnconfirmed"
+          }
+        },
+        "x-conditional-replacement": "Inactive descendants are omitted from the firmware save and preserved from the fresh GET."
+      }
+    },
     "/api/v1/system/information": {
       "get": {
         "operationId": "getSystemInformation",
@@ -1917,6 +2052,170 @@
           "syslogFacility": { "$ref": "#/components/schemas/SyslogFacility" },
           "revision": { "$ref": "#/components/schemas/StrongRevision", "readOnly": true }
         }
+      },
+      "ApplianceLoggingSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sessionLoggingEnabled",
+          "destination",
+          "timestampEnabled",
+          "alertsEnabled",
+          "alertStrings",
+          "allowedDestinations",
+          "revision"
+        ],
+        "properties": {
+          "sessionLoggingEnabled": {
+            "type": "boolean"
+          },
+          "destination": {
+            "type": "string",
+            "enum": [
+              "local",
+              "nfs",
+              "syslog",
+              "dsview"
+            ]
+          },
+          "timestampEnabled": {
+            "type": "boolean"
+          },
+          "alertsEnabled": {
+            "type": "boolean"
+          },
+          "alertStrings": {
+            "type": "array",
+            "minItems": 10,
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$",
+              "x-max-utf8-bytes": 64
+            }
+          },
+          "allowedDestinations": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "local",
+                "nfs",
+                "syslog",
+                "dsview"
+              ]
+            },
+            "description": "Runtime choices, validated by the adapter in firmware order: local, nfs, syslog, dsview."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/StrongRevision",
+            "readOnly": true
+          }
+        }
+      },
+      "ApplianceLoggingReplacement": {
+        "description": "Closed conditional union matching firmware omission semantics. Inactive descendant fields are forbidden and preserved from the fresh GET.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "required": [
+              "sessionLoggingEnabled"
+            ],
+            "properties": {
+              "sessionLoggingEnabled": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 4,
+            "maxProperties": 4,
+            "required": [
+              "sessionLoggingEnabled",
+              "destination",
+              "timestampEnabled",
+              "alertsEnabled"
+            ],
+            "properties": {
+              "sessionLoggingEnabled": {
+                "type": "boolean",
+                "const": true
+              },
+              "destination": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "nfs",
+                  "syslog",
+                  "dsview"
+                ]
+              },
+              "timestampEnabled": {
+                "type": "boolean"
+              },
+              "alertsEnabled": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 5,
+            "maxProperties": 5,
+            "required": [
+              "sessionLoggingEnabled",
+              "destination",
+              "timestampEnabled",
+              "alertsEnabled",
+              "alertStrings"
+            ],
+            "properties": {
+              "sessionLoggingEnabled": {
+                "type": "boolean",
+                "const": true
+              },
+              "destination": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "nfs",
+                  "syslog",
+                  "dsview"
+                ]
+              },
+              "timestampEnabled": {
+                "type": "boolean"
+              },
+              "alertsEnabled": {
+                "type": "boolean",
+                "const": true
+              },
+              "alertStrings": {
+                "type": "array",
+                "minItems": 10,
+                "maxItems": 10,
+                "items": {
+                  "type": "string",
+                  "maxLength": 64,
+                  "pattern": "^[^\\u0000-\\u001F\\uFFFE\\uFFFF]*$",
+                  "x-max-utf8-bytes": 64
+                }
+              }
+            }
+          }
+        ]
       },
       "SystemInformation": {
         "type": "object",

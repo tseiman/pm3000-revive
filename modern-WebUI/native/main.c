@@ -715,7 +715,7 @@ static int write_fixed_setting(pm3000_fixed_form_kind kind,
             if (write_json_ascii_string(stdout, snapshot->form.choices[index]) != 0) return 1;
         }
         fputs("],\"revision\":", stdout);
-    } else {
+    } else if (kind == PM3000_FORM_DATA_BUFFERING) {
         fprintf(stdout,
                 "{\"localSize\":%s,\"localSegments\":%s,\"nfsServer\":",
                 snapshot->form.values[0], snapshot->form.values[1]);
@@ -727,6 +727,19 @@ static int write_fixed_setting(pm3000_fixed_form_kind kind,
                 snapshot->form.values[4], snapshot->form.values[5]);
         if (write_json_ascii_string(stdout, snapshot->form.values[6]) != 0) return 1;
         fputs(",\"revision\":", stdout);
+    } else {
+        fprintf(stdout,
+                "{\"sessionLoggingEnabled\":%s,\"destination\":",
+                snapshot->form.values[0]);
+        if (write_json_ascii_string(stdout, snapshot->form.values[1]) != 0) return 1;
+        fprintf(stdout, ",\"timestampEnabled\":%s,\"alertsEnabled\":%s,\"alertStrings\":[",
+                strcmp(snapshot->form.values[2], "yes") == 0 ? "true" : "false",
+                snapshot->form.values[3]);
+        for (index = 4U; index < 14U; ++index) {
+            if (index > 4U) fputc(',', stdout);
+            if (write_json_ascii_string(stdout, snapshot->form.values[index]) != 0) return 1;
+        }
+        fputs("],\"allowedDestinations\":[\"local\",\"nfs\",\"syslog\",\"dsview\"],\"revision\":", stdout);
     }
     if (write_json_ascii_string(stdout, snapshot->revision) != 0) return 1;
     fputs("}\n", stdout);
@@ -804,7 +817,8 @@ static int run_fixed_setting_route(const char *method,
             !pm3000_fixed_language_allowed(&current, input.values[0]))
             return cgi_error(400U, "Bad Request", "bad_request",
                              "The selected language is not currently available.");
-        if (pm3000_fixed_serialize(kind, &input, form_payload, sizeof(form_payload)) != 0)
+        if (pm3000_fixed_merge_inactive(kind, &current, &input) != 0 ||
+            pm3000_fixed_serialize(kind, &input, form_payload, sizeof(form_payload)) != 0)
             return cgi_error(400U, "Bad Request", "bad_request",
                              "The complete settings request is invalid.");
         result = pm3000_save_fixed_setting_session(socket_path, session->sid, path,
@@ -930,9 +944,15 @@ static int run_cgi(void) {
     }
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/settings/help-language") == 0 ||
-         strcmp(path, "/api/v1/settings/data-buffering") == 0)) {
-        pm3000_fixed_form_kind kind = strcmp(path, "/api/v1/settings/help-language") == 0 ?
-            PM3000_FORM_HELP_LANGUAGE : PM3000_FORM_DATA_BUFFERING;
+         strcmp(path, "/api/v1/settings/data-buffering") == 0 ||
+         strcmp(path, "/api/v1/settings/appliance-logging") == 0)) {
+        pm3000_fixed_form_kind kind;
+        if (strcmp(path, "/api/v1/settings/help-language") == 0)
+            kind = PM3000_FORM_HELP_LANGUAGE;
+        else if (strcmp(path, "/api/v1/settings/data-buffering") == 0)
+            kind = PM3000_FORM_DATA_BUFFERING;
+        else
+            kind = PM3000_FORM_APPLIANCE_LOGGING;
         if (getenv("HTTP_AUTHORIZATION") != NULL)
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this browser setting.");
@@ -942,7 +962,8 @@ static int run_cgi(void) {
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Session authentication required.");
         if ((kind == PM3000_FORM_HELP_LANGUAGE && !gui_session.can_help_language) ||
-            (kind == PM3000_FORM_DATA_BUFFERING && !gui_session.can_data_buffering))
+            (kind == PM3000_FORM_DATA_BUFFERING && !gui_session.can_data_buffering) ||
+            (kind == PM3000_FORM_APPLIANCE_LOGGING && !gui_session.can_appliance_logging))
             return cgi_error(403U, "Forbidden", "forbidden",
                              "The exact configuration write capability is required.");
         return run_fixed_setting_route(

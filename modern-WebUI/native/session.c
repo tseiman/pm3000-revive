@@ -168,12 +168,14 @@ static int parse_navigation(const unsigned char *xml, size_t length,
                             const unsigned char *topology, size_t topology_length,
                             uint64_t *path_mask, int *can_manage,
                             int *can_control, int *can_help_language,
-                            int *can_data_buffering) {
+                            int *can_data_buffering,
+                            int *can_appliance_logging) {
     char error[160] = {0};
     if (pm3000_xml_navigation(xml, length, allowed_paths,
                               PM3000_SESSION_PATH_COUNT, path_mask,
                               can_manage, can_help_language,
-                              can_data_buffering) != 0) return -1;
+                              can_data_buffering,
+                              can_appliance_logging) != 0) return -1;
     *can_control = 0;
     if (topology == NULL || topology_length == 0U) return 0;
     return pm3000_project_bytes(topology, (unsigned long)topology_length,
@@ -187,7 +189,8 @@ static int serialize(const pm3000_session *session, time_t expires,
     unsigned int flags = (session->can_manage_tokens ? 1U : 0U) |
                          (session->can_control_power ? 2U : 0U) |
                          (session->can_help_language ? 4U : 0U) |
-                         (session->can_data_buffering ? 8U : 0U);
+                         (session->can_data_buffering ? 8U : 0U) |
+                         (session->can_appliance_logging ? 16U : 0U);
     int amount = snprintf(output, SESSION_FILE_LIMIT + 1U,
                           "PM3000_SESSION_V1\n%lld\n%s\n%s\n%s\n%llu\n%u\n",
                           (long long)expires, session->sid, session->csrf,
@@ -245,7 +248,7 @@ static int parse_file(char *data, size_t length, pm3000_session *session,
     if (!safe_line(lines[2], 128U) || !valid_identifier(lines[3], PM3000_CSRF_LENGTH) ||
         !safe_line(lines[4], 128U) || parse_unsigned64(lines[5], &session->path_mask) != 0 ||
         session->path_mask >= (UINT64_C(1) << PM3000_SESSION_PATH_COUNT) ||
-        parse_unsigned64(lines[6], &flags) != 0 || flags > 15U) return -1;
+        parse_unsigned64(lines[6], &flags) != 0 || flags > 31U) return -1;
     strcpy(session->sid, lines[2]);
     strcpy(session->csrf, lines[3]);
     strcpy(session->username, lines[4]);
@@ -253,6 +256,7 @@ static int parse_file(char *data, size_t length, pm3000_session *session,
     session->can_control_power = (flags & 2U) != 0U;
     session->can_help_language = (flags & 4U) != 0U;
     session->can_data_buffering = (flags & 8U) != 0U;
+    session->can_appliance_logging = (flags & 16U) != 0U;
     *expires = (time_t)parsed_expiry;
     if ((long long)*expires != parsed_expiry) return -1;
     return 0;
@@ -349,8 +353,9 @@ int pm3000_session_create(const char *directory, const char *username,
         parse_navigation(navigation, navigation_length, topology, topology_length,
                          &session->path_mask,
                          &session->can_manage_tokens, &session->can_control_power,
-                         &session->can_help_language,
-                         &session->can_data_buffering) != 0) {
+                          &session->can_help_language,
+                          &session->can_data_buffering,
+                          &session->can_appliance_logging) != 0) {
         set_error(error, error_size, "session metadata rejected");
         return -1;
     }

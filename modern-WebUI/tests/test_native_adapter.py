@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ import token_store  # noqa: E402
 
 
 class FakeAvtransController:
-    def __init__(self, path: Path, responses: list[bytes]) -> None:
+    def __init__(self, path: Path, responses: Sequence[bytes | None]) -> None:
         self.path = path
         self.responses = responses
         self.requests: list[tuple[bytes, bytes]] = []
@@ -65,7 +66,8 @@ class FakeAvtransController:
                             payload.extend(chunk)
                         terminator = payload.index(0)
                         self.requests.append((bytes(header), bytes(payload[:terminator])))
-                        connection.sendall(response + b"\0")
+                        if response is not None:
+                            connection.sendall(response + b"\0")
         except BaseException as error:
             self.error = error
             self.ready.set()
@@ -1445,6 +1447,32 @@ class NativeAdapterTests(unittest.TestCase):
             b'</section></payload></avtrans>'
         )
 
+    @staticmethod
+    def appliance_logging_page(
+        enabled: bool = True, destination: bytes = b"local", timestamp: bool = True,
+        alerts_enabled: bool = True, alert_strings: tuple[bytes, ...] = (b"alert one", b"", b"", b"", b"", b"", b"", b"", b"", b""),
+    ) -> bytes:
+        assert len(alert_strings) == 10
+        strings = b"".join(
+            b'<parameter id="alertstring' + str(index + 1).encode() +
+            b'" structure="RWtext"><value>' + value + b"</value></parameter>"
+            for index, value in enumerate(alert_strings)
+        )
+        return (
+            b'<avtrans><action>content</action><paths><path>units.event_notification.sessions</path></paths><payload>'
+            b'<controls><control id="save" structure="button"/></controls>'
+            b'<section id="sessionform" structure="form"><parameter id="sessiontitle" structure="title">'
+            b'<parameter id="sessionlogenable" structure="checkbox"><value>' +
+            (b"true" if enabled else b"false") + b'</value><parameter id="notice" structure="notice"/>'
+            b'<parameter id="destination" structure="combo"><value>' + destination +
+            b'</value><option>local</option><option>nfs</option><option>syslog</option><option>dsview</option></parameter>'
+            b'<parameter id="enabletimestamp" structure="combo"><value>' +
+            (b"yes" if timestamp else b"no") + b'</value><option>yes</option><option>no</option></parameter>'
+            b'<parameter id="alertenable" structure="checkbox"><value>' +
+            (b"true" if alerts_enabled else b"false") + b'</value>' + strings +
+            b'</parameter></parameter></parameter></section></payload></avtrans>'
+        )
+
     def setting_get(self, root: Path, cookie: str, route: str, page: bytes, name: str):
         socket_path = root / f"{name}-get.sock"
         with FakeAvtransController(socket_path, [page]) as controller:
@@ -1465,6 +1493,9 @@ class NativeAdapterTests(unittest.TestCase):
             (b'accessPath="configuration.event-notify" accessRights="w"',
              b'accessPath="configuration.event-notify" accessRights="r"',
              "/api/v1/settings/data-buffering"),
+            (b'accessPath="configuration.event-notify" accessRights="w"',
+             b'accessPath="configuration.event-notify" accessRights="r"',
+             "/api/v1/settings/appliance-logging"),
         )
         for expected, replacement, route in cases:
             with self.subTest(route=route), tempfile.TemporaryDirectory() as temporary:
@@ -1736,6 +1767,165 @@ class NativeAdapterTests(unittest.TestCase):
                 )
                 self.assertIn(b"Status: 400", rejected.stdout, candidate)
             self.assertFalse((root / "never.sock").exists())
+
+    def test_appliance_logging_get_and_conditional_put_preserve_inactive_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            route = "/api/v1/settings/appliance-logging"
+            current_strings = (b"one", b"two", b"three", b"four", b"five", b"six", b"seven", b"eight", b"nine", b"ten")
+            current = self.appliance_logging_page(alert_strings=current_strings)
+            get_result, _controller = self.setting_get(root, cookie, route, current, "logging-rev")
+            headers, payload = self.cgi_json(get_result)
+            self.assertIn(b"Status: 200", headers)
+            revision = next(line.split(b": ", 1)[1].decode() for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            self.assertEqual({
+                "sessionLoggingEnabled": True, "destination": "local", "timestampEnabled": True,
+                "alertsEnabled": True, "alertStrings": [item.decode() for item in current_strings],
+                "allowedDestinations": ["local", "nfs", "syslog", "dsview"], "revision": revision,
+            }, payload)
+
+            cases = (
+                (
+                    "disabled", {"sessionLoggingEnabled": False},
+                    self.appliance_logging_page(False, alert_strings=current_strings),
+                    b'<section structure="form"><parameter id="sessionlogenable" structure="checkbox"><value>false</value></parameter></section>',
+                    (b'id="destination"', b'id="alertenable"', b'id="alertstring1"'),
+                ),
+                (
+                    "alerts-disabled", {"sessionLoggingEnabled": True, "destination": "nfs", "timestampEnabled": False, "alertsEnabled": False},
+                    self.appliance_logging_page(True, b"nfs", False, False, current_strings),
+                    b'<parameter id="sessionlogenable" structure="checkbox"><value>true</value><parameter id="destination" structure="combo"><value>nfs</value></parameter><parameter id="enabletimestamp" structure="combo"><value>no</value></parameter><parameter id="alertenable" structure="checkbox"><value>false</value></parameter></parameter>',
+                    (b'id="alertstring1"',),
+                ),
+                (
+                    "alerts-enabled", {"sessionLoggingEnabled": True, "destination": "syslog", "timestampEnabled": True, "alertsEnabled": True, "alertStrings": ["<&"] + [""] * 9},
+                    self.appliance_logging_page(True, b"syslog", True, True, (b"&lt;&amp;",) + (b"",) * 9),
+                    b'<parameter id="alertstring1" structure="RWtext"><value>&lt;&amp;</value></parameter>',
+                    (),
+                ),
+            )
+            for name, body, saved, expected, omitted in cases:
+                with self.subTest(name=name):
+                    socket_path = root / f"logging-{name}.sock"
+                    environment = {
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": revision,
+                    }
+                    with FakeAvtransController(socket_path, [current, saved]) as controller:
+                        result = self.run_cgi(
+                            "PUT", route, cookie=cookie, csrf=str(session["csrfToken"]),
+                            body=json.dumps(body).encode(), content_type="application/json",
+                            extra_environment=environment,
+                        )
+                    self.assertIn(b"Status: 204", result.stdout)
+                    self.assertEqual(2, len(controller.requests))
+                    request = controller.requests[1][1]
+                    self.assertIn(expected, request)
+                    for marker in omitted:
+                        self.assertNotIn(marker, request)
+
+            current = self.appliance_logging_page(True, b"local", True, False, current_strings)
+            read, _controller = self.setting_get(root, cookie, route, current, "logging-mismatch-read")
+            read_headers, _payload = self.cgi_json(read)
+            etag = next(line.split(b": ", 1)[1].decode() for line in read_headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            changed = self.appliance_logging_page(True, b"local", False, False, (b"tampered",) + current_strings[1:])
+            socket_path = root / "logging-mismatch.sock"
+            with FakeAvtransController(socket_path, [current, changed]) as controller:
+                rejected = self.run_cgi(
+                    "PUT", route, cookie=cookie, csrf=str(session["csrfToken"]),
+                    body=json.dumps({"sessionLoggingEnabled": True, "destination": "local", "timestampEnabled": False, "alertsEnabled": False}).encode(),
+                    content_type="application/json",
+                    extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": etag},
+                )
+            _headers, payload = self.cgi_json(rejected)
+            self.assertEqual("action_outcome_unknown", payload["code"])
+            self.assertEqual(2, len(controller.requests))
+
+            socket_path = root / "logging-disconnect-after-write.sock"
+            with FakeAvtransController(socket_path, [current, None]) as controller:
+                uncertain = self.run_cgi(
+                    "PUT", route, cookie=cookie, csrf=str(session["csrfToken"]),
+                    body=json.dumps({"sessionLoggingEnabled": False}).encode(),
+                    content_type="application/json",
+                    extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": etag},
+                )
+            uncertain_headers, uncertain_payload = self.cgi_json(uncertain)
+            self.assertIn(b"Status: 503", uncertain_headers)
+            self.assertEqual("action_outcome_unknown", uncertain_payload["code"])
+            self.assertEqual(2, len(controller.requests))
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+            self.assertIn(b"<action>save</action>", controller.requests[1][1])
+
+    def test_appliance_logging_rejects_malformed_backend_and_closed_invalid_bodies(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            route = "/api/v1/settings/appliance-logging"
+            page = self.appliance_logging_page()
+            destination = (
+                b'<parameter id="destination" structure="combo"><value>local</value>'
+                b'<option>local</option><option>nfs</option><option>syslog</option><option>dsview</option></parameter>'
+            )
+            timestamp = (
+                b'<parameter id="enabletimestamp" structure="combo"><value>yes</value>'
+                b'<option>yes</option><option>no</option></parameter>'
+            )
+            strings_start = page.index(b'<parameter id="alertstring1"')
+            strings_end = page.index(b'</parameter>', page.index(b'<parameter id="alertstring10"')) + len(b'</parameter>')
+            alert_strings = page[strings_start:strings_end]
+            closing = b'</parameter></parameter></parameter></section>'
+            malformed_pages = (
+                page.replace(b'id="sessiontitle" structure="title"', b'id="wrong" structure="title"'),
+                page.replace(b'<parameter id="notice" structure="notice"/>', b''),
+                page.replace(b'<option>dsview</option>', b'<option>other</option>'),
+                page.replace(b'<parameter id="alertstring1"', b'<parameter id="extra" structure="RWtext"><value>x</value></parameter><parameter id="alertstring1"'),
+                self.appliance_logging_page(alert_strings=(b"a" * 65,) + (b"",) * 9),
+                page.replace(destination + timestamp, timestamp + destination),
+                page.replace(destination, b'').replace(closing, b'</parameter></parameter>' + destination + b'</parameter></section>'),
+                page.replace(alert_strings, b'').replace(closing, b'</parameter>' + alert_strings + b'</parameter></parameter></section>'),
+                page.replace(destination, b'<parameter id="wrapper" structure="title">' + destination + b'</parameter>'),
+            )
+            for index, malformed in enumerate(malformed_pages):
+                with self.subTest(malformed=index):
+                    result, _controller = self.setting_get(root, cookie, route, malformed, f"logging-bad-{index}")
+                    headers, payload = self.cgi_json(result)
+                    self.assertIn(b"Status: 502", headers)
+                    self.assertEqual("backend_protocol_error", payload["code"])
+
+            etag = '"' + "0" * 64 + '"'
+            valid_base = {"sessionLoggingEnabled": True, "destination": "local", "timestampEnabled": False, "alertsEnabled": False}
+            invalid_bodies = (
+                {}, {"sessionLoggingEnabled": "false"},
+                {"sessionLoggingEnabled": False, "destination": "local"},
+                {"sessionLoggingEnabled": True, "destination": "local", "timestampEnabled": False},
+                {**valid_base, "destination": "other"},
+                {**valid_base, "alertStrings": [""] * 10},
+                {**valid_base, "alertsEnabled": True},
+                {**valid_base, "alertsEnabled": True, "alertStrings": [""] * 9},
+                {**valid_base, "alertsEnabled": True, "alertStrings": [""] * 11},
+                {**valid_base, "alertsEnabled": True, "alertStrings": ["é" * 33] + [""] * 9},
+                {**valid_base, "unexpected": 1},
+            )
+            no_backend = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"), "HTTP_IF_MATCH": etag,
+            }
+            for candidate in invalid_bodies:
+                with self.subTest(candidate=candidate):
+                    rejected = self.run_cgi(
+                        "PUT", route, cookie=cookie, csrf=str(session["csrfToken"]),
+                        body=json.dumps(candidate, ensure_ascii=False).encode(), content_type="application/json",
+                        extra_environment=no_backend,
+                    )
+                    self.assertIn(b"Status: 400", rejected.stdout)
+            duplicate = self.run_cgi(
+                "PUT", route, cookie=cookie, csrf=str(session["csrfToken"]),
+                body=b'{"sessionLoggingEnabled":false,"sessionLoggingEnabled":false}',
+                content_type="application/json", extra_environment=no_backend,
+            )
+            self.assertIn(b"Status: 400", duplicate.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
 
     def test_session_password_change_rejects_bearer_csrf_and_confirmation_errors_before_backend(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -147,6 +147,40 @@
           </div>
         </section>
 
+        <section id="appliance-logging-view" class="view" aria-labelledby="appliance-logging-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Events and logs</span><h1 id="appliance-logging-title">Appliance Logging</h1><p>Configure new-session appliance logging from a fresh settings read. Existing sessions are unaffected.</p></div>
+            <button id="reload-appliance-logging" class="secondary-button" type="button">Reload</button>
+          </div>
+          <div class="panel">
+            <form id="appliance-logging-form">
+              <label class="check-row"><input id="logging-enabled" type="checkbox" disabled><span><strong>Enable appliance logging</strong><small>Enabling or disabling applies to new sessions only.</small></span></label>
+              <div id="logging-options" hidden>
+                <div class="form-grid">
+                  <div><label for="logging-destination">Destination</label><select id="logging-destination" disabled required></select></div>
+                  <label class="check-row"><input id="logging-timestamp" type="checkbox" disabled><span><strong>Include timestamps</strong></span></label>
+                </div>
+                <label class="check-row"><input id="logging-alerts-enabled" type="checkbox" disabled><span><strong>Enable alert-string matching</strong></span></label>
+                <div id="logging-alert-strings" class="form-grid" hidden>
+                  <div><label for="logging-alert-1">Alert string 1</label><input id="logging-alert-1" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-2">Alert string 2</label><input id="logging-alert-2" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-3">Alert string 3</label><input id="logging-alert-3" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-4">Alert string 4</label><input id="logging-alert-4" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-5">Alert string 5</label><input id="logging-alert-5" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-6">Alert string 6</label><input id="logging-alert-6" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-7">Alert string 7</label><input id="logging-alert-7" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-8">Alert string 8</label><input id="logging-alert-8" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-9">Alert string 9</label><input id="logging-alert-9" maxlength="64" disabled></div>
+                  <div><label for="logging-alert-10">Alert string 10</label><input id="logging-alert-10" maxlength="64" disabled></div>
+                </div>
+              </div>
+              <p id="appliance-logging-status" class="panel-status" aria-live="polite">Load the current setting before saving.</p>
+              <p id="appliance-logging-error" class="form-error" role="alert"></p>
+              <button id="save-appliance-logging" class="primary-button" type="submit" disabled>Save setting</button>
+            </form>
+          </div>
+        </section>
+
         <section id="password-change-view" class="view" aria-labelledby="password-change-title" hidden>
           <div class="page-heading"><div><span class="eyebrow">Account security</span><h1 id="password-change-title">Change password</h1><p>Update the password of the signed-in PM3000 user.</p></div></div>
           <div class="panel">

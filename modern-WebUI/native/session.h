@@ -19,6 +19,7 @@ typedef struct {
     int can_control_power;
     int can_help_language;
     int can_data_buffering;
+    int can_appliance_logging;
 } pm3000_session;
 
 int pm3000_session_create(const char *directory, const char *username,

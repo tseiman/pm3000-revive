@@ -117,9 +117,15 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 - The full suite contains 195 passing tests; strict host C99, OpenAPI, JavaScript, PPC32 big-endian, and QEMU e300c3 gates pass.
 - No real PM3000 setting write was performed; synthetic fixtures do not replace an approved device test.
 
-### ⬜ Stage 9 milestone 2B — Remaining low-risk fixed settings
+### 🟡 Stage 9 milestone 2B — Remaining low-risk fixed settings
 
-**Status:** next. Add further fixed authentication, policy, logging, and network contracts one bounded resource at a time. Lockout-sensitive writes require a documented recovery path and explicit device-test approval.
+**Status:** in progress. The first candidate adds the bounded Appliance Logging `GET|PUT` resource offline; release gates and independent review remain open.
+
+- Validates the exact nested firmware form, fixed destination/timestamp choices, booleans, and ten 64-byte alert strings.
+- Uses a closed conditional request union: inactive descendants are omitted from the save and must remain unchanged in the typed post-save response.
+- Requires cookie session, exact `configuration.event-notify:w` capability, CSRF, strong `ETag`/`If-Match`, and no retry after uncertain dispatch.
+- Applies to newly opened sessions only. No real setting write or runtime-effect validation has been performed.
+- Further lockout-sensitive network, security, boot, and authentication writes require a documented recovery path and explicit device-test approval.
 
 ### ⬜ Stage 9 milestone 3 — Static create/save flows
 

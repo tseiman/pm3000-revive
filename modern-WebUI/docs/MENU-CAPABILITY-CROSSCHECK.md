@@ -10,9 +10,9 @@ This document compares the firmware 2.0.1.23 navigation model with the compact m
 - the extracted CACPD feature-module contracts;
 - the current REST API, native adapter, and browser client.
 
-No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed. Help and Language and Data Buffering are offline static-contract implementations; their real firmware write behavior has not been validated on a device.
+No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed. Help and Language, Data Buffering, and Appliance Logging are offline static-contract implementations; their real firmware write behavior has not been validated on a device.
 
-The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), self-service password change (`units.change_password`), Help and Language (`units.applianceSettings.help`), and Data Buffering (`units.event_notification.global_settings_databuffering`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
+The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), self-service password change (`units.change_password`), Help and Language (`units.applianceSettings.help`), Data Buffering (`units.event_notification.global_settings_databuffering`), and Appliance Logging (`units.event_notification.sessions`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
 
 ## Classification
 
@@ -195,9 +195,10 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Validation status:** parser, serializer, ranges, stale protection, contract, and UI behavior are tested offline. No real firmware write has been attempted or validated.
 
 - **Appliance Logging** — `units.event_notification.sessions`
-  - **Current:** Placeholder.
-  - **Static schema:** session/logging configuration.
-  - **Decision:** read candidate; writes require a complete form pair.
+  - **Current:** Implemented offline as session-only `GET|PUT /api/v1/settings/appliance-logging` and a dependency-free conditional browser form.
+  - **Static schema:** exact nested `sessionform` with logging enable, destination (`local`, `nfs`, `syslog`, or `dsview`), timestamp boolean, alert enable, and ten alert strings of at most 64 UTF-8 bytes. Exact `configuration.event-notify:w` capability is required and bearer authentication is rejected.
+  - **Write semantics:** closed conditional replacement only. Inactive descendants are omitted from the fixed firmware request and their freshly read values must remain unchanged in the typed post-save response. GET supplies a quoted strong revision and `ETag`; PUT requires CSRF and matching `If-Match`. No automatic retry follows possible dispatch.
+  - **Validation status:** parser hierarchy/order/choices, conditional JSON union, serializer omission, preserved-state read-back, stale protection, contract, and browser race behavior are tested offline. No real write has been attempted. Runtime effect applies to newly opened sessions and requires separate approved device validation.
 
 - **Active Sessions** — `units.activeSessions`
   - **Current:** Placeholder.

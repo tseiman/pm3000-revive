@@ -7,7 +7,8 @@
 
 typedef enum {
     PM3000_FORM_HELP_LANGUAGE = 1,
-    PM3000_FORM_DATA_BUFFERING = 2
+    PM3000_FORM_DATA_BUFFERING = 2,
+    PM3000_FORM_APPLIANCE_LOGGING = 3
 } pm3000_fixed_form_kind;
 
 struct pm3000_fixed_snapshot {
@@ -17,6 +18,7 @@ struct pm3000_fixed_snapshot {
 
 struct pm3000_fixed_input {
     char values[PM3000_FIXED_MAX_FIELDS][PM3000_FIXED_VALUE_SIZE];
+    unsigned char present[PM3000_FIXED_MAX_FIELDS];
 };
 
 const char *pm3000_fixed_path(pm3000_fixed_form_kind kind);
@@ -32,6 +34,9 @@ int pm3000_fixed_language_allowed(const struct pm3000_fixed_snapshot *snapshot,
 int pm3000_fixed_values_match(pm3000_fixed_form_kind kind,
                               const struct pm3000_fixed_snapshot *snapshot,
                               const struct pm3000_fixed_input *input);
+int pm3000_fixed_merge_inactive(pm3000_fixed_form_kind kind,
+                                const struct pm3000_fixed_snapshot *snapshot,
+                                struct pm3000_fixed_input *input);
 int pm3000_fixed_serialize(pm3000_fixed_form_kind kind,
                            const struct pm3000_fixed_input *input,
                            char *output, size_t capacity);
