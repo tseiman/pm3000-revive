@@ -270,7 +270,7 @@ static int write_json_ascii_string(FILE *output, const char *value) {
     if (fputc('"', output) == EOF) return -1;
     while (*cursor != '\0') {
         unsigned char c = *cursor++;
-        if (c < 0x20U || c >= 0x80U) return -1;
+        if (c < 0x20U) return -1;
         if (c == '"' || c == '\\') {
             if (fputc('\\', output) == EOF) return -1;
         }
@@ -917,6 +917,384 @@ static int run_cgi(void) {
             return ferror(stdout) ? 1 : 0;
         }
         return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/system/information") == 0) {
+        static const char permission[] = "units.applianceSettings.information";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "System information is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_sysinfo info;
+            if (pm3000_fetch_sysinfo_session(socket_path, gui_session.sid,
+                                              &response, &response_length,
+                                              error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The system information backend was unavailable.");
+            if (pm3000_xml_system_information(response, response_length, &info) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The system information response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"modelNumber\":", stdout);
+            if (write_json_ascii_string(stdout, info.model_number) != 0) return 1;
+            fputs(",\"bootCodeVersion\":", stdout);
+            if (write_json_ascii_string(stdout, info.boot_code_version) != 0) return 1;
+            fputs(",\"firmwareVersion\":", stdout);
+            if (write_json_ascii_string(stdout, info.firmware_version) != 0) return 1;
+            fputs(",\"bootedFrom\":", stdout);
+            if (write_json_ascii_string(stdout, info.booted_from) != 0) return 1;
+            fputs(",\"cpu\":", stdout);
+            if (write_json_ascii_string(stdout, info.cpu) != 0) return 1;
+            fputs(",\"revision\":", stdout);
+            if (write_json_ascii_string(stdout, info.revision) != 0) return 1;
+            fputs(",\"bogomips\":", stdout);
+            if (write_json_ascii_string(stdout, info.bogomips) != 0) return 1;
+            fputs("}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/system/usage/memory") == 0) {
+        static const char permission[] = "units.applianceSettings.usage.memory";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "Memory usage is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_memory_table table;
+            unsigned int i;
+            if (pm3000_fetch_memory_session(socket_path, gui_session.sid,
+                                             &response, &response_length,
+                                             error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The memory usage backend was unavailable.");
+            if (pm3000_xml_memory_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The memory usage response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"rows\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"name\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].name) != 0) return 1;
+                fputs(",\"value\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].value) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/system/usage/flash") == 0) {
+        static const char permission[] = "units.applianceSettings.usage.flashUsage";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "Flash usage is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_flash_table table;
+            unsigned int i;
+            if (pm3000_fetch_flash_session(socket_path, gui_session.sid,
+                                            &response, &response_length,
+                                            error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The flash usage backend was unavailable.");
+            if (pm3000_xml_flash_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The flash usage response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"rows\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"filesystem\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].filesystem) != 0) return 1;
+                fputs(",\"blocks1k\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].blocks1k) != 0) return 1;
+                fputs(",\"used\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].used) != 0) return 1;
+                fputs(",\"available\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].available) != 0) return 1;
+                fputs(",\"usePercentage\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].use_percentage) != 0) return 1;
+                fputs(",\"mountedOn\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].mounted_on) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/monitoring/network/devices") == 0) {
+        static const char permission[] = "units.monitoring.networkmon.monitoringDevice";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "Network device monitoring is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_netdev_table table;
+            unsigned int i;
+            if (pm3000_fetch_netdev_session(socket_path, gui_session.sid,
+                                             &response, &response_length,
+                                             error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The network device backend was unavailable.");
+            if (pm3000_xml_netdev_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The network device response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"devices\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"name\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].device_name) != 0) return 1;
+                fputs(",\"status\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].status) != 0) return 1;
+                fputs(",\"ipv4Address\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].ipv4_address) != 0) return 1;
+                fputs(",\"ipv4Mask\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].ipv4_mask) != 0) return 1;
+                fputs(",\"ipv6Address\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].ipv6_address) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/monitoring/network/routes/ipv4") == 0) {
+        static const char permission[] = "units.monitoring.networkmon.monitoringIpv4RouteTable";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "IPv4 route monitoring is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_route4_table table;
+            unsigned int i;
+            if (pm3000_fetch_route4_session(socket_path, gui_session.sid,
+                                             &response, &response_length,
+                                             error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The IPv4 route backend was unavailable.");
+            if (pm3000_xml_route4_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The IPv4 route response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"routes\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"destination\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].destination) != 0) return 1;
+                fputs(",\"gateway\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].gateway) != 0) return 1;
+                fputs(",\"genmask\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].genmask) != 0) return 1;
+                fputs(",\"flags\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].flags) != 0) return 1;
+                fputs(",\"metric\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].metric) != 0) return 1;
+                fputs(",\"ref\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].ref) != 0) return 1;
+                fputs(",\"use\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].use) != 0) return 1;
+                fputs(",\"iface\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].iface) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/monitoring/network/routes/ipv6") == 0) {
+        static const char permission[] = "units.monitoring.networkmon.monitoringIpv6RouteTable";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "IPv6 route monitoring is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_route6_table table;
+            unsigned int i;
+            if (pm3000_fetch_route6_session(socket_path, gui_session.sid,
+                                             &response, &response_length,
+                                             error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The IPv6 route backend was unavailable.");
+            if (pm3000_xml_route6_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The IPv6 route response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"routes\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"destination\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].destination) != 0) return 1;
+                fputs(",\"nextHop\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].next_hop) != 0) return 1;
+                fputs(",\"flags\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].flags) != 0) return 1;
+                fputs(",\"metric\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].metric) != 0) return 1;
+                fputs(",\"ref\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].ref) != 0) return 1;
+                fputs(",\"use\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].use) != 0) return 1;
+                fputs(",\"iface\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].iface) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
+    }
+    if (method != NULL && path != NULL &&
+        strcmp(path, "/api/v1/monitoring/serial-ports") == 0) {
+        static const char permission[] = "units.monitoring.serialstatistics";
+        const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (getenv("HTTP_AUTHORIZATION") != NULL)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for this route.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!pm3000_session_has_path(&gui_session, permission))
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "Serial port monitoring is not permitted.");
+        if (strcmp(method, "GET") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        {
+            struct pm3000_serial_table table;
+            unsigned int i;
+            if (pm3000_fetch_serial_session(socket_path, gui_session.sid,
+                                             &response, &response_length,
+                                             error, sizeof(error)) != 0)
+                return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                                 "The serial port backend was unavailable.");
+            if (pm3000_xml_serial_table(response, response_length, &table) != 0) {
+                free(response);
+                return cgi_error(502U, "Bad Gateway", "backend_protocol_error",
+                                 "The serial port response was invalid.");
+            }
+            free(response);
+            cgi_headers(200U, "OK");
+            fputs("{\"ports\":[", stdout);
+            for (i = 0U; i < table.row_count; ++i) {
+                if (i > 0U) fputc(',', stdout);
+                fputs("{\"deviceName\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].device_name) != 0) return 1;
+                fputs(",\"portProfile\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].port_profile) != 0) return 1;
+                fputs(",\"speed\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].speed) != 0) return 1;
+                fputs(",\"signals\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].signals) != 0) return 1;
+                fputs(",\"txBytes\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].tx_bytes) != 0) return 1;
+                fputs(",\"rxBytes\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].rx_bytes) != 0) return 1;
+                fputs(",\"frameError\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].frame_error) != 0) return 1;
+                fputs(",\"parityError\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].parity_error) != 0) return 1;
+                fputs(",\"brk\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].brk) != 0) return 1;
+                fputs(",\"overrun\":", stdout);
+                if (write_json_ascii_string(stdout, table.rows[i].overrun) != 0) return 1;
+                fputc('}', stdout);
+            }
+            fputs("]}\n", stdout);
+            return ferror(stdout) ? 1 : 0;
+        }
     }
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/tokens") == 0 ||

@@ -245,6 +245,13 @@ class SyntheticFixtureTests(unittest.TestCase):
             "navigation-response.xml",
             "outlet-inventory-response.xml",
             "outlet-status-response.xml",
+            "system-information-response.xml",
+            "memory-usage-response.xml",
+            "flash-usage-response.xml",
+            "netdev-monitoring-response.xml",
+            "ipv4-routes-response.xml",
+            "ipv6-routes-response.xml",
+            "serial-stats-response.xml",
         }
         actual = {path.name for path in FIXTURES.glob("*.xml")}
         self.assertEqual(expected, actual)

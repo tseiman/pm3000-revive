@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.2.0",
-    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, and session-only password change."
+    "version": "1.3.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
   },
   "servers": [
     {
@@ -926,6 +926,202 @@
           }
         }
       }
+    },
+    "/api/v1/system/information": {
+      "get": {
+        "operationId": "getSystemInformation",
+        "summary": "Read typed appliance identity and firmware version fields",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.applianceSettings.information",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "Appliance identity and version fields, excluding serial number.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SystemInformation" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/system/usage/memory": {
+      "get": {
+        "operationId": "getMemoryUsage",
+        "summary": "Read memory usage rows from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.applianceSettings.usage.memory",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "Memory usage table rows.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MemoryUsage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/system/usage/flash": {
+      "get": {
+        "operationId": "getFlashUsage",
+        "summary": "Read flash filesystem usage rows from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.applianceSettings.usage.flashUsage",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "Flash filesystem usage table rows.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FlashUsage" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/monitoring/network/devices": {
+      "get": {
+        "operationId": "getNetworkDevices",
+        "summary": "Read network device monitoring rows from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.monitoring.networkmon.monitoringDevice",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "Network device rows with interface name, status, and addresses.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NetworkDevices" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/monitoring/network/routes/ipv4": {
+      "get": {
+        "operationId": "getIpv4Routes",
+        "summary": "Read the IPv4 routing table from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.monitoring.networkmon.monitoringIpv4RouteTable",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "IPv4 routing table rows.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Ipv4Routes" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/monitoring/network/routes/ipv6": {
+      "get": {
+        "operationId": "getIpv6Routes",
+        "summary": "Read the IPv6 routing table from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.monitoring.networkmon.monitoringIpv6RouteTable",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "IPv6 routing table rows.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Ipv6Routes" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
+    },
+    "/api/v1/monitoring/serial-ports": {
+      "get": {
+        "operationId": "getSerialPorts",
+        "summary": "Read serial port statistics from the appliance",
+        "security": [{ "cookieAuth": [] }],
+        "x-required-nav-path": "units.monitoring.serialstatistics",
+        "x-bearer-rejected": true,
+        "responses": {
+          "200": {
+            "description": "Serial port statistics rows.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SerialPorts" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      }
     }
   },
   "components": {
@@ -1472,6 +1668,183 @@
             "minLength": 1,
             "maxLength": 99,
             "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        }
+      },
+      "SystemInformation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "modelNumber",
+          "bootCodeVersion",
+          "firmwareVersion",
+          "bootedFrom",
+          "cpu",
+          "revision",
+          "bogomips"
+        ],
+        "properties": {
+          "modelNumber":       { "type": "string", "minLength": 0, "maxLength": 255 },
+          "bootCodeVersion":   { "type": "string", "minLength": 0, "maxLength": 255 },
+          "firmwareVersion":   { "type": "string", "minLength": 0, "maxLength": 255 },
+          "bootedFrom":        { "type": "string", "minLength": 0, "maxLength": 255 },
+          "cpu":               { "type": "string", "minLength": 0, "maxLength": 255 },
+          "revision":          { "type": "string", "minLength": 0, "maxLength": 255 },
+          "bogomips":          { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "MemoryRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "value"],
+        "properties": {
+          "name":  { "type": "string", "minLength": 0, "maxLength": 255 },
+          "value": { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "MemoryUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rows"],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/MemoryRow" }
+          }
+        }
+      },
+      "FlashRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["filesystem", "blocks1k", "used", "available", "usePercentage", "mountedOn"],
+        "properties": {
+          "filesystem":    { "type": "string", "minLength": 0, "maxLength": 255 },
+          "blocks1k":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "used":          { "type": "string", "minLength": 0, "maxLength": 255 },
+          "available":     { "type": "string", "minLength": 0, "maxLength": 255 },
+          "usePercentage": { "type": "string", "minLength": 0, "maxLength": 255 },
+          "mountedOn":     { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "FlashUsage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rows"],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/FlashRow" }
+          }
+        }
+      },
+      "NetworkDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status", "ipv4Address", "ipv4Mask", "ipv6Address"],
+        "properties": {
+          "name":        { "type": "string", "minLength": 0, "maxLength": 255 },
+          "status":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "ipv4Address": { "type": "string", "minLength": 0, "maxLength": 255 },
+          "ipv4Mask":    { "type": "string", "minLength": 0, "maxLength": 255 },
+          "ipv6Address": { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "NetworkDevices": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["devices"],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/NetworkDevice" }
+          }
+        }
+      },
+      "Ipv4Route": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["destination", "gateway", "genmask", "flags", "metric", "ref", "use", "iface"],
+        "properties": {
+          "destination": { "type": "string", "minLength": 0, "maxLength": 255 },
+          "gateway":     { "type": "string", "minLength": 0, "maxLength": 255 },
+          "genmask":     { "type": "string", "minLength": 0, "maxLength": 255 },
+          "flags":       { "type": "string", "minLength": 0, "maxLength": 255 },
+          "metric":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "ref":         { "type": "string", "minLength": 0, "maxLength": 255 },
+          "use":         { "type": "string", "minLength": 0, "maxLength": 255 },
+          "iface":       { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "Ipv4Routes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["routes"],
+        "properties": {
+          "routes": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/Ipv4Route" }
+          }
+        }
+      },
+      "Ipv6Route": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["destination", "nextHop", "flags", "metric", "ref", "use", "iface"],
+        "properties": {
+          "destination": { "type": "string", "minLength": 0, "maxLength": 255 },
+          "nextHop":     { "type": "string", "minLength": 0, "maxLength": 255 },
+          "flags":       { "type": "string", "minLength": 0, "maxLength": 255 },
+          "metric":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "ref":         { "type": "string", "minLength": 0, "maxLength": 255 },
+          "use":         { "type": "string", "minLength": 0, "maxLength": 255 },
+          "iface":       { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "Ipv6Routes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["routes"],
+        "properties": {
+          "routes": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/Ipv6Route" }
+          }
+        }
+      },
+      "SerialPort": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "deviceName", "portProfile", "speed", "signals",
+          "txBytes", "rxBytes", "frameError", "parityError", "brk", "overrun"
+        ],
+        "properties": {
+          "deviceName":   { "type": "string", "minLength": 0, "maxLength": 255 },
+          "portProfile":  { "type": "string", "minLength": 0, "maxLength": 255 },
+          "speed":        { "type": "string", "minLength": 0, "maxLength": 255 },
+          "signals":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "txBytes":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "rxBytes":      { "type": "string", "minLength": 0, "maxLength": 255 },
+          "frameError":   { "type": "string", "minLength": 0, "maxLength": 255 },
+          "parityError":  { "type": "string", "minLength": 0, "maxLength": 255 },
+          "brk":          { "type": "string", "minLength": 0, "maxLength": 255 },
+          "overrun":      { "type": "string", "minLength": 0, "maxLength": 255 }
+        }
+      },
+      "SerialPorts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ports"],
+        "properties": {
+          "ports": {
+            "type": "array",
+            "maxItems": 25,
+            "items": { "$ref": "#/components/schemas/SerialPort" }
           }
         }
       }

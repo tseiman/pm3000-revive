@@ -92,19 +92,16 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** read candidate only for now. Writes can impair boot or management access and require a complete form pair.
 
 - **Information** — `units.applianceSettings.information`
-  - **Current:** Placeholder.
-  - **Static schema:** identity, firmware version, and CPU information.
-  - **Decision:** high-priority read candidate.
+  - **Current:** Implemented as session-only `GET /api/v1/system/information`. Returns a closed object with `modelNumber`, `bootCodeVersion`, `firmwareVersion`, `bootedFrom`, `cpu`, `revision`, and `bogomips`. Serial number is excluded from the response. Bearer tokens return 401.
+  - **Static schema:** identity, firmware version, and CPU information from `identityform`.
 
 - **Memory** — `units.applianceSettings.usage.memory`
-  - **Current:** Placeholder.
-  - **Static schema:** read-only memory table.
-  - **Decision:** high-priority read candidate.
+  - **Current:** Implemented as session-only `GET /api/v1/system/usage/memory`. Returns bounded `rows` array with `name` and `value` fields. Bearer tokens return 401.
+  - **Static schema:** read-only `memoryTable` rows.
 
 - **Flash Usage** — `units.applianceSettings.usage.flashUsage`
-  - **Current:** Placeholder.
-  - **Static schema:** read-only flash-usage table.
-  - **Decision:** high-priority read candidate.
+  - **Current:** Implemented as session-only `GET /api/v1/system/usage/flash`. Returns bounded `rows` array with `filesystem`, `blocks1k`, `used`, `available`, `usePercentage`, and `mountedOn`. Bearer tokens return 401.
+  - **Static schema:** read-only `flashUsageTable` rows.
 
 ### Network
 
@@ -208,12 +205,20 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
 ### Monitoring
 
 - **Monitoring / Devices** — `units.monitoring.networkmon.monitoringDevice`
+  - **Current:** Implemented as session-only `GET /api/v1/monitoring/network/devices`. Returns bounded `devices` array with `name`, `status`, `ipv4Address`, `ipv4Mask`, and `ipv6Address`. Bearer tokens return 401.
+  - **Static schema:** read-only `devicesTable` rows.
+
 - **Monitoring / IPv4 Routing Table** — `units.monitoring.networkmon.monitoringIpv4RouteTable`
+  - **Current:** Implemented as session-only `GET /api/v1/monitoring/network/routes/ipv4`. Returns bounded `routes` array with `destination`, `gateway`, `genmask`, `flags`, `metric`, `ref`, `use`, and `iface`. Bearer tokens return 401.
+  - **Static schema:** read-only `ipv4RouteTable` rows.
+
 - **Monitoring / IPv6 Routing Table** — `units.monitoring.networkmon.monitoringIpv6RouteTable`
+  - **Current:** Implemented as session-only `GET /api/v1/monitoring/network/routes/ipv6`. Returns bounded `routes` array with `destination`, `nextHop`, `flags`, `metric`, `ref`, `use`, and `iface`. Bearer tokens return 401.
+  - **Static schema:** read-only `ipv6RouteTable` rows.
+
 - **Monitoring / Serial Ports** — `units.monitoring.serialstatistics`
-  - **Current:** All placeholders.
-  - **Static schema:** read-only network device/route tables and serial port profile, speed, signals, byte counters, framing/parity/break/overrun counters.
-  - **Decision:** highest-priority missing read-only capability set.
+  - **Current:** Implemented as session-only `GET /api/v1/monitoring/serial-ports`. Returns bounded `ports` array with `deviceName`, `portProfile`, `speed`, `signals`, `txBytes`, `rxBytes`, `frameError`, `parityError`, `brk`, and `overrun`. Bearer tokens return 401. The `break` parameter ID from the firmware maps to `brk` to avoid the C keyword.
+  - **Static schema:** read-only `serialstatistictable` rows.
 
 ### Current-user password
 
@@ -230,21 +235,24 @@ Implement `GET /api/v1/pdus` and `GET /api/v1/pdus/{pduId}` from the existing sa
 
 ### Tier 1: firmware-derived read-only expansion
 
-Implement fixed, field-specific read endpoints and modern views. Proposed narrow REST boundaries are:
+**Completed:** The following seven session-only read-only endpoints are now implemented with typed C99 native parsers, OpenAPI schemas, and dependency-free browser views:
 
-- `GET /api/v1/system/information` — appliance identity, firmware, and CPU summary;
+- `GET /api/v1/system/information` — appliance identity, firmware, and CPU summary (excludes serial number);
 - `GET /api/v1/system/usage/memory` — bounded memory rows;
 - `GET /api/v1/system/usage/flash` — bounded flash rows;
 - `GET /api/v1/monitoring/network/devices` — live device status;
 - `GET /api/v1/monitoring/network/routes/ipv4` and `/ipv6` — live routing tables;
-- `GET /api/v1/monitoring/serial-ports` — serial status and error counters;
-- `GET /api/v1/network/devices`, `/routes/ipv4`, `/routes/ipv6`, and `/hosts` — configured network inventory;
+- `GET /api/v1/monitoring/serial-ports` — serial status and error counters.
+
+Remaining Tier 1 candidates still to be implemented:
+
+- `GET /api/v1/network/devices`, `/routes/ipv4`, `/routes/ipv6`, and `/hosts` — configured network inventory (different backend paths from monitoring tables);
 - `GET /api/v1/outlet-groups` — group status and membership summary;
 - `GET /api/v1/events` and `/power-data-logging/status` — event policy and logging status.
 
-These endpoints must not expose raw Avtrans XML. Each endpoint must use a fixed backend path, strict structural parser, bounded arrays/strings, explicit field allowlist, and backend/session authorization. Unknown or duplicate fields fail closed where they affect identity; harmless unsupported display fields may be omitted. Configured and live monitoring routes remain separate because they have different backend paths and semantics.
+These and future endpoints must not expose raw Avtrans XML. Each endpoint must use a fixed backend path, strict structural parser, bounded arrays/strings, explicit field allowlist, and backend/session authorization. Unknown or duplicate fields fail closed where they affect identity; harmless unsupported display fields may be omitted.
 
-Start firmware-derived system and monitoring endpoints as cookie-authenticated browser routes. The current bearer `read` scope must not silently grant access to serial numbers, IP topology, routes, filesystems, or serial-port activity.
+The current bearer `read` scope must not silently grant access to serial numbers, IP topology, routes, filesystems, or serial-port activity.
 
 ### Tier 2: sensitive read
 

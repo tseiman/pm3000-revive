@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-The current offline candidate implements PM3000-backed WebUI sessions, token administration, validated outlet and PDU inventory, fixed power actions, self-service password change, and typed DSView/NIS settings. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
+The current offline candidate implements PM3000-backed WebUI sessions, token administration, validated outlet and PDU inventory, fixed power actions, self-service password change, typed DSView/NIS settings, and seven session-only read-only system and monitoring endpoints with typed C99 parsers, OpenAPI v1.3.0 schemas, and dependency-free browser views. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
 
 ## Implemented
 
@@ -17,7 +17,8 @@ The current offline candidate implements PM3000-backed WebUI sessions, token adm
 - Power `on`/`off` writes return success only when a validated operation-specific inventory response reports the targeted outlet or PDU in the requested state. A `cycle` cannot be confirmed from a stable state and therefore returns `action_outcome_unknown` after dispatch. Password changes require the exact firmware-derived success-form hierarchy; settings writes require exact typed read-back of every submitted field. A transport failure, mismatch, or unexpected response after dispatch is never retried automatically.
 - Session-only password change with `units.change_password` authorization, CSRF, old password, matching new-password confirmation, secret zeroing, and expected response path `units.change_password.changedPassword`.
 - Session-only complete-replacement settings for DSView HTTPS allowance (`SecurityDSView` / `dsviewControl`) and NIS (`nis` / `nisserver`). Both use fixed paths, actions, form structure/order, PM3000 navigation rights, CSRF, closed JSON, fresh-read UI gating, and fail-closed response parsing. They do not infer PM3000 configuration rights from REST bearer scopes. DSView remains supported at this level but is not a priority for further expansion.
-- Dependency-free browser UI for outlet and PDU inventory/actions, password change, and REST-token administration. Non-migrated pages remain available through the legacy UI.
+- Session-only read-only system and monitoring endpoints: `GET /api/v1/system/information` (appliance identity fields, serial number excluded), `GET /api/v1/system/usage/memory` (memory rows), `GET /api/v1/system/usage/flash` (filesystem rows), `GET /api/v1/monitoring/network/devices` (device rows), `GET /api/v1/monitoring/network/routes/ipv4` (IPv4 route rows), `GET /api/v1/monitoring/network/routes/ipv6` (IPv6 route rows), `GET /api/v1/monitoring/serial-ports` (serial port statistics rows). All seven reject bearer tokens with 401, use cookie session with navigation-path capability gates, return 503 on transport failure and 502 on malformed backend response, and are documented in OpenAPI v1.3.0 with closed `additionalProperties: false` schemas.
+- Dependency-free browser UI for outlet and PDU inventory/actions, password change, REST-token administration, and all seven new read-only monitoring/system views with loading state, error state, and textContent rendering. No innerHTML. No browser storage. Non-migrated pages remain available through the legacy UI.
 - Backup-first host installer using a temporary OpenSSH ControlMaster; manual rollback remains separate.
 
 ## Static write-contract analysis
@@ -28,7 +29,7 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current complete repository suite: 169 tests passing.
+- Current complete repository suite: 177 tests passing.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
 - QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.

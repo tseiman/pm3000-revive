@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, tokenRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "" };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -81,7 +81,7 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.tokenRequest += 1;
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
   state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
@@ -131,6 +131,13 @@ function renderNavigation() {
       path === "units.authentication.authenticationservers.nis" ? "nis" :
       path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
       path === "units.powermanagement.pdu_management" ? "pdus" :
+      path === "units.applianceSettings.information" ? "sysinfo" :
+      path === "units.applianceSettings.usage.memory" ? "memory" :
+      path === "units.applianceSettings.usage.flashUsage" ? "flash" :
+      path === "units.monitoring.networkmon.monitoringDevice" ? "netdev" :
+      path === "units.monitoring.networkmon.monitoringIpv4RouteTable" ? "route4" :
+      path === "units.monitoring.networkmon.monitoringIpv6RouteTable" ? "route6" :
+      path === "units.monitoring.serialstatistics" ? "serial" :
       path === "units.topology" ? "outlets" : "legacy",
       path, text));
     node.appendChild(button);
@@ -144,7 +151,7 @@ function renderNavigation() {
 
 function switchView(view, path = "", label = "") {
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("password-change-view").hidden = view !== "password"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
@@ -154,6 +161,13 @@ function switchView(view, path = "", label = "") {
   if (view === "pdus") loadPdus();
   if (view === "nis") loadNisSetting();
   if (view === "dsview") loadDsviewSetting();
+  if (view === "sysinfo") loadSysinfo();
+  if (view === "memory") loadMemory();
+  if (view === "flash") loadFlash();
+  if (view === "netdev") loadNetdev();
+  if (view === "route4") loadRoute4();
+  if (view === "route6") loadRoute6();
+  if (view === "serial") loadSerial();
   if (view === "legacy") { setText("legacy-title", label); setText("legacy-path", path); }
 }
 
@@ -417,6 +431,100 @@ $("create-token-form").addEventListener("submit", async (event) => {
 });
 $("copy-secret").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("new-token-secret").textContent); setText("copy-state", "Copied to clipboard."); } catch { setText("copy-state", "Copy was blocked. Select and copy the value manually."); } });
 $("token-secret-dialog").addEventListener("close", clearOneTimeSecret); $("close-secret").addEventListener("click", () => $("token-secret-dialog").close());
+
+async function loadSysinfo() {
+  const request = ++state.sysinfoRequest; $("refresh-sysinfo").disabled = true;
+  setText("sysinfo-status", "Loading…"); $("sysinfo-fields").hidden = true;
+  try {
+    const payload = await api("/api/v1/system/information");
+    if (request === state.sysinfoRequest) {
+      setText("si-model", payload.modelNumber); setText("si-boot-code", payload.bootCodeVersion);
+      setText("si-firmware", payload.firmwareVersion); setText("si-booted-from", payload.bootedFrom);
+      setText("si-cpu", payload.cpu); setText("si-revision", payload.revision); setText("si-bogomips", payload.bogomips);
+      setText("sysinfo-status", ""); $("sysinfo-fields").hidden = false;
+    }
+  } catch (error) { if (request === state.sysinfoRequest && state.session) setText("sysinfo-status", error.message); }
+  finally { if (request === state.sysinfoRequest) $("refresh-sysinfo").disabled = false; }
+}
+async function loadMemory() {
+  const request = ++state.memoryRequest; $("refresh-memory").disabled = true;
+  setText("memory-status", "Loading…"); $("memory-table-wrap").hidden = true; $("memory-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/system/usage/memory");
+    if (request === state.memoryRequest) {
+      const rows = Array.isArray(payload.rows) ? payload.rows : []; const body = $("memory-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); const td1 = document.createElement("td"); td1.textContent = row.name; const td2 = document.createElement("td"); td2.textContent = row.value; tr.append(td1, td2); body.appendChild(tr); }
+      setText("memory-status", ""); $("memory-table-wrap").hidden = false; $("memory-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.memoryRequest && state.session) setText("memory-status", error.message); }
+  finally { if (request === state.memoryRequest) $("refresh-memory").disabled = false; }
+}
+async function loadFlash() {
+  const request = ++state.flashRequest; $("refresh-flash").disabled = true;
+  setText("flash-status", "Loading…"); $("flash-table-wrap").hidden = true; $("flash-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/system/usage/flash");
+    if (request === state.flashRequest) {
+      const rows = Array.isArray(payload.rows) ? payload.rows : []; const body = $("flash-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); ["filesystem","blocks1k","used","available","usePercentage","mountedOn"].forEach((k) => { const td = document.createElement("td"); td.textContent = String(row[k] ?? ""); tr.appendChild(td); }); body.appendChild(tr); }
+      setText("flash-status", ""); $("flash-table-wrap").hidden = false; $("flash-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.flashRequest && state.session) setText("flash-status", error.message); }
+  finally { if (request === state.flashRequest) $("refresh-flash").disabled = false; }
+}
+async function loadNetdev() {
+  const request = ++state.netdevRequest; $("refresh-netdev").disabled = true;
+  setText("netdev-status", "Loading…"); $("netdev-table-wrap").hidden = true; $("netdev-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/monitoring/network/devices");
+    if (request === state.netdevRequest) {
+      const rows = Array.isArray(payload.devices) ? payload.devices : []; const body = $("netdev-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); ["name","status","ipv4Address","ipv4Mask","ipv6Address"].forEach((k) => { const td = document.createElement("td"); td.textContent = String(row[k] ?? ""); tr.appendChild(td); }); body.appendChild(tr); }
+      setText("netdev-status", ""); $("netdev-table-wrap").hidden = false; $("netdev-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.netdevRequest && state.session) setText("netdev-status", error.message); }
+  finally { if (request === state.netdevRequest) $("refresh-netdev").disabled = false; }
+}
+async function loadRoute4() {
+  const request = ++state.route4Request; $("refresh-route4").disabled = true;
+  setText("route4-status", "Loading…"); $("route4-table-wrap").hidden = true; $("route4-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/monitoring/network/routes/ipv4");
+    if (request === state.route4Request) {
+      const rows = Array.isArray(payload.routes) ? payload.routes : []; const body = $("route4-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); ["destination","gateway","genmask","flags","metric","ref","use","iface"].forEach((k) => { const td = document.createElement("td"); td.textContent = String(row[k] ?? ""); tr.appendChild(td); }); body.appendChild(tr); }
+      setText("route4-status", ""); $("route4-table-wrap").hidden = false; $("route4-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.route4Request && state.session) setText("route4-status", error.message); }
+  finally { if (request === state.route4Request) $("refresh-route4").disabled = false; }
+}
+async function loadRoute6() {
+  const request = ++state.route6Request; $("refresh-route6").disabled = true;
+  setText("route6-status", "Loading…"); $("route6-table-wrap").hidden = true; $("route6-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/monitoring/network/routes/ipv6");
+    if (request === state.route6Request) {
+      const rows = Array.isArray(payload.routes) ? payload.routes : []; const body = $("route6-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); ["destination","nextHop","flags","metric","ref","use","iface"].forEach((k) => { const td = document.createElement("td"); td.textContent = String(row[k] ?? ""); tr.appendChild(td); }); body.appendChild(tr); }
+      setText("route6-status", ""); $("route6-table-wrap").hidden = false; $("route6-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.route6Request && state.session) setText("route6-status", error.message); }
+  finally { if (request === state.route6Request) $("refresh-route6").disabled = false; }
+}
+async function loadSerial() {
+  const request = ++state.serialRequest; $("refresh-serial").disabled = true;
+  setText("serial-status", "Loading…"); $("serial-table-wrap").hidden = true; $("serial-empty").hidden = true;
+  try {
+    const payload = await api("/api/v1/monitoring/serial-ports");
+    if (request === state.serialRequest) {
+      const rows = Array.isArray(payload.ports) ? payload.ports : []; const body = $("serial-rows"); clear(body);
+      for (const row of rows) { const tr = document.createElement("tr"); ["deviceName","portProfile","speed","signals","txBytes","rxBytes","frameError","parityError","brk","overrun"].forEach((k) => { const td = document.createElement("td"); td.textContent = String(row[k] ?? ""); tr.appendChild(td); }); body.appendChild(tr); }
+      setText("serial-status", ""); $("serial-table-wrap").hidden = false; $("serial-empty").hidden = rows.length !== 0;
+    }
+  } catch (error) { if (request === state.serialRequest && state.session) setText("serial-status", error.message); }
+  finally { if (request === state.serialRequest) $("refresh-serial").disabled = false; }
+}
+$("refresh-sysinfo").addEventListener("click", loadSysinfo); $("refresh-memory").addEventListener("click", loadMemory); $("refresh-flash").addEventListener("click", loadFlash); $("refresh-netdev").addEventListener("click", loadNetdev); $("refresh-route4").addEventListener("click", loadRoute4); $("refresh-route6").addEventListener("click", loadRoute6); $("refresh-serial").addEventListener("click", loadSerial);
 
 fetch("/api/v1/health", { cache: "no-store" }).then((response) => { if (!response.ok) throw new Error(); setText("health-label", "Adapter ready"); }).catch(() => setText("health-label", "Adapter unavailable"));
 async function bootstrapTransition() {

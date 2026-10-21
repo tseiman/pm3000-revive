@@ -30,4 +30,123 @@ int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
                           const char *path, char *domain, size_t domain_size,
                           char *address, size_t address_size);
 
+struct pm3000_sysinfo {
+    char model_number[256];
+    char boot_code_version[256];
+    char firmware_version[256];
+    char booted_from[256];
+    char cpu[256];
+    char revision[256];
+    char bogomips[256];
+};
+
+int pm3000_xml_system_information(const unsigned char *xml, size_t length,
+                                   struct pm3000_sysinfo *out);
+
+#define PM3000_MAX_TABLE_ROWS 25U
+
+struct pm3000_memory_row {
+    char name[256];
+    char value[256];
+};
+
+struct pm3000_memory_table {
+    struct pm3000_memory_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_memory_table(const unsigned char *xml, size_t length,
+                             struct pm3000_memory_table *out);
+
+struct pm3000_flash_row {
+    char filesystem[256];
+    char blocks1k[256];
+    char used[256];
+    char available[256];
+    char use_percentage[256];
+    char mounted_on[256];
+};
+
+struct pm3000_flash_table {
+    struct pm3000_flash_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_flash_table(const unsigned char *xml, size_t length,
+                            struct pm3000_flash_table *out);
+
+struct pm3000_netdev_row {
+    char device_name[256];
+    char status[256];
+    char ipv4_address[256];
+    char ipv4_mask[256];
+    char ipv6_address[256];
+};
+
+struct pm3000_netdev_table {
+    struct pm3000_netdev_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_netdev_table(const unsigned char *xml, size_t length,
+                             struct pm3000_netdev_table *out);
+
+struct pm3000_route4_row {
+    char destination[256];
+    char gateway[256];
+    char genmask[256];
+    char flags[256];
+    char metric[256];
+    char ref[256];
+    char use[256];
+    char iface[256];
+};
+
+struct pm3000_route4_table {
+    struct pm3000_route4_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_route4_table(const unsigned char *xml, size_t length,
+                             struct pm3000_route4_table *out);
+
+struct pm3000_route6_row {
+    char destination[256];
+    char next_hop[256];
+    char flags[256];
+    char metric[256];
+    char ref[256];
+    char use[256];
+    char iface[256];
+};
+
+struct pm3000_route6_table {
+    struct pm3000_route6_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_route6_table(const unsigned char *xml, size_t length,
+                             struct pm3000_route6_table *out);
+
+struct pm3000_serial_row {
+    char device_name[256];
+    char port_profile[256];
+    char speed[256];
+    char signals[256];
+    char tx_bytes[256];
+    char rx_bytes[256];
+    char frame_error[256];
+    char parity_error[256];
+    char brk[256];
+    char overrun[256];
+};
+
+struct pm3000_serial_table {
+    struct pm3000_serial_row rows[PM3000_MAX_TABLE_ROWS];
+    unsigned int row_count;
+};
+
+int pm3000_xml_serial_table(const unsigned char *xml, size_t length,
+                              struct pm3000_serial_table *out);
+
 #endif

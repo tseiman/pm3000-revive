@@ -22,6 +22,13 @@ PDU_OBSERVED = ROOT / "fixtures" / "observed" / "pdu-management-get-response.xml
 LOGIN_RESPONSE = ROOT / "fixtures" / "observed" / "login-submit-response.xml"
 NAVIGATION_RESPONSE = ROOT / "fixtures" / "observed" / "navigation-response.xml"
 LOGOUT_RESPONSE = ROOT / "fixtures" / "observed" / "logout-response.xml"
+SYSINFO_RESPONSE = ROOT / "fixtures" / "synthetic" / "system-information-response.xml"
+MEMORY_RESPONSE = ROOT / "fixtures" / "synthetic" / "memory-usage-response.xml"
+FLASH_RESPONSE = ROOT / "fixtures" / "synthetic" / "flash-usage-response.xml"
+NETDEV_RESPONSE = ROOT / "fixtures" / "synthetic" / "netdev-monitoring-response.xml"
+IPV4_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv4-routes-response.xml"
+IPV6_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv6-routes-response.xml"
+SERIAL_RESPONSE = ROOT / "fixtures" / "synthetic" / "serial-stats-response.xml"
 sys.path.insert(0, str(ROOT / "tools"))
 import token_store  # noqa: E402
 
@@ -1706,6 +1713,477 @@ class NativeAdapterTests(unittest.TestCase):
         self.assertEqual(b"niRcjzKfdPHmzgYMv2BzfB\n", pdu.stdout)
         self.assertEqual(0, revision.returncode, revision.stderr)
         self.assertEqual(b"3Nsqnx4t6hGoJs5d-ahRdd\n", revision.stdout)
+
+
+    def test_system_information_returns_typed_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _login_controller, _result = self.login_session(root)
+            socket_path = root / "sysinfo.sock"
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+
+            with FakeAvtransController(socket_path, [SYSINFO_RESPONSE.read_bytes()]) as controller:
+                result = self.run_cgi(
+                    "GET", "/api/v1/system/information", cookie=cookie,
+                    extra_environment=environment,
+                )
+            headers, body = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual(
+                {"modelNumber", "bootCodeVersion", "firmwareVersion",
+                 "bootedFrom", "cpu", "revision", "bogomips"},
+                set(body),
+            )
+            self.assertEqual("PM3000", body["modelNumber"])
+            self.assertEqual("2.0.1.23 (2015-05-11)", body["firmwareVersion"])
+            self.assertNotIn("serialNumber", body)
+            self.assertNotIn("ports", body)
+            self.assertEqual(1, len(controller.requests))
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+            self.assertIn(b"<path>units.applianceSettings.information</path>",
+                          controller.requests[0][1])
+
+            unicode_socket = root / "sysinfo-unicode.sock"
+            unicode_page = SYSINFO_RESPONSE.read_bytes().replace(
+                b"PPC83xx", "PPCé".encode("utf-8"), 1
+            )
+            with FakeAvtransController(unicode_socket, [unicode_page]):
+                unicode_result = self.run_cgi(
+                    "GET", "/api/v1/system/information", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(unicode_socket),
+                    },
+                )
+            unicode_headers, unicode_body = self.cgi_json(unicode_result)
+            self.assertIn(b"Status: 200", unicode_headers)
+            self.assertEqual("PPCé", unicode_body["cpu"])
+
+            bearer_result = self.run_cgi(
+                "GET", "/api/v1/system/information", cookie=cookie,
+                authorization="Bearer token",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open-bearer.sock"),
+                },
+            )
+            self.assertIn(b"Status: 401", bearer_result.stdout)
+            self.assertFalse((root / "must-not-open-bearer.sock").exists())
+
+            missing_sock = self.run_cgi(
+                "GET", "/api/v1/system/information", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "missing.sock"),
+                },
+            )
+            self.assertIn(b"Status: 503", missing_sock.stdout)
+            _, err503 = self.cgi_json(missing_sock)
+            self.assertEqual("backend_unavailable", err503["code"])
+
+            malformed_socket = root / "sysinfo-malformed.sock"
+            bad_page = SYSINFO_RESPONSE.read_bytes().replace(
+                b'id="identityform"', b'id="wrongform"'
+            )
+            with FakeAvtransController(malformed_socket, [bad_page]):
+                malformed = self.run_cgi(
+                    "GET", "/api/v1/system/information", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(malformed_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", malformed.stdout)
+            _, err502 = self.cgi_json(malformed)
+            self.assertEqual("backend_protocol_error", err502["code"])
+
+            wrong_path_socket = root / "sysinfo-wrongpath.sock"
+            wrong_path_page = SYSINFO_RESPONSE.read_bytes().replace(
+                b"<path>units.applianceSettings.information</path>",
+                b"<path>units.applianceSettings.usage</path>",
+            )
+            with FakeAvtransController(wrong_path_socket, [wrong_path_page]):
+                wrong_path = self.run_cgi(
+                    "GET", "/api/v1/system/information", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(wrong_path_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", wrong_path.stdout)
+
+            wrong_parent_socket = root / "sysinfo-wrong-parent.sock"
+            wrong_parent_page = SYSINFO_RESPONSE.read_bytes().replace(
+                b'id="identity" structure="title"',
+                b'id="wrongIdentity" structure="title"',
+                1,
+            )
+            with FakeAvtransController(wrong_parent_socket, [wrong_parent_page]):
+                wrong_parent = self.run_cgi(
+                    "GET", "/api/v1/system/information", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(wrong_parent_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", wrong_parent.stdout)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            no_cap_nav = NAVIGATION_RESPONSE.read_bytes().replace(
+                b'path="units.applianceSettings.information"',
+                b'path="units.applianceSettings.x-information"',
+            )
+            cookie, _, _, _ = self.login_session(root, navigation=no_cap_nav)
+            cap_denied = self.run_cgi(
+                "GET", "/api/v1/system/information", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+                },
+            )
+            self.assertIn(b"Status: 403", cap_denied.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
+
+
+    def test_memory_usage_returns_typed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _login_controller, _result = self.login_session(root)
+            socket_path = root / "memory.sock"
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+
+            with FakeAvtransController(socket_path, [MEMORY_RESPONSE.read_bytes()]) as controller:
+                result = self.run_cgi(
+                    "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                    extra_environment=environment,
+                )
+            headers, body = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertIn("rows", body)
+            rows = body["rows"]
+            self.assertIsInstance(rows, list)
+            self.assertEqual(2, len(rows))
+            self.assertEqual({"name", "value"}, set(rows[0]))
+            self.assertEqual("MemTotal", rows[0]["name"])
+            self.assertEqual("128236 kB", rows[0]["value"])
+            self.assertEqual("MemFree", rows[1]["name"])
+            self.assertIn(b"<path>units.applianceSettings.usage.memory</path>",
+                          controller.requests[0][1])
+
+            bearer_result = self.run_cgi(
+                "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                authorization="Bearer token",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+                },
+            )
+            self.assertIn(b"Status: 401", bearer_result.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
+
+            missing_sock = self.run_cgi(
+                "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "missing.sock"),
+                },
+            )
+            self.assertIn(b"Status: 503", missing_sock.stdout)
+
+            malformed_socket = root / "memory-malformed.sock"
+            bad_page = MEMORY_RESPONSE.read_bytes().replace(
+                b'id="memoryTable"', b'id="wrongTable"'
+            )
+            with FakeAvtransController(malformed_socket, [bad_page]):
+                malformed = self.run_cgi(
+                    "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(malformed_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", malformed.stdout)
+
+            duplicate_socket = root / "memory-duplicate.sock"
+            table = MEMORY_RESPONSE.read_bytes().split(b"<payload>", 1)[1].split(
+                b"</payload>", 1
+            )[0]
+            duplicate_page = MEMORY_RESPONSE.read_bytes().replace(
+                b"</payload>", table + b"</payload>", 1
+            )
+            with FakeAvtransController(duplicate_socket, [duplicate_page]):
+                duplicate = self.run_cgi(
+                    "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(duplicate_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", duplicate.stdout)
+
+            nested_socket = root / "memory-nested.sock"
+            field = (
+                b'<parameter id="memoryFieldName" structure="ROtext">'
+                b'<value>MemTotal</value></parameter>'
+            )
+            nested_page = MEMORY_RESPONSE.read_bytes().replace(
+                field,
+                b'<parameter id="unexpected" structure="title">' + field + b'</parameter>',
+                1,
+            )
+            with FakeAvtransController(nested_socket, [nested_page]):
+                nested = self.run_cgi(
+                    "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(nested_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", nested.stdout)
+
+            sibling_socket = root / "memory-sibling-row.sock"
+            source = MEMORY_RESPONSE.read_bytes()
+            row_marker = b'<section id="memoryTableRows" structure="row">'
+            row = source.split(row_marker, 1)[1]
+            row = row.split(b"</section>", 1)[0]
+            sibling_page = source.replace(
+                row_marker + row + b"</section>",
+                b"",
+                1,
+            ).replace(
+                b"</payload>",
+                b'<section id="unrelated" structure="standard">'
+                b'<section id="forged" structure="row">' + row +
+                b"</section></section></payload>",
+                1,
+            )
+            with FakeAvtransController(sibling_socket, [sibling_page]):
+                sibling = self.run_cgi(
+                    "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(sibling_socket),
+                    },
+                )
+            self.assertIn(b"Status: 502", sibling.stdout)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            no_cap_nav = NAVIGATION_RESPONSE.read_bytes().replace(
+                b'path="units.applianceSettings.usage.memory"',
+                b'path="units.applianceSettings.usage.x-memory"',
+            )
+            cookie, _, _, _ = self.login_session(root, navigation=no_cap_nav)
+            cap_denied = self.run_cgi(
+                "GET", "/api/v1/system/usage/memory", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+                },
+            )
+            self.assertIn(b"Status: 403", cap_denied.stdout)
+
+
+    def _route_session_table_test(
+        self,
+        route: str,
+        fixture: "Path",
+        nav_path: str,
+        bad_table_attr: bytes,
+        good_table_attr: bytes,
+        check_body: "Callable[[dict], None]",
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _lc, _r = self.login_session(root)
+            socket_path = root / "table.sock"
+            environment = {
+                "PM3000_SESSION_DIR": str(root / "sessions"),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+
+            with FakeAvtransController(socket_path, [fixture.read_bytes()]) as ctrl:
+                result = self.run_cgi("GET", route, cookie=cookie, extra_environment=environment)
+            headers, body = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            check_body(body)
+            self.assertEqual(1, len(ctrl.requests))
+
+            bearer = self.run_cgi(
+                "GET", route, cookie=cookie, authorization="Bearer t",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "no-bearer.sock"),
+                },
+            )
+            self.assertIn(b"Status: 401", bearer.stdout)
+            self.assertFalse((root / "no-bearer.sock").exists())
+
+            missing = self.run_cgi(
+                "GET", route, cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "missing.sock"),
+                },
+            )
+            self.assertIn(b"Status: 503", missing.stdout)
+            _, err503 = self.cgi_json(missing)
+            self.assertEqual("backend_unavailable", err503["code"])
+
+            malformed_sock = root / "bad.sock"
+            bad_page = fixture.read_bytes().replace(good_table_attr, bad_table_attr)
+            with FakeAvtransController(malformed_sock, [bad_page]):
+                malformed = self.run_cgi(
+                    "GET", route, cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(malformed_sock),
+                    },
+                )
+            self.assertIn(b"Status: 502", malformed.stdout)
+            _, err502 = self.cgi_json(malformed)
+            self.assertEqual("backend_protocol_error", err502["code"])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            no_cap_nav = NAVIGATION_RESPONSE.read_bytes().replace(
+                nav_path.encode(), nav_path.encode() + b"-removed"
+            )
+            cookie, _, _, _ = self.login_session(root, navigation=no_cap_nav)
+            cap_denied = self.run_cgi(
+                "GET", route, cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "no-cap.sock"),
+                },
+            )
+            self.assertIn(b"Status: 403", cap_denied.stdout)
+            self.assertFalse((root / "no-cap.sock").exists())
+
+    def test_flash_usage_returns_typed_rows(self) -> None:
+        def check(body: dict) -> None:
+            self.assertIn("rows", body)
+            rows = body["rows"]
+            self.assertEqual(2, len(rows))
+            self.assertEqual(
+                {"filesystem", "blocks1k", "used", "available",
+                 "usePercentage", "mountedOn"},
+                set(rows[0]),
+            )
+            self.assertEqual("rootfs", rows[0]["filesystem"])
+            self.assertEqual("60%", rows[0]["usePercentage"])
+            self.assertEqual("/mnt/hdUser", rows[1]["mountedOn"])
+
+        self._route_session_table_test(
+            "/api/v1/system/usage/flash",
+            FLASH_RESPONSE,
+            "units.applianceSettings.usage.flashUsage",
+            b'id="wrongTable"',
+            b'id="flashUsageTable"',
+            check,
+        )
+
+    def test_network_devices_returns_typed_rows(self) -> None:
+        def check(body: dict) -> None:
+            self.assertIn("devices", body)
+            devices = body["devices"]
+            self.assertEqual(2, len(devices))
+            self.assertEqual(
+                {"name", "status", "ipv4Address", "ipv4Mask", "ipv6Address"},
+                set(devices[0]),
+            )
+            self.assertEqual("eth0", devices[0]["name"])
+            self.assertEqual("192.0.2.100", devices[0]["ipv4Address"])
+            self.assertEqual("lo", devices[1]["name"])
+
+        self._route_session_table_test(
+            "/api/v1/monitoring/network/devices",
+            NETDEV_RESPONSE,
+            "units.monitoring.networkmon.monitoringDevice",
+            b'id="wrongTable"',
+            b'id="devicesTable"',
+            check,
+        )
+
+    def test_ipv4_routes_returns_typed_rows(self) -> None:
+        def check(body: dict) -> None:
+            self.assertIn("routes", body)
+            routes = body["routes"]
+            self.assertEqual(2, len(routes))
+            self.assertEqual(
+                {"destination", "gateway", "genmask", "flags",
+                 "metric", "ref", "use", "iface"},
+                set(routes[0]),
+            )
+            self.assertEqual("0.0.0.0", routes[0]["destination"])
+            self.assertEqual("192.0.2.1", routes[0]["gateway"])
+            self.assertEqual("UG", routes[0]["flags"])
+            self.assertEqual("eth0", routes[1]["iface"])
+
+        self._route_session_table_test(
+            "/api/v1/monitoring/network/routes/ipv4",
+            IPV4_ROUTES_RESPONSE,
+            "units.monitoring.networkmon.monitoringIpv4RouteTable",
+            b'id="wrongTable"',
+            b'id="ipv4RouteTable"',
+            check,
+        )
+
+    def test_ipv6_routes_returns_typed_rows(self) -> None:
+        def check(body: dict) -> None:
+            self.assertIn("routes", body)
+            routes = body["routes"]
+            self.assertEqual(2, len(routes))
+            self.assertEqual(
+                {"destination", "nextHop", "flags", "metric",
+                 "ref", "use", "iface"},
+                set(routes[0]),
+            )
+            self.assertEqual("::1/128", routes[0]["destination"])
+            self.assertEqual("::", routes[0]["nextHop"])
+            self.assertEqual("eth0", routes[1]["iface"])
+
+        self._route_session_table_test(
+            "/api/v1/monitoring/network/routes/ipv6",
+            IPV6_ROUTES_RESPONSE,
+            "units.monitoring.networkmon.monitoringIpv6RouteTable",
+            b'id="wrongTable"',
+            b'id="ipv6RouteTable"',
+            check,
+        )
+
+    def test_serial_ports_returns_typed_rows(self) -> None:
+        def check(body: dict) -> None:
+            self.assertIn("ports", body)
+            ports = body["ports"]
+            self.assertEqual(2, len(ports))
+            self.assertEqual(
+                {"deviceName", "portProfile", "speed", "signals",
+                 "txBytes", "rxBytes", "frameError", "parityError",
+                 "brk", "overrun"},
+                set(ports[0]),
+            )
+            self.assertEqual("/dev/ttyS0", ports[0]["deviceName"])
+            self.assertEqual("Console", ports[0]["portProfile"])
+            self.assertEqual("1024", ports[0]["txBytes"])
+            self.assertEqual("0", ports[0]["brk"])
+            self.assertEqual("/dev/ttyS1", ports[1]["deviceName"])
+
+        self._route_session_table_test(
+            "/api/v1/monitoring/serial-ports",
+            SERIAL_RESPONSE,
+            "units.monitoring.serialstatistics",
+            b'id="wrongTable"',
+            b'id="serialstatistictable"',
+            check,
+        )
 
 
 if __name__ == "__main__":

@@ -36,6 +36,13 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/session/password",
                 "/api/v1/settings/security/dsview",
                 "/api/v1/settings/authentication/nis",
+                "/api/v1/system/information",
+                "/api/v1/system/usage/memory",
+                "/api/v1/system/usage/flash",
+                "/api/v1/monitoring/network/devices",
+                "/api/v1/monitoring/network/routes/ipv4",
+                "/api/v1/monitoring/network/routes/ipv6",
+                "/api/v1/monitoring/serial-ports",
             },
             set(paths),
         )
@@ -53,6 +60,17 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"post"}, set(paths["/api/v1/session/password"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/security/dsview"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/authentication/nis"]))
+        for route in (
+            "/api/v1/system/information",
+            "/api/v1/system/usage/memory",
+            "/api/v1/system/usage/flash",
+            "/api/v1/monitoring/network/devices",
+            "/api/v1/monitoring/network/routes/ipv4",
+            "/api/v1/monitoring/network/routes/ipv6",
+            "/api/v1/monitoring/serial-ports",
+        ):
+            with self.subTest(route=route):
+                self.assertEqual({"get"}, set(paths[route]))
 
     def test_all_operation_security_requirements_reference_defined_schemes(self) -> None:
         schemes = set(self.contract["components"]["securitySchemes"])
@@ -319,6 +337,51 @@ class RestV1ContractTests(unittest.TestCase):
                 content_options = resolve_header(headers["X-Content-Type-Options"])
                 self.assertEqual("no-store", cache_control["schema"]["const"])
                 self.assertEqual("nosniff", content_options["schema"]["const"])
+
+    def test_session_only_read_routes_reject_bearer_and_have_closed_schemas(self) -> None:
+        paths = self.contract["paths"]
+        schemas = self.contract["components"]["schemas"]
+        routes = {
+            "/api/v1/system/information": ("getSystemInformation", "units.applianceSettings.information", "SystemInformation"),
+            "/api/v1/system/usage/memory": ("getMemoryUsage", "units.applianceSettings.usage.memory", "MemoryUsage"),
+            "/api/v1/system/usage/flash": ("getFlashUsage", "units.applianceSettings.usage.flashUsage", "FlashUsage"),
+            "/api/v1/monitoring/network/devices": ("getNetworkDevices", "units.monitoring.networkmon.monitoringDevice", "NetworkDevices"),
+            "/api/v1/monitoring/network/routes/ipv4": ("getIpv4Routes", "units.monitoring.networkmon.monitoringIpv4RouteTable", "Ipv4Routes"),
+            "/api/v1/monitoring/network/routes/ipv6": ("getIpv6Routes", "units.monitoring.networkmon.monitoringIpv6RouteTable", "Ipv6Routes"),
+            "/api/v1/monitoring/serial-ports": ("getSerialPorts", "units.monitoring.serialstatistics", "SerialPorts"),
+        }
+        for path, (op_id, nav_path, schema_name) in routes.items():
+            with self.subTest(route=path):
+                operation = paths[path]["get"]
+                self.assertEqual(op_id, operation["operationId"])
+                self.assertTrue(operation["x-bearer-rejected"])
+                self.assertEqual([{"cookieAuth": []}], operation["security"])
+                self.assertEqual(nav_path, operation["x-required-nav-path"])
+                self.assertIn("401", operation["responses"])
+                self.assertIn("403", operation["responses"])
+                self.assertIn("502", operation["responses"])
+                self.assertIn("503", operation["responses"])
+                self.assertEqual(
+                    f"#/components/schemas/{schema_name}",
+                    operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+                )
+                self.assertIn(schema_name, schemas)
+                self.assertFalse(schemas[schema_name]["additionalProperties"])
+
+        collection_properties = {
+            "MemoryUsage": "rows",
+            "FlashUsage": "rows",
+            "NetworkDevices": "devices",
+            "Ipv4Routes": "routes",
+            "Ipv6Routes": "routes",
+            "SerialPorts": "ports",
+        }
+        for schema_name, property_name in collection_properties.items():
+            with self.subTest(collection=schema_name):
+                self.assertEqual(
+                    25,
+                    schemas[schema_name]["properties"][property_name]["maxItems"],
+                )
 
     def test_contract_has_no_generic_backend_or_dangerous_operations(self) -> None:
         serialized = json.dumps(self.contract, sort_keys=True).lower()

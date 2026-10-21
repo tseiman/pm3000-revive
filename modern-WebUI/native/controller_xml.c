@@ -11,6 +11,7 @@
 #define XML_MAX_ATTRS 32U
 #define XML_MAX_PATHS 64U
 #define XML_MAX_PARAMETERS 128U
+#define XML_MAX_ROW_PARAMS 256U
 
 struct frame {
     char name[XML_MAX_NAME + 1U];
@@ -29,6 +30,15 @@ struct parameter_value {
     char container_structure[XML_MAX_NAME + 1U];
     unsigned int direct_form_child;
     char value[XML_MAX_TEXT + 1U];
+};
+
+struct xml_row_param {
+    char table_id[XML_MAX_NAME + 1U];
+    char parameter[XML_MAX_NAME + 1U];
+    char structure[XML_MAX_NAME + 1U];
+    char value[XML_MAX_TEXT + 1U];
+    unsigned int row;
+    unsigned int direct_row_child;
 };
 
 struct document {
@@ -58,6 +68,15 @@ struct document {
     unsigned int password_message;
     struct parameter_value parameter_values[XML_MAX_PARAMETERS];
     unsigned int parameter_value_count;
+    char table_id[XML_MAX_NAME + 1U];
+    char current_table_id[XML_MAX_NAME + 1U];
+    unsigned int table_count;
+    int current_row_index;
+    unsigned int table_row_count;
+    unsigned int unexpected_table_rows;
+    unsigned int row_param_count;
+    unsigned int row_overflow;
+    struct xml_row_param row_params[XML_MAX_ROW_PARAMS];
 };
 
 static int valid_utf8(const unsigned char *input, size_t length) {
@@ -227,6 +246,26 @@ static int close_element(struct document *document, const char *name) {
                     strcmp(container->structure, "form") == 0;
             }
             strcpy(record->value, frame->text);
+        } else if (document->current_row_index >= 0 &&
+                   parameter->id[0] != '\0' &&
+                   strlen(parameter->id) <= XML_MAX_NAME) {
+            if (document->row_param_count >= XML_MAX_ROW_PARAMS) {
+                document->row_overflow = 1U;
+            } else {
+                struct xml_row_param *record =
+                    &document->row_params[document->row_param_count++];
+                strcpy(record->table_id, document->current_table_id);
+                strcpy(record->parameter, parameter->id);
+                strcpy(record->structure, parameter->structure);
+                strcpy(record->value, frame->text);
+                record->row = (unsigned int)document->current_row_index;
+                if (document->depth >= 3U) {
+                    const struct frame *row = &document->stack[document->depth - 3U];
+                    record->direct_row_child =
+                        strcmp(row->name, "section") == 0 &&
+                        strcmp(row->structure, "row") == 0;
+                }
+            }
         }
     }
     if (document->depth == 2U && strcmp(name, "action") == 0) {
@@ -241,6 +280,17 @@ static int close_element(struct document *document, const char *name) {
                ancestor_is(document, 3U, "avtrans")) {
         if (++document->paths != 1U) return -1;
         strcpy(document->path, frame->text);
+    }
+    if (strcmp(name, "section") == 0 &&
+        strcmp(frame->structure, "row") == 0 &&
+        document->current_row_index >= 0) {
+        ++document->table_row_count;
+        document->current_row_index = -1;
+    }
+    if (strcmp(name, "section") == 0 &&
+        strcmp(frame->structure, "table") == 0 &&
+        strcmp(frame->id, document->current_table_id) == 0) {
+        document->current_table_id[0] = '\0';
     }
     --document->depth;
     return 0;
@@ -335,6 +385,27 @@ static int start_element(struct document *document, int *self_closing) {
             document->power_cycle = 1U;
         }
     }
+    if (strcmp(frame->name, "section") == 0 &&
+        strcmp(structure, "table") == 0 &&
+        id[0] != '\0' && strlen(id) <= XML_MAX_NAME &&
+        has_ancestor(document, "payload")) {
+        ++document->table_count;
+        strcpy(document->table_id, id);
+        strcpy(document->current_table_id, id);
+    }
+    if (strcmp(frame->name, "section") == 0 &&
+        strcmp(structure, "row") == 0 && has_ancestor(document, "payload")) {
+        if (document->current_table_id[0] != '\0' &&
+            document->depth > 0U &&
+            strcmp(document->stack[document->depth - 1U].name, "section") == 0 &&
+            strcmp(document->stack[document->depth - 1U].structure, "table") == 0 &&
+            strcmp(document->stack[document->depth - 1U].id,
+                   document->current_table_id) == 0) {
+            document->current_row_index = (int)document->table_row_count;
+        } else {
+            ++document->unexpected_table_rows;
+        }
+    }
     ++document->depth;
     if (*self_closing && close_element(document, frame->name) != 0) return -1;
     return 0;
@@ -343,6 +414,7 @@ static int start_element(struct document *document, int *self_closing) {
 static int parse_document(const unsigned char *xml, size_t length,
                           struct document *document) {
     memset(document, 0, sizeof(*document));
+    document->current_row_index = -1;
     if (xml == NULL || length == 0U || length > XML_MAX_BYTES ||
         !valid_utf8(xml, length)) return -1;
     document->input = xml;
@@ -364,7 +436,8 @@ static int parse_document(const unsigned char *xml, size_t length,
                     (document->depth == 3U && strcmp(frame->name, "path") == 0 &&
                      ancestor_is(document, 2U, "paths")) ||
                     (strcmp(frame->name, "value") == 0 &&
-                     ancestor_form_id(document) != NULL)) {
+                     (ancestor_form_id(document) != NULL ||
+                      document->current_row_index >= 0))) {
                     if (decode(document->input + start, document->offset - start,
                                frame->text, &frame->text_length,
                                sizeof(frame->text)) != 0) return -1;
@@ -538,6 +611,63 @@ int pm3000_xml_dsview_value(const unsigned char *xml, size_t length,
     return 0;
 }
 
+int pm3000_xml_system_information(const unsigned char *xml, size_t length,
+                                   struct pm3000_sysinfo *out) {
+    struct document document;
+    unsigned int index;
+    unsigned int found_model = 0U, found_boot = 0U, found_firmware = 0U;
+    unsigned int found_booted = 0U, found_cpu = 0U, found_rev = 0U, found_bogo = 0U;
+    if (parse_document(xml, length, &document) != 0 ||
+        strcmp(document.action, "content") != 0 ||
+        strcmp(document.path, "units.applianceSettings.information") != 0 ||
+        document.payloads != 1U) return -1;
+    for (index = 0U; index < document.parameter_value_count; ++index) {
+        const struct parameter_value *record = &document.parameter_values[index];
+        const char *expected_container = NULL;
+        if (strcmp(record->form, "identityform") != 0) continue;
+        if (strcmp(record->parameter, "modelnumber") == 0)
+            expected_container = "identity";
+        else if (strcmp(record->parameter, "bootcodeversion") == 0 ||
+                 strcmp(record->parameter, "firmwareversion") == 0 ||
+                 strcmp(record->parameter, "bootedFrom") == 0)
+            expected_container = "version";
+        else if (strcmp(record->parameter, "cpu") == 0 ||
+                 strcmp(record->parameter, "revision") == 0 ||
+                 strcmp(record->parameter, "bogomips") == 0)
+            expected_container = "cpuinfo";
+        if (expected_container != NULL &&
+            (strcmp(record->structure, "ROtext") != 0 ||
+             strcmp(record->container_name, "parameter") != 0 ||
+             strcmp(record->container_id, expected_container) != 0 ||
+             strcmp(record->container_structure, "title") != 0)) return -1;
+        if (strcmp(record->parameter, "modelnumber") == 0) {
+            if (++found_model != 1U || strlen(record->value) >= sizeof(out->model_number)) return -1;
+            strcpy(out->model_number, record->value);
+        } else if (strcmp(record->parameter, "bootcodeversion") == 0) {
+            if (++found_boot != 1U || strlen(record->value) >= sizeof(out->boot_code_version)) return -1;
+            strcpy(out->boot_code_version, record->value);
+        } else if (strcmp(record->parameter, "firmwareversion") == 0) {
+            if (++found_firmware != 1U || strlen(record->value) >= sizeof(out->firmware_version)) return -1;
+            strcpy(out->firmware_version, record->value);
+        } else if (strcmp(record->parameter, "bootedFrom") == 0) {
+            if (++found_booted != 1U || strlen(record->value) >= sizeof(out->booted_from)) return -1;
+            strcpy(out->booted_from, record->value);
+        } else if (strcmp(record->parameter, "cpu") == 0) {
+            if (++found_cpu != 1U || strlen(record->value) >= sizeof(out->cpu)) return -1;
+            strcpy(out->cpu, record->value);
+        } else if (strcmp(record->parameter, "revision") == 0) {
+            if (++found_rev != 1U || strlen(record->value) >= sizeof(out->revision)) return -1;
+            strcpy(out->revision, record->value);
+        } else if (strcmp(record->parameter, "bogomips") == 0) {
+            if (++found_bogo != 1U || strlen(record->value) >= sizeof(out->bogomips)) return -1;
+            strcpy(out->bogomips, record->value);
+        }
+    }
+    if (found_model != 1U || found_boot != 1U || found_firmware != 1U ||
+        found_booted != 1U || found_cpu != 1U || found_rev != 1U || found_bogo != 1U) return -1;
+    return 0;
+}
+
 int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
                           const char *path, char *domain, size_t domain_size,
                           char *address, size_t address_size) {
@@ -564,4 +694,310 @@ int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
         ++found;
     }
     return found == 2U ? 0 : -1;
+}
+
+static int table_parse_start(const unsigned char *xml, size_t length,
+                              const char *path, const char *table_id,
+                              struct document *document) {
+    if (parse_document(xml, length, document) != 0 ||
+        strcmp(document->action, "content") != 0 ||
+        strcmp(document->path, path) != 0 ||
+        document->payloads != 1U || document->row_overflow ||
+        document->unexpected_table_rows != 0U ||
+        document->table_count != 1U ||
+        strcmp(document->table_id, table_id) != 0) return -1;
+    if (document->table_row_count > PM3000_MAX_TABLE_ROWS) return -1;
+    return 0;
+}
+
+static int valid_row_parameter(const struct xml_row_param *parameter) {
+    return parameter->direct_row_child &&
+           strcmp(parameter->structure, "ROtext") == 0;
+}
+
+int pm3000_xml_memory_table(const unsigned char *xml, size_t length,
+                             struct pm3000_memory_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_name[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_value[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.applianceSettings.usage.memory",
+                          "memoryTable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "memoryTable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "memoryFieldName") == 0) {
+            if (++found_name[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].name)) return -1;
+            strcpy(out->rows[r].name, p->value);
+        } else if (strcmp(p->parameter, "memoryFieldValue") == 0) {
+            if (++found_value[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].value)) return -1;
+            strcpy(out->rows[r].value, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_name[i] != 1U || found_value[i] != 1U) return -1;
+    return 0;
+}
+
+int pm3000_xml_flash_table(const unsigned char *xml, size_t length,
+                            struct pm3000_flash_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_fs[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_blk[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_used[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_avail[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_pct[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_mnt[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.applianceSettings.usage.flashUsage",
+                          "flashUsageTable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "flashUsageTable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "filesystem") == 0) {
+            if (++found_fs[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].filesystem)) return -1;
+            strcpy(out->rows[r].filesystem, p->value);
+        } else if (strcmp(p->parameter, "1kBlocks") == 0) {
+            if (++found_blk[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].blocks1k)) return -1;
+            strcpy(out->rows[r].blocks1k, p->value);
+        } else if (strcmp(p->parameter, "used") == 0) {
+            if (++found_used[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].used)) return -1;
+            strcpy(out->rows[r].used, p->value);
+        } else if (strcmp(p->parameter, "available") == 0) {
+            if (++found_avail[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].available)) return -1;
+            strcpy(out->rows[r].available, p->value);
+        } else if (strcmp(p->parameter, "usePercentage") == 0) {
+            if (++found_pct[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].use_percentage)) return -1;
+            strcpy(out->rows[r].use_percentage, p->value);
+        } else if (strcmp(p->parameter, "mountedOn") == 0) {
+            if (++found_mnt[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].mounted_on)) return -1;
+            strcpy(out->rows[r].mounted_on, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_fs[i] != 1U || found_blk[i] != 1U || found_used[i] != 1U ||
+            found_avail[i] != 1U || found_pct[i] != 1U || found_mnt[i] != 1U) return -1;
+    return 0;
+}
+
+int pm3000_xml_netdev_table(const unsigned char *xml, size_t length,
+                             struct pm3000_netdev_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_name[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_stat[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ip4a[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ip4m[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ip6a[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.monitoring.networkmon.monitoringDevice",
+                          "devicesTable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "devicesTable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "deviceName") == 0) {
+            if (++found_name[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].device_name)) return -1;
+            strcpy(out->rows[r].device_name, p->value);
+        } else if (strcmp(p->parameter, "status") == 0) {
+            if (++found_stat[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].status)) return -1;
+            strcpy(out->rows[r].status, p->value);
+        } else if (strcmp(p->parameter, "ipv4address") == 0) {
+            if (++found_ip4a[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].ipv4_address)) return -1;
+            strcpy(out->rows[r].ipv4_address, p->value);
+        } else if (strcmp(p->parameter, "ipv4mask") == 0) {
+            if (++found_ip4m[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].ipv4_mask)) return -1;
+            strcpy(out->rows[r].ipv4_mask, p->value);
+        } else if (strcmp(p->parameter, "ipv6address") == 0) {
+            if (++found_ip6a[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].ipv6_address)) return -1;
+            strcpy(out->rows[r].ipv6_address, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_name[i] != 1U || found_stat[i] != 1U || found_ip4a[i] != 1U ||
+            found_ip4m[i] != 1U || found_ip6a[i] != 1U) return -1;
+    return 0;
+}
+
+int pm3000_xml_route4_table(const unsigned char *xml, size_t length,
+                             struct pm3000_route4_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_dst[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_gw[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_mask[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_flg[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_met[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ref[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_use[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ifc[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.monitoring.networkmon.monitoringIpv4RouteTable",
+                          "ipv4RouteTable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "ipv4RouteTable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "destination") == 0) {
+            if (++found_dst[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].destination)) return -1;
+            strcpy(out->rows[r].destination, p->value);
+        } else if (strcmp(p->parameter, "gateway") == 0) {
+            if (++found_gw[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].gateway)) return -1;
+            strcpy(out->rows[r].gateway, p->value);
+        } else if (strcmp(p->parameter, "genmask") == 0) {
+            if (++found_mask[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].genmask)) return -1;
+            strcpy(out->rows[r].genmask, p->value);
+        } else if (strcmp(p->parameter, "flags") == 0) {
+            if (++found_flg[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].flags)) return -1;
+            strcpy(out->rows[r].flags, p->value);
+        } else if (strcmp(p->parameter, "metric") == 0) {
+            if (++found_met[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].metric)) return -1;
+            strcpy(out->rows[r].metric, p->value);
+        } else if (strcmp(p->parameter, "ref") == 0) {
+            if (++found_ref[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].ref)) return -1;
+            strcpy(out->rows[r].ref, p->value);
+        } else if (strcmp(p->parameter, "use") == 0) {
+            if (++found_use[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].use)) return -1;
+            strcpy(out->rows[r].use, p->value);
+        } else if (strcmp(p->parameter, "iface") == 0) {
+            if (++found_ifc[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].iface)) return -1;
+            strcpy(out->rows[r].iface, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_dst[i] != 1U || found_gw[i] != 1U || found_mask[i] != 1U ||
+            found_flg[i] != 1U || found_met[i] != 1U || found_ref[i] != 1U ||
+            found_use[i] != 1U || found_ifc[i] != 1U) return -1;
+    return 0;
+}
+
+int pm3000_xml_route6_table(const unsigned char *xml, size_t length,
+                             struct pm3000_route6_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_dst[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_hop[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_flg[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_met[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ref[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_use[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ifc[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.monitoring.networkmon.monitoringIpv6RouteTable",
+                          "ipv6RouteTable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "ipv6RouteTable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "destination") == 0) {
+            if (++found_dst[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].destination)) return -1;
+            strcpy(out->rows[r].destination, p->value);
+        } else if (strcmp(p->parameter, "nextHop") == 0) {
+            if (++found_hop[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].next_hop)) return -1;
+            strcpy(out->rows[r].next_hop, p->value);
+        } else if (strcmp(p->parameter, "flags") == 0) {
+            if (++found_flg[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].flags)) return -1;
+            strcpy(out->rows[r].flags, p->value);
+        } else if (strcmp(p->parameter, "metric") == 0) {
+            if (++found_met[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].metric)) return -1;
+            strcpy(out->rows[r].metric, p->value);
+        } else if (strcmp(p->parameter, "ref") == 0) {
+            if (++found_ref[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].ref)) return -1;
+            strcpy(out->rows[r].ref, p->value);
+        } else if (strcmp(p->parameter, "use") == 0) {
+            if (++found_use[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].use)) return -1;
+            strcpy(out->rows[r].use, p->value);
+        } else if (strcmp(p->parameter, "iface") == 0) {
+            if (++found_ifc[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].iface)) return -1;
+            strcpy(out->rows[r].iface, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_dst[i] != 1U || found_hop[i] != 1U || found_flg[i] != 1U ||
+            found_met[i] != 1U || found_ref[i] != 1U || found_use[i] != 1U ||
+            found_ifc[i] != 1U) return -1;
+    return 0;
+}
+
+int pm3000_xml_serial_table(const unsigned char *xml, size_t length,
+                              struct pm3000_serial_table *out) {
+    struct document document;
+    unsigned int i;
+    unsigned int found_dev[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_prf[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_spd[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_sig[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_tx[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_rx[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_fe[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_pe[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_brk[PM3000_MAX_TABLE_ROWS] = {0};
+    unsigned int found_ovr[PM3000_MAX_TABLE_ROWS] = {0};
+    if (table_parse_start(xml, length,
+                          "units.monitoring.serialstatistics",
+                          "serialstatistictable", &document) != 0) return -1;
+    out->row_count = document.table_row_count;
+    memset(out->rows, 0, sizeof(out->rows));
+    for (i = 0U; i < document.row_param_count; ++i) {
+        const struct xml_row_param *p = &document.row_params[i];
+        unsigned int r = p->row;
+        if (!valid_row_parameter(p)) return -1;
+        if (strcmp(p->table_id, "serialstatistictable") != 0 || r >= out->row_count) continue;
+        if (strcmp(p->parameter, "devicename") == 0) {
+            if (++found_dev[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].device_name)) return -1;
+            strcpy(out->rows[r].device_name, p->value);
+        } else if (strcmp(p->parameter, "portprofile") == 0) {
+            if (++found_prf[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].port_profile)) return -1;
+            strcpy(out->rows[r].port_profile, p->value);
+        } else if (strcmp(p->parameter, "speed") == 0) {
+            if (++found_spd[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].speed)) return -1;
+            strcpy(out->rows[r].speed, p->value);
+        } else if (strcmp(p->parameter, "signals") == 0) {
+            if (++found_sig[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].signals)) return -1;
+            strcpy(out->rows[r].signals, p->value);
+        } else if (strcmp(p->parameter, "txBytes") == 0) {
+            if (++found_tx[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].tx_bytes)) return -1;
+            strcpy(out->rows[r].tx_bytes, p->value);
+        } else if (strcmp(p->parameter, "rxBytes") == 0) {
+            if (++found_rx[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].rx_bytes)) return -1;
+            strcpy(out->rows[r].rx_bytes, p->value);
+        } else if (strcmp(p->parameter, "frameError") == 0) {
+            if (++found_fe[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].frame_error)) return -1;
+            strcpy(out->rows[r].frame_error, p->value);
+        } else if (strcmp(p->parameter, "parityError") == 0) {
+            if (++found_pe[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].parity_error)) return -1;
+            strcpy(out->rows[r].parity_error, p->value);
+        } else if (strcmp(p->parameter, "break") == 0) {
+            if (++found_brk[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].brk)) return -1;
+            strcpy(out->rows[r].brk, p->value);
+        } else if (strcmp(p->parameter, "overrun") == 0) {
+            if (++found_ovr[r] != 1U || strlen(p->value) >= sizeof(out->rows[r].overrun)) return -1;
+            strcpy(out->rows[r].overrun, p->value);
+        }
+    }
+    for (i = 0U; i < out->row_count; ++i)
+        if (found_dev[i] != 1U || found_prf[i] != 1U || found_spd[i] != 1U ||
+            found_sig[i] != 1U || found_tx[i] != 1U || found_rx[i] != 1U ||
+            found_fe[i] != 1U || found_pe[i] != 1U || found_brk[i] != 1U ||
+            found_ovr[i] != 1U) return -1;
+    return 0;
 }

@@ -121,6 +121,109 @@
           </div>
         </section>
 
+        <section id="sysinfo-view" class="view" aria-labelledby="sysinfo-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">System</span><h1 id="sysinfo-title">Appliance information</h1><p>Firmware version, hardware revision, and model fields.</p></div>
+            <button id="refresh-sysinfo" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="sysinfo-status" class="panel-status" aria-live="polite"></p>
+            <dl id="sysinfo-fields" class="info-list" hidden>
+              <div><dt>Model</dt><dd id="si-model">—</dd></div>
+              <div><dt>Boot code</dt><dd id="si-boot-code">—</dd></div>
+              <div><dt>Firmware</dt><dd id="si-firmware">—</dd></div>
+              <div><dt>Booted from</dt><dd id="si-booted-from">—</dd></div>
+              <div><dt>CPU</dt><dd id="si-cpu">—</dd></div>
+              <div><dt>Revision</dt><dd id="si-revision">—</dd></div>
+              <div><dt>BogoMIPS</dt><dd id="si-bogomips">—</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section id="memory-view" class="view" aria-labelledby="memory-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">System</span><h1 id="memory-title">Memory usage</h1><p>Live memory statistics from the appliance.</p></div>
+            <button id="refresh-memory" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="memory-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="memory-table-wrap" hidden>
+              <table><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody id="memory-rows"></tbody></table>
+            </div>
+            <div id="memory-empty" class="empty-state" hidden>No memory data available.</div>
+          </div>
+        </section>
+
+        <section id="flash-view" class="view" aria-labelledby="flash-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">System</span><h1 id="flash-title">Flash usage</h1><p>Filesystem storage usage from the appliance.</p></div>
+            <button id="refresh-flash" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="flash-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="flash-table-wrap" hidden>
+              <table><thead><tr><th>Filesystem</th><th>1k-blocks</th><th>Used</th><th>Available</th><th>Use%</th><th>Mounted on</th></tr></thead><tbody id="flash-rows"></tbody></table>
+            </div>
+            <div id="flash-empty" class="empty-state" hidden>No flash data available.</div>
+          </div>
+        </section>
+
+        <section id="netdev-view" class="view" aria-labelledby="netdev-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Monitoring</span><h1 id="netdev-title">Network devices</h1><p>Interface status and address summary.</p></div>
+            <button id="refresh-netdev" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="netdev-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="netdev-table-wrap" hidden>
+              <table><thead><tr><th>Device</th><th>Status</th><th>IPv4 address</th><th>IPv4 mask</th><th>IPv6 address</th></tr></thead><tbody id="netdev-rows"></tbody></table>
+            </div>
+            <div id="netdev-empty" class="empty-state" hidden>No network devices available.</div>
+          </div>
+        </section>
+
+        <section id="route4-view" class="view" aria-labelledby="route4-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Monitoring</span><h1 id="route4-title">IPv4 routing table</h1><p>Active IPv4 routes from the appliance kernel.</p></div>
+            <button id="refresh-route4" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="route4-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="route4-table-wrap" hidden>
+              <table><thead><tr><th>Destination</th><th>Gateway</th><th>Genmask</th><th>Flags</th><th>Metric</th><th>Ref</th><th>Use</th><th>Iface</th></tr></thead><tbody id="route4-rows"></tbody></table>
+            </div>
+            <div id="route4-empty" class="empty-state" hidden>No IPv4 routes available.</div>
+          </div>
+        </section>
+
+        <section id="route6-view" class="view" aria-labelledby="route6-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Monitoring</span><h1 id="route6-title">IPv6 routing table</h1><p>Active IPv6 routes from the appliance kernel.</p></div>
+            <button id="refresh-route6" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="route6-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="route6-table-wrap" hidden>
+              <table><thead><tr><th>Destination</th><th>Next hop</th><th>Flags</th><th>Metric</th><th>Ref</th><th>Use</th><th>Iface</th></tr></thead><tbody id="route6-rows"></tbody></table>
+            </div>
+            <div id="route6-empty" class="empty-state" hidden>No IPv6 routes available.</div>
+          </div>
+        </section>
+
+        <section id="serial-view" class="view" aria-labelledby="serial-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">Monitoring</span><h1 id="serial-title">Serial ports</h1><p>Serial port statistics and error counters.</p></div>
+            <button id="refresh-serial" class="secondary-button" type="button">Refresh</button>
+          </div>
+          <div class="panel">
+            <p id="serial-status" class="panel-status" aria-live="polite"></p>
+            <div class="table-wrap" id="serial-table-wrap" hidden>
+              <table><thead><tr><th>Device</th><th>Profile</th><th>Speed</th><th>Signals</th><th>TX bytes</th><th>RX bytes</th><th>Frame err</th><th>Parity err</th><th>Break</th><th>Overrun</th></tr></thead><tbody id="serial-rows"></tbody></table>
+            </div>
+            <div id="serial-empty" class="empty-state" hidden>No serial ports available.</div>
+          </div>
+        </section>
+
         <section id="legacy-view" class="view" aria-labelledby="legacy-title" hidden>
           <div class="page-heading"><div><span class="eyebrow">Original interface</span><h1 id="legacy-title">Legacy feature</h1><p id="legacy-path"></p></div></div>
           <div class="notice"><strong>This page has not been reimplemented.</strong><span>Use the established PM3000 interface; its existing authorization remains authoritative.</span></div>

@@ -48,6 +48,48 @@
       "direction": "response",
       "purpose": "Backend authorization-denial error shape",
       "evidence": "synthetic"
+    },
+    {
+      "file": "system-information-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic identityform appliance information fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "memory-usage-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic memoryTable rows with name and value fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "flash-usage-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic flashUsageTable rows with filesystem usage fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "netdev-monitoring-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic devicesTable rows with network device fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "ipv4-routes-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic ipv4RouteTable rows with IPv4 routing fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "ipv6-routes-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic ipv6RouteTable rows with IPv6 routing fields",
+      "evidence": "synthetic"
+    },
+    {
+      "file": "serial-stats-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic serialstatistictable rows with serial port statistics",
+      "evidence": "synthetic"
     }
   ],
   "transport_timeout": {

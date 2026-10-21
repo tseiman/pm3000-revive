@@ -57,5 +57,33 @@ int pm3000_save_nis_setting_session(const char *socket_path, const char *sid,
                                     const char *domain_name,
                                     const char *address, char *error,
                                     unsigned int error_size);
+int pm3000_fetch_sysinfo_session(const char *socket_path, const char *sid,
+                                  unsigned char **response,
+                                  size_t *response_length, char *error,
+                                  unsigned int error_size);
+int pm3000_fetch_memory_session(const char *socket_path, const char *sid,
+                                 unsigned char **response,
+                                 size_t *response_length, char *error,
+                                 unsigned int error_size);
+int pm3000_fetch_flash_session(const char *socket_path, const char *sid,
+                                unsigned char **response,
+                                size_t *response_length, char *error,
+                                unsigned int error_size);
+int pm3000_fetch_netdev_session(const char *socket_path, const char *sid,
+                                 unsigned char **response,
+                                 size_t *response_length, char *error,
+                                 unsigned int error_size);
+int pm3000_fetch_route4_session(const char *socket_path, const char *sid,
+                                 unsigned char **response,
+                                 size_t *response_length, char *error,
+                                 unsigned int error_size);
+int pm3000_fetch_route6_session(const char *socket_path, const char *sid,
+                                 unsigned char **response,
+                                 size_t *response_length, char *error,
+                                 unsigned int error_size);
+int pm3000_fetch_serial_session(const char *socket_path, const char *sid,
+                                 unsigned char **response,
+                                 size_t *response_length, char *error,
+                                 unsigned int error_size);
 
 #endif
