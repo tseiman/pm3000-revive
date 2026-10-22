@@ -2618,6 +2618,27 @@ class NativeAdapterTests(unittest.TestCase):
                 self.assertEqual(3, result.returncode)
                 self.assertEqual(b"", result.stdout)
 
+    def test_topology_projector_decodes_predefined_xml_entities(self) -> None:
+        anchor = b'<array id="pdu.[REDACTED].1">'
+        original = b'<value label="[REDACTED-NAME]">[REDACTED-NAME]</value>'
+        encoded = (
+            b'<value label="A &amp; B &lt; C &gt; D &quot;Q&quot; &apos;P&apos;">'
+            b'A &amp; B &lt; C &gt; D &quot;Q&quot; &apos;P&apos;</value>'
+        )
+        topology = OBSERVED.read_bytes()
+        prefix, outlet = topology.split(anchor, 1)
+        self.assertIn(original, outlet)
+        topology = prefix + anchor + outlet.replace(original, encoded, 1)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "topology.xml"
+            candidate.write_bytes(topology)
+            result = self.run_adapter("--project", str(candidate))
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        document = json.loads(result.stdout)
+        self.assertIn('A & B < C > D "Q" \'P\'', [outlet["name"] for outlet in document["outlets"]])
+
     def test_observed_topology_projects_closed_read_only_inventory(self) -> None:
         result = self.run_adapter("--project", str(OBSERVED))
 

@@ -17,17 +17,17 @@ The relevant backend traffic exists only on `pdu1.tsei.mdn`. It does not cross a
 
 ## Verified live-device state
 
-- Release `0.2-rest-control-rc4` is installed successfully.
+- Release `0.2-rest-control-rc5` is installed successfully.
 - Legacy WebUI remains available.
 - Bearer authentication and the token store work: the earlier `token_store_unavailable` response disappeared after correcting runtime ownership.
-- `GET /api/v1/outlets` currently returns:
+- Bearer-authenticated `GET /api/v1/outlets` now reaches and authenticates to the controller, receives the complete topology response, and returns:
 
   ```json
-  {"code":"backend_unavailable","message":"Read-only backend unavailable."}
+  {"code":"backend_protocol_error","message":"Backend response rejected."}
   ```
 
-  with HTTP 503.
-- Browser login reaches the native backend path but reports `Controller login rejected.`
+  with HTTP 502.
+- Browser login completes controller authentication but reports `Session storage is unavailable.` because session creation validates the same rejected topology response before writing the session.
 - A direct `uicontrold` trace of the RC4 login proves that the empty-SID login request is accepted, PAM/GSP and CACPD authentication succeed with `read write exec` permissions, and `uicontrold` returns a complete NUL-terminated `action=header` response with a 32-character SID.
 - The same captured response is rejected by the RC4 native XML parser. Removing only the vendor's exact `xml-stylesheet` processing instruction makes that response pass. The current failure is therefore localized to response parsing, not controller authentication or Unix-socket transport.
 - No Modern REST outlet action has been attempted and no outlet has been switched through the replacement adapter.
@@ -79,11 +79,17 @@ RC5 narrowly accepts only the firmware's exact static instruction before the XML
 
 Both the controller-response parser and the topology projector apply the same allowlist. Regression coverage sends login, navigation, and topology responses with the complete real preamble. Alternate attribute order, extra attributes, external URLs, and duplicate stylesheet instructions remain rejected. The complete offline suite passes 211 tests, and the PPC32 release build passes its QEMU e300c3 execution gate.
 
+## Confirmed RC5 root cause
+
+The complete live topology response is 19,255 XML bytes plus its terminating NUL. Replaying that exact private response through the RC5 production projector reproduces the HTTP 502 path. Instrumented replay localizes the rejection to predefined XML entity decoding. The firmware emits `&amp;` in three topology values and their `label` attributes, but the projector compared all five predefined entity lengths one byte too high and therefore rejected every named entity.
+
+The correction fixes the length checks for `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&apos;` without permitting unknown entities, DTDs, or external entities. A synthetic redacted regression covers all five predefined entities. The previously rejected complete live response then projects successfully to ten outlets, positions 1 through 10, with a current inventory revision. The complete offline suite passes 212 tests, and the PPC32 RC6 candidate passes its QEMU e300c3 execution gate.
+
 ## Next investigation
 
-RC5 must now be validated on `pdu1.tsei.mdn` without performing any write action:
+The entity-decoder correction must be released and validated on `pdu1.tsei.mdn` without performing any write action:
 
-1. Install RC5 using the normal verified package and sidecar flow.
+1. Publish and install the next release candidate using the normal verified package and sidecar flow.
 2. Verify one browser login.
 3. Verify one bearer-authenticated `GET /api/v1/outlets` and require HTTP 200 with a current `inventoryRevision`.
 4. If either check fails, preserve a single direct `uicontrold` trace covering both checks; do not publish another hypothesis-based release.

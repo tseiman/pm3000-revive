@@ -211,11 +211,11 @@ static int decode_text(const unsigned char *source, size_t amount,
             uint32_t value = 0;
             while (end < amount && source[end] != ';' && end - index <= 12U) ++end;
             if (end >= amount || source[end] != ';') return -1;
-            if (end - index == 4U && memcmp(source + index, "&lt;", 4) == 0) value = '<';
-            else if (end - index == 4U && memcmp(source + index, "&gt;", 4) == 0) value = '>';
-            else if (end - index == 5U && memcmp(source + index, "&amp;", 5) == 0) value = '&';
-            else if (end - index == 6U && memcmp(source + index, "&quot;", 6) == 0) value = '"';
-            else if (end - index == 6U && memcmp(source + index, "&apos;", 6) == 0) value = '\'';
+            if (end - index == 3U && memcmp(source + index, "&lt;", 4) == 0) value = '<';
+            else if (end - index == 3U && memcmp(source + index, "&gt;", 4) == 0) value = '>';
+            else if (end - index == 4U && memcmp(source + index, "&amp;", 5) == 0) value = '&';
+            else if (end - index == 5U && memcmp(source + index, "&quot;", 6) == 0) value = '"';
+            else if (end - index == 5U && memcmp(source + index, "&apos;", 6) == 0) value = '\'';
             else if (source[index + 1U] == '#') {
                 size_t digit = index + 2U;
                 unsigned int base = 10U;
