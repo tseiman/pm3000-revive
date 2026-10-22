@@ -410,6 +410,27 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(1, len(controller.requests))
             self.assertIn(b"<action>get</action>", controller.requests[0][1])
 
+    def test_session_outlet_inventory_treats_empty_authorization_as_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _response, _login_controller, login = self.login_session(root)
+            self.assertIn(b"Status: 201", login.stdout)
+            socket_path = root / "session-avtrans.sock"
+
+            with FakeAvtransController(socket_path, [OBSERVED.read_bytes()]) as controller:
+                result = self.run_cgi(
+                    "GET", "/api/v1/outlets",
+                    authorization="",
+                    cookie=cookie,
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+
+            self.assertIn(b"Status: 200", result.stdout)
+            self.assertEqual(1, len(controller.requests))
+
     def test_session_login_escapes_maximum_length_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

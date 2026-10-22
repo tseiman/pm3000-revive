@@ -430,10 +430,10 @@ static int admin_bearer(const char *store_path, const char **token) {
     return authorization.authorized ? 0 : 403;
 }
 
-static int inherited_browser_authorization(const char *header) {
-    return header != NULL &&
-           (strncmp(header, "Basic ", 6U) == 0 ||
-            strncmp(header, "Digest ", 7U) == 0);
+static int browser_session_authorization(const char *header) {
+    return header == NULL || header[0] == '\0' ||
+           strncmp(header, "Basic ", 6U) == 0 ||
+           strncmp(header, "Digest ", 7U) == 0;
 }
 
 static int admin_error(pm3000_token_result result) {
@@ -537,8 +537,7 @@ static int run_session_route(const char *method, const char *session_directory,
     char cookie[160];
     pm3000_session session;
     const char *authorization = getenv("HTTP_AUTHORIZATION");
-    if (authorization != NULL && authorization[0] != '\0' &&
-        !inherited_browser_authorization(authorization))
+    if (!browser_session_authorization(authorization))
         return cgi_error(401U, "Unauthorized", "unauthorized",
                          "Authorization is not accepted for browser sessions.");
     if (strcmp(method, "POST") == 0) {
@@ -985,8 +984,7 @@ static int run_cgi(void) {
         int body_result, result;
         if (strcmp(method, "POST") != 0)
             return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for password changes.");
         if (load_request_session(
@@ -1047,8 +1045,7 @@ static int run_cgi(void) {
             kind = PM3000_FORM_APPLIANCE_LOGGING;
         else
             kind = PM3000_FORM_TIME_ZONE;
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this browser setting.");
         if (load_request_session(
@@ -1070,8 +1067,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/settings/security/dsview") == 0) {
         static const char permission[] = "units.applianceSettings.security.SecurityDSView";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this browser setting.");
         if (load_request_session(
@@ -1134,8 +1130,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/settings/authentication/nis") == 0) {
         static const char permission[] = "units.authentication.authenticationservers.nis";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this browser setting.");
         if (load_request_session(
@@ -1211,8 +1206,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/system/information") == 0) {
         static const char permission[] = "units.applianceSettings.information";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1262,8 +1256,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/system/usage/memory") == 0) {
         static const char permission[] = "units.applianceSettings.usage.memory";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1309,8 +1302,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/system/usage/flash") == 0) {
         static const char permission[] = "units.applianceSettings.usage.flashUsage";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1364,8 +1356,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/monitoring/network/devices") == 0) {
         static const char permission[] = "units.monitoring.networkmon.monitoringDevice";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1417,8 +1408,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/monitoring/network/routes/ipv4") == 0) {
         static const char permission[] = "units.monitoring.networkmon.monitoringIpv4RouteTable";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1476,8 +1466,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/monitoring/network/routes/ipv6") == 0) {
         static const char permission[] = "units.monitoring.networkmon.monitoringIpv6RouteTable";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1533,8 +1522,7 @@ static int run_cgi(void) {
         strcmp(path, "/api/v1/monitoring/serial-ports") == 0) {
         static const char permission[] = "units.monitoring.serialstatistics";
         const char *socket_path = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
-        if (getenv("HTTP_AUTHORIZATION") != NULL &&
-            !inherited_browser_authorization(getenv("HTTP_AUTHORIZATION")))
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this route.");
         if (load_request_session(
@@ -1596,8 +1584,7 @@ static int run_cgi(void) {
         (strcmp(path, "/api/v1/tokens") == 0 ||
          strncmp(path, "/api/v1/tokens/", 15U) == 0)) {
         const pm3000_session *session = NULL;
-        if (getenv("HTTP_AUTHORIZATION") == NULL ||
-            inherited_browser_authorization(getenv("HTTP_AUTHORIZATION"))) {
+        if (browser_session_authorization(getenv("HTTP_AUTHORIZATION"))) {
             if (load_request_session(
                     configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
                     1, &gui_session) != 0)
@@ -1614,7 +1601,7 @@ static int run_cgi(void) {
         if (strcmp(method, "GET") != 0)
             return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
         header = getenv("HTTP_AUTHORIZATION");
-        if (header != NULL && !inherited_browser_authorization(header)) {
+        if (!browser_session_authorization(header)) {
             if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' || strchr(header + 7, ' ') != NULL)
                 return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
             auth_result = pm3000_authorize(configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
@@ -1653,7 +1640,7 @@ static int run_cgi(void) {
         if (body_result != 0 || parse_action_request(body, body_length, action, revision) != 0)
             return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
         header = getenv("HTTP_AUTHORIZATION");
-        if (header != NULL && !inherited_browser_authorization(header)) {
+        if (!browser_session_authorization(header)) {
             if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' || strchr(header + 7, ' ') != NULL)
                 return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
             auth_result = pm3000_authorize(configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
@@ -1693,7 +1680,7 @@ static int run_cgi(void) {
         if (body_result != 0 || parse_action_request(body, body_length, action, revision) != 0)
             return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
         header = getenv("HTTP_AUTHORIZATION");
-        if (header != NULL && !inherited_browser_authorization(header)) {
+        if (!browser_session_authorization(header)) {
             if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' ||
                 strchr(header + 7, ' ') != NULL)
                 return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");
@@ -1740,7 +1727,7 @@ static int run_cgi(void) {
         detail_request = 1;
     }
     header = getenv("HTTP_AUTHORIZATION");
-    if (header != NULL && !inherited_browser_authorization(header)) {
+    if (!browser_session_authorization(header)) {
         if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' ||
             strchr(header + 7, ' ') != NULL)
             return cgi_error(401U, "Unauthorized", "unauthorized", "Bearer authentication required.");

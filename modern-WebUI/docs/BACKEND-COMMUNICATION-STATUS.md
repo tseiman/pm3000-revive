@@ -17,14 +17,14 @@ The relevant backend traffic exists only on `pdu1.tsei.mdn`. It does not cross a
 
 ## Verified live-device state
 
-- Release `0.2-rest-control-rc6` is installed successfully.
+- Release `0.2-rest-control-rc7` is installed successfully.
 - Legacy WebUI remains available.
 - Bearer authentication and the token store work: the earlier `token_store_unavailable` response disappeared after correcting runtime ownership.
 - Bearer-authenticated `GET /api/v1/outlets` now succeeds with HTTP 200 and returns all ten outlets with a current `inventoryRevision`.
 
-- Browser login completes controller login, navigation, topology projection, and local session creation. Its first authenticated outlet request then receives HTTP 401, and the browser reports `Your PM3000 session has expired.`
+- Browser login completes controller login, navigation, topology projection, and local session creation. A Safari network capture proved that `GET /api/v1/session` accepts the cookie while the following `GET /api/v1/outlets` incorrectly selects Bearer authentication because Apache exports `HTTP_AUTHORIZATION` as a present but empty CGI variable. A regression test reproduces the exact empty-variable behavior, and the adapter now treats it as no Authorization header.
 - A direct `uicontrold` trace of the RC4 login proves that the empty-SID login request is accepted, PAM/GSP and CACPD authentication succeed with `read write exec` permissions, and `uicontrold` returns a complete NUL-terminated `action=header` response with a 32-character SID.
-- The same captured response is rejected by the RC4 native XML parser. Removing only the vendor's exact `xml-stylesheet` processing instruction makes that response pass. The current failure is therefore localized to response parsing, not controller authentication or Unix-socket transport.
+- The same captured response was rejected by the RC4 native XML parser. Removing only the vendor's exact `xml-stylesheet` processing instruction made that response pass. That RC4 failure was therefore localized to response parsing, not controller authentication or Unix-socket transport.
 - No Modern REST outlet action has been attempted and no outlet has been switched through the replacement adapter.
 - Offline fake-controller and QEMU tests pass, but they do not prove communication with the real Linux 2.6.23 appliance backend.
 
