@@ -23,6 +23,9 @@ compiler=$REPOSITORY/components/dropbear/output-buildroot/host/bin/powerpc-build
 }
 command -v python3 >/dev/null 2>&1 || { echo "python3 missing" >&2; exit 1; }
 command -v make >/dev/null 2>&1 || { echo "make missing" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "git missing" >&2; exit 1; }
+git_revision=$(git -C "$REPOSITORY" rev-parse --short=12 HEAD)
+case "$git_revision" in ''|*[!0-9a-f]*) echo "unsafe Git revision" >&2; exit 1;; esac
 
 mkdir -p "$output_directory"
 output=$output_directory/pm3000-release-$release_id.tar
@@ -36,6 +39,7 @@ make -C "$MODERN/deploy" target
 python3 "$MODERN/deploy/deployment.py" package \
     --source "$MODERN" \
     --release-id "$release_id" \
+    --git-revision "$git_revision" \
     --output "$output"
 
 python3 - "$output" <<'PY'

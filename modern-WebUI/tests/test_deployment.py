@@ -40,7 +40,7 @@ class PackagingTests(unittest.TestCase):
             "index.html\ttext/html; charset=utf-8\nstyles.css\ttext/css; charset=utf-8\napp.js\ttext/javascript; charset=utf-8\n", encoding="utf-8"
         )
         for name, data in {
-            "index.html": b"index-v1",
+            "index.html": b"index-v1 Build __PM3000_RELEASE_ID__ (__PM3000_GIT_REVISION__)",
             "styles.css": b"css-v1",
             "app.js": b"js-v1",
         }.items():
@@ -59,7 +59,7 @@ class PackagingTests(unittest.TestCase):
     def test_package_contains_only_allowlist_and_finished_byte_checksums(self):
         helper = load_helper()
         output = self.work / "release.tar"
-        helper.build_release(self.source, output, "r1")
+        helper.build_release(self.source, output, "r1", "abcdef123456")
 
         with tarfile.open(output, "r:") as archive:
             names = archive.getnames()
@@ -78,6 +78,9 @@ class PackagingTests(unittest.TestCase):
             )
             manifest = json.load(archive.extractfile("RELEASE_MANIFEST.json"))
             self.assertEqual(manifest["release_id"], "r1")
+            index = archive.extractfile("web/index.html").read()
+            self.assertIn(b"Build r1 (abcdef123456)", index)
+            self.assertNotIn(b"__PM3000_", index)
             for entry in manifest["files"]:
                 payload = archive.extractfile(entry["path"]).read()
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), entry["sha256"])
@@ -122,7 +125,10 @@ class DeploymentSimulationTests(unittest.TestCase):
             "index.html\ttext/html\nstyles.css\ttext/css\napp.js\ttext/javascript\n"
         )
         for name in ("index.html", "styles.css", "app.js"):
-            (source / "web" / name).write_bytes((release_id + "-" + name).encode())
+            data = (release_id + "-" + name).encode()
+            if name == "index.html":
+                data += b" Build __PM3000_RELEASE_ID__ (__PM3000_GIT_REVISION__)"
+            (source / "web" / name).write_bytes(data)
         (source / "native/build/pm3000-rest-ppc32").write_bytes(b"binary-" + release_id.encode())
         (source / "deploy/build/pm3000-atomic-publish-ppc32").write_bytes(b"helper-" + release_id.encode())
         (source / "deploy/pm3000-revive.conf").write_bytes(b"new-config-" + release_id.encode() + b"\n")

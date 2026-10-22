@@ -51,11 +51,16 @@ def _tar_bytes(archive: tarfile.TarFile, name: str, data: bytes, mode: int) -> N
     archive.addfile(info, io.BytesIO(data))
 
 
-def build_release(source_root: Path | str, output: Path | str, release_id: str) -> Path:
+def build_release(source_root: Path | str, output: Path | str, release_id: str,
+                  git_revision: str = "unknown") -> Path:
     """Snapshot the exact allowlist bytes and write a deterministic uncompressed tar."""
     source = Path(source_root)
     destination = Path(output)
     release_id = _safe_release_id(release_id)
+    if git_revision != "unknown" and (
+            len(git_revision) < 7 or len(git_revision) > 40
+            or any(c not in "0123456789abcdef" for c in git_revision)):
+        raise DeploymentError("unsafe Git revision")
     lines = (source / "web" / "release-files.txt").read_text(encoding="utf-8").splitlines()
     parsed = [line.split("\t", 1) for line in lines]
     if not parsed or any(len(fields) != 2 or not fields[0] or not fields[1] for fields in parsed):
@@ -93,6 +98,13 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str) 
         if identity_before != identity_after or len(data) != opened_before.st_size:
             raise DeploymentError(f"release source changed while being read: {path}")
         mode = 0o755 if target.startswith("bin/") else 0o644
+        if target == "web/index.html":
+            release_placeholder = b"__PM3000_RELEASE_ID__"
+            revision_placeholder = b"__PM3000_GIT_REVISION__"
+            if data.count(release_placeholder) != 1 or data.count(revision_placeholder) != 1:
+                raise DeploymentError("web build identity placeholders are missing or duplicated")
+            data = data.replace(release_placeholder, release_id.encode("ascii"))
+            data = data.replace(revision_placeholder, git_revision.encode("ascii"))
         snapshots[target] = (data, mode)
 
     entries = [
@@ -1075,6 +1087,7 @@ def main(argv: list[str] | None = None) -> int:
     package.add_argument("--source", type=Path, required=True)
     package.add_argument("--output", type=Path, required=True)
     package.add_argument("--release-id", required=True)
+    package.add_argument("--git-revision", default="unknown")
     deploy = commands.add_parser("deploy-sim", help="deploy into an isolated synthetic root")
     deploy.add_argument("--root", type=Path, required=True)
     deploy.add_argument("--package", type=Path, required=True)
@@ -1094,7 +1107,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "package":
-            build_release(args.source, args.output, args.release_id)
+            build_release(args.source, args.output, args.release_id, args.git_revision)
         elif args.command == "deploy-sim":
             deploy_simulated(args.root, args.package, args.backup_dir, fault=args.fault,
                              syntax_check=lambda: args.fault != "config_check",
