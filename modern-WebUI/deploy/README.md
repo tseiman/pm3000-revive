@@ -21,11 +21,12 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
 - `stage7-device-compatibility.sh` — validates the completed backup and release,
   tests the two PPC binaries only from a private appliance `/tmp` directory, and
   removes that directory without installing or reloading anything.
-- `stage7-install.sh` — one-command macOS/Linux host installer. It opens one
-  temporary OpenSSH ControlMaster, requires the completed full backup, validates
-  the release and PPC compatibility, uploads the package, and invokes the fixed
-  device installer. OpenSSH owns password prompting; the script never reads or
-  stores a password. Rollback remains a separate operator command.
+- `stage7-install.sh` — one-command macOS/Linux host installer. It requires the
+  completed full backup, validates the release locally, and streams the release,
+  compatibility gate, and fixed device installer through one deliberately
+  non-multiplexed SSH connection. OpenSSH therefore prompts for the password only
+  once; the script never reads or stores it. Progress messages identify each
+  validation, installation, and activation phase. Rollback remains separate.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
 
 ## Prerequisites
@@ -49,9 +50,10 @@ unverified on the appliance:
 ```
 
 Do not run the device helpers until a host-verified `BACKUP_COMPLETE` exists.
-The lower-level Stage 6 simulation remains offline-only. Live SSH/SCP is isolated
-in `stage7-install.sh` and requires the completed backup and explicit operator
-invocation.
+The lower-level Stage 6 simulation remains offline-only. Live SSH transport is
+isolated in `stage7-install.sh` and requires the completed backup and explicit
+operator invocation. The installer disables OpenSSH multiplexing because the
+appliance rejects additional channels with `Master refused session request`.
 
 After building or downloading a release and completing the full backup, the
 host-side installation entry point is:
