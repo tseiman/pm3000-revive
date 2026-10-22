@@ -2,6 +2,10 @@
 
 The machine-readable source is [`../api/openapi-v1.json`](../api/openapi-v1.json). It is authoritative for closed request/response schemas, limits, and errors.
 
+## Compatibility policy
+
+`/api/v1` is the stable automation contract, including during the temporary write-capable pilot. Future updates will preserve existing v1 paths, methods, authentication and scope behavior, required request fields, response schemas, outlet-ID derivation, and action semantics. An intentionally incompatible change requires a new major prefix such as `/api/v2`; it will not be introduced silently under `/api/v1`. Security fixes may reject behavior that violated the documented v1 contract, and live inventory revisions are expected to change whenever the appliance topology changes.
+
 ## Routes
 
 - `GET /api/v1/health`
