@@ -2634,6 +2634,50 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertNotIn(reader.plaintext, "".join(requests))
             self.assertNotIn("service-password", result.stdout.decode("utf-8"))
 
+    def test_valid_bearer_reads_survive_logout_cleanup_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            credentials_path = root / "service.credentials"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            projection = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
+            outlet = projection["outlets"][0]
+            reader = store.create_token(
+                administrator.plaintext, label="Read outlets", scope="read", outlets=[outlet["id"]]
+            )
+            credentials_path.write_text("service-user\nservice-password\n")
+            credentials_path.chmod(0o600)
+            environment = {
+                "PM3000_TOKEN_STORE": str(store_path),
+                "PM3000_CREDENTIALS": str(credentials_path),
+                "REMOTE_ADDR": "198.51.100.27",
+            }
+            for index, path in enumerate(("/api/v1/outlets", f'/api/v1/outlets/{outlet["id"]}')):
+                route_socket = root / f"avtrans-{index}.sock"
+                route_environment = {**environment, "PM3000_AVTRANS_SOCKET": str(route_socket)}
+                with self.subTest(path=path), FakeAvtransController(
+                    route_socket, [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), b"not XML"]
+                ) as controller:
+                    result = self.run_cgi(
+                        "GET", path, authorization=f"Bearer {reader.plaintext}",
+                        extra_environment=route_environment,
+                    )
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                headers, body = result.stdout.split(b"\r\n\r\n", 1)
+                self.assertIn(b"Status: 200", headers)
+                payload = json.loads(body)
+                if path == "/api/v1/outlets":
+                    self.assertEqual([outlet], payload["outlets"])
+                else:
+                    self.assertEqual(outlet, payload)
+                self.assertEqual(3, len(controller.requests))
+                self.assertIn(b"<action>logout</action>", controller.requests[2][1])
+                self.assertIn(b"controller logout cleanup failed", result.stderr)
+                self.assertNotIn(reader.plaintext.encode("ascii"), result.stderr)
+                self.assertNotIn(b"service-password", result.stderr)
+
     def test_health_is_local_https_only_cgi_response(self) -> None:
         result = self.run_cgi("GET", "/api/v1/health")
 

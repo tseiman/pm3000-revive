@@ -92,6 +92,12 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("deliverAfterSessionChange: true", self.javascript)
         self.assertIn("&& !options.deliverAfterSessionChange", self.javascript)
 
+    def test_token_rows_offer_confirmed_delete_action(self) -> None:
+        self.assertIn('button.textContent = action === "delete" ? "Delete"', self.javascript)
+        self.assertIn('action === "delete" ? "DELETE" : "POST"', self.javascript)
+        self.assertIn('window.confirm(`Delete token ${record.label}?`)', self.javascript)
+        self.assertIn('toast(action === "delete" ? "Token deleted."', self.javascript)
+
     def test_ui_exposes_rights_gated_power_control_with_stale_revision_guard(self) -> None:
         self.assertIn("outlet.state", self.javascript)
         self.assertNotIn("outlet.status", self.javascript)
@@ -282,6 +288,17 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('$("old-password").value = ""', self.javascript)
         self.assertIn('$("new-password").value = ""', self.javascript)
         self.assertIn('$("confirm-password").value = ""', self.javascript)
+
+    def test_navigation_is_collapsible_and_preserves_the_active_path(self) -> None:
+        self.assertIn('button.setAttribute("aria-expanded", "false")', self.javascript)
+        self.assertIn("children.hidden = true", self.javascript)
+        self.assertIn("toggleNavigationGroup(button, children)", self.javascript)
+        self.assertIn("expandNavigationPath(path)", self.javascript)
+        self.assertIn('className = "nav-children"', self.javascript)
+        self.assertIn('.nav-item[aria-expanded]::after', self.css)
+        self.assertIn('.nav-children[hidden]{display:none}', self.css)
+        self.assertIn('@media(max-width:700px){.shell{display:block}', self.css)
+        self.assertIn('.sidebar{position:static;height:auto;max-height:none', self.css)
 
     def test_navigation_and_dialog_controls_are_native_and_labelled(self) -> None:
         self.assertIn('aria-label="Primary navigation"', self.html)

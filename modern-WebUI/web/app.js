@@ -118,35 +118,76 @@ function showAuthenticated(session) {
   setText("signed-in-user", session.identity.username); renderNavigation(); switchView("outlets"); loadOutlets();
 }
 
+function navigationView(path) {
+  return path === "units.change_password" ? "password" :
+    path === "units.authentication.authenticationservers.nis" ? "nis" :
+    path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
+    path === "units.applianceSettings.help" ? "help-language" :
+    path === "units.event_notification.global_settings_databuffering" ? "data-buffering" :
+    path === "units.event_notification.sessions" ? "appliance-logging" :
+    path === "units.applianceSettings.date_and_time.time_zone" ? "time-zone" :
+    path === "units.powermanagement.pdu_management" ? "pdus" :
+    path === "units.applianceSettings.information" ? "sysinfo" :
+    path === "units.applianceSettings.usage.memory" ? "memory" :
+    path === "units.applianceSettings.usage.flashUsage" ? "flash" :
+    path === "units.monitoring.networkmon.monitoringDevice" ? "netdev" :
+    path === "units.monitoring.networkmon.monitoringIpv4RouteTable" ? "route4" :
+    path === "units.monitoring.networkmon.monitoringIpv6RouteTable" ? "route6" :
+    path === "units.monitoring.serialstatistics" ? "serial" :
+    path === "units.topology" ? "outlets" : "legacy";
+}
+
+function toggleNavigationGroup(button, children, expanded = null) {
+  const open = expanded === null ? button.getAttribute("aria-expanded") !== "true" : expanded;
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+  children.hidden = !open;
+}
+
+function expandNavigationPath(path) {
+  if (!path) return;
+  for (const button of document.querySelectorAll('.nav-item[aria-expanded][data-path]')) {
+    if (path.startsWith(`${button.dataset.path}.`)) {
+      const children = document.getElementById(button.getAttribute("aria-controls"));
+      if (children) toggleNavigationGroup(button, children, true);
+    }
+  }
+}
+
 function renderNavigation() {
   const node = $("navigation"); clear(node);
   const allowed = new Set(state.session.navigation.paths || []);
-  const label = document.createElement("p"); label.className = "nav-label"; label.textContent = "Authorized features"; node.appendChild(label);
-  for (const [path, text] of menu) {
-    if (!allowed.has(path)) continue;
-    const button = document.createElement("button"); button.type = "button"; button.className = "nav-item legacy-nav";
-    button.style.paddingLeft = `${12 + Math.min(path.split(".").length - 2, 3) * 13}px`;
-    button.dataset.path = path; button.textContent = text;
-    button.addEventListener("click", () => switchView(
-      path === "units.change_password" ? "password" :
-      path === "units.authentication.authenticationservers.nis" ? "nis" :
-      path === "units.applianceSettings.security.SecurityDSView" ? "dsview" :
-      path === "units.applianceSettings.help" ? "help-language" :
-      path === "units.event_notification.global_settings_databuffering" ? "data-buffering" :
-      path === "units.event_notification.sessions" ? "appliance-logging" :
-      path === "units.applianceSettings.date_and_time.time_zone" ? "time-zone" :
-      path === "units.powermanagement.pdu_management" ? "pdus" :
-      path === "units.applianceSettings.information" ? "sysinfo" :
-      path === "units.applianceSettings.usage.memory" ? "memory" :
-      path === "units.applianceSettings.usage.flashUsage" ? "flash" :
-      path === "units.monitoring.networkmon.monitoringDevice" ? "netdev" :
-      path === "units.monitoring.networkmon.monitoringIpv4RouteTable" ? "route4" :
-      path === "units.monitoring.networkmon.monitoringIpv6RouteTable" ? "route6" :
-      path === "units.monitoring.serialstatistics" ? "serial" :
-      path === "units.topology" ? "outlets" : "legacy",
-      path, text));
-    node.appendChild(button);
+  const entries = menu.map(([path, text]) => ({ path, text })).filter((entry) =>
+    allowed.has(entry.path) || [...allowed].some((path) => path.startsWith(`${entry.path}.`)));
+  const byPath = new Map(entries.map((entry) => [entry.path, { ...entry, children: [] }]));
+  const roots = [];
+  for (const entry of byPath.values()) {
+    const parent = [...byPath.values()]
+      .filter((candidate) => entry.path.startsWith(`${candidate.path}.`))
+      .sort((left, right) => right.path.length - left.path.length)[0];
+    if (parent) parent.children.push(entry); else roots.push(entry);
   }
+  const label = document.createElement("p"); label.className = "nav-label"; label.textContent = "Authorized features"; node.appendChild(label);
+  const tree = document.createElement("div"); tree.className = "nav-tree"; node.appendChild(tree);
+  let groupSequence = 0;
+  const appendEntry = (entry, container, depth) => {
+    const wrapper = document.createElement("div"); wrapper.className = "nav-node";
+    const button = document.createElement("button"); button.type = "button"; button.className = "nav-item legacy-nav";
+    button.style.setProperty("--nav-depth", String(Math.min(depth, 3)));
+    button.dataset.path = entry.path; button.textContent = entry.text;
+    if (entry.children.length) {
+      const children = document.createElement("div"); children.className = "nav-children"; children.hidden = true;
+      const childId = `nav-group-${++groupSequence}`; children.id = childId;
+      button.setAttribute("aria-expanded", "false"); button.setAttribute("aria-controls", childId);
+      button.addEventListener("click", () => toggleNavigationGroup(button, children));
+      wrapper.append(button, children);
+      for (const child of entry.children) appendEntry(child, children, depth + 1);
+    } else {
+      button.addEventListener("click", () => switchView(navigationView(entry.path), entry.path, entry.text));
+      wrapper.appendChild(button);
+    }
+    container.appendChild(wrapper);
+  };
+  for (const entry of roots) appendEntry(entry, tree, 0);
   if (state.session.navigation.canManageTokens) {
     const heading = document.createElement("p"); heading.className = "nav-label"; heading.textContent = "REST API"; node.appendChild(heading);
     const button = document.createElement("button"); button.type = "button"; button.className = "nav-item"; button.dataset.view = "tokens"; button.textContent = "Bearer tokens";
@@ -161,6 +202,7 @@ function switchView(view, path = "", label = "") {
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
   if (!active && view === "outlets") active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === "units.topology");
+  if (path) expandNavigationPath(path);
   if (active) active.setAttribute("aria-current", "page");
   if (view === "tokens") loadTokens();
   if (view === "pdus") loadPdus();
@@ -280,10 +322,11 @@ async function loadPdus() {
 }
 
 function tokenActionButton(record, action) {
-  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "revoke" ? " danger" : ""}`; button.textContent = action === "revoke" ? "Revoke" : record.enabled ? "Disable" : "Enable";
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "delete" ? " danger" : ""}`; button.textContent = action === "delete" ? "Delete" : record.enabled ? "Disable" : "Enable";
   button.addEventListener("click", async () => {
+    if (action === "delete" && !window.confirm(`Delete token ${record.label}?`)) return;
     button.disabled = true;
-    try { const method = action === "revoke" ? "DELETE" : "POST"; const operation = action === "revoke" ? "" : `/${record.enabled ? "disable" : "enable"}`; await api(`/api/v1/tokens/${encodeURIComponent(record.id)}${operation}`, { method }); toast(action === "revoke" ? "Token revoked." : `Token ${record.enabled ? "disabled" : "enabled"}.`); await loadTokens(); }
+    try { const method = action === "delete" ? "DELETE" : "POST"; const operation = action === "delete" ? "" : `/${record.enabled ? "disable" : "enable"}`; await api(`/api/v1/tokens/${encodeURIComponent(record.id)}${operation}`, { method }); toast(action === "delete" ? "Token deleted." : `Token ${record.enabled ? "disabled" : "enabled"}.`); await loadTokens(); }
     catch (error) { toast(error.message); button.disabled = false; }
   });
   return button;
@@ -296,7 +339,7 @@ function renderTokens(payload) {
     const scopeCell = document.createElement("td"); const scope = document.createElement("span"); scope.className = "scope-badge"; scope.textContent = record.scope; scopeCell.appendChild(scope);
     const access = document.createElement("td"); access.textContent = record.outlets === null ? "All outlets" : `${record.outlets.length} selected`;
     const statusCell = document.createElement("td"); const enabled = document.createElement("span"); enabled.className = `enabled-badge${record.enabled ? "" : " disabled"}`; enabled.textContent = record.enabled ? "Enabled" : "Disabled"; statusCell.appendChild(enabled);
-    const id = document.createElement("td"); id.textContent = record.id; const actions = document.createElement("td"); const group = document.createElement("div"); group.className = "row-actions"; group.append(tokenActionButton(record, "toggle"), tokenActionButton(record, "revoke")); actions.appendChild(group);
+    const id = document.createElement("td"); id.textContent = record.id; const actions = document.createElement("td"); const group = document.createElement("div"); group.className = "row-actions"; group.append(tokenActionButton(record, "toggle"), tokenActionButton(record, "delete")); actions.appendChild(group);
     row.append(label, scopeCell, access, statusCell, id, actions); body.appendChild(row);
   }
   $("token-empty").hidden = records.length !== 0;

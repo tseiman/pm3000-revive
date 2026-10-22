@@ -177,7 +177,7 @@ static int fetch_page(const char *socket_path, const char *credentials_path,
     char username[129], password[257];
     char escaped_user[MAX_ESCAPED_USERNAME], escaped_password[MAX_ESCAPED_PASSWORD];
     char login[MAX_REQUEST], topology[MAX_REQUEST], logout[MAX_REQUEST], sid[129];
-    char escaped_sid[MAX_ESCAPED_SID];
+    char escaped_sid[MAX_ESCAPED_SID], logout_error[256];
     unsigned char *login_response = NULL, *logout_response = NULL;
     size_t login_length = 0, logout_length = 0;
     int result = -1;
@@ -206,10 +206,15 @@ static int fetch_page(const char *socket_path, const char *credentials_path,
     if (exchange(socket_path, topology, response, response_length, error, error_size) != 0) goto logout;
     result = 0;
 logout:
+    logout_error[0] = '\0';
     if (exchange(socket_path, logout, &logout_response, &logout_length,
-                 error, error_size) != 0 ||
+                 logout_error, sizeof(logout_error)) != 0 ||
         !pm3000_xml_confirm(logout_response, logout_length, "login", "login")) {
-        free(*response); *response = NULL; *response_length = 0; result = -1;
+        /* Cleanup failure must neither discard a valid read nor mask its primary error. */
+        if (result == 0) {
+            fprintf(stderr, "pm3000-rest: controller logout cleanup failed: %s\n",
+                    logout_error[0] != '\0' ? logout_error : "response rejected");
+        }
     }
 cleanup:
     memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));

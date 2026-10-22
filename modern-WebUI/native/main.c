@@ -1763,6 +1763,9 @@ static int run_cgi(void) {
              configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
              &response, &response_length, error, sizeof(error))) != 0) {
         free(response);
+        fprintf(stderr, "pm3000-rest: outlet topology fetch failed via %s: %s\n",
+                using_session ? "browser session" : "service credentials",
+                error[0] != '\0' ? error : "unspecified backend error");
         return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Read-only backend unavailable.");
     }
     if (detail_request) {

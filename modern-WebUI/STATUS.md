@@ -33,7 +33,7 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current candidate repository suite: 217 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
+- Current candidate repository suite: 220 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
 - OpenAPI v1.6.0 describes the conditional Time Zone resource and passes JSON parsing, local contract tests, and `swagger-cli validate`.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
