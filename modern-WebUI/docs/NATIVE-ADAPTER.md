@@ -6,7 +6,7 @@ This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contrac
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-The current candidate has not been installed on a device. Development and verification use sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution. No test has contacted a PM3000 or issued a real write.
+Release candidate RC4 has been installed on the appliance, but live controller-backend communication is not yet working. The current evidence, failed attempts, and capture-first investigation plan are recorded in [`BACKEND-COMMUNICATION-STATUS.md`](BACKEND-COMMUNICATION-STATUS.md). Offline verification uses sanitized fixtures, temporary token stores, a fake Unix-socket controller, and QEMU user-mode execution. No real outlet write has been issued.
 
 ## Implemented routes
 
