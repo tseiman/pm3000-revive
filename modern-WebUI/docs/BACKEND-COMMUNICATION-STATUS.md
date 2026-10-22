@@ -28,7 +28,9 @@ The relevant backend traffic exists only on `pdu1.tsei.mdn`. It does not cross a
 
   with HTTP 503.
 - Browser login reaches the native backend path but reports `Controller login rejected.`
-- No REST outlet action has been attempted and no outlet has been switched.
+- A direct `uicontrold` trace of the RC4 login proves that the empty-SID login request is accepted, PAM/GSP and CACPD authentication succeed with `read write exec` permissions, and `uicontrold` returns a complete NUL-terminated `action=header` response with a 32-character SID.
+- The same captured response is rejected by the RC4 native XML parser. Removing only the vendor's exact `xml-stylesheet` processing instruction makes that response pass. The current failure is therefore localized to response parsing, not controller authentication or Unix-socket transport.
+- No Modern REST outlet action has been attempted and no outlet has been switched through the replacement adapter.
 - Offline fake-controller and QEMU tests pass, but they do not prove communication with the real Linux 2.6.23 appliance backend.
 
 ## Implemented backend work
@@ -56,35 +58,27 @@ The relevant backend traffic exists only on `pdu1.tsei.mdn`. It does not cross a
 
 These changes corrected real defects, but neither the `REMOTE_ADDR` nor `SOCK_CLOEXEC` hypothesis was sufficient to establish live backend communication.
 
-## Current uncertainty
+## Confirmed RC4 root cause
 
-The public error currently combines several different failure classes. It does not establish whether the failure occurs during:
+The real response starts with two processing instructions:
 
-1. Unix-socket creation or connection;
-2. header or XML transmission;
-3. response reception or framing;
-4. controller authentication;
-5. response parsing;
-6. the subsequent read or logout request.
+```xml
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>
+```
 
-The remaining likely causes therefore include socket permissions or syscall behavior, a still-mismatched vendor framing detail, controller rejection, an unexpected real-firmware response, or an overly strict parser. No single cause is currently proven.
+RC4 accepts the XML declaration but rejects every subsequent processing instruction. Earlier sanitized fixtures did not retain the stylesheet instruction, so the fake-controller tests did not reproduce the real response. This causes login parsing to fail before navigation or topology is requested and is surfaced as `Controller login rejected.` or `backend_unavailable`.
 
 ## Next investigation
 
-Do not publish another release based only on a new hypothesis. First collect direct evidence on `pdu1.tsei.mdn`:
+Do not publish another release based only on a new hypothesis. The next candidate should:
 
-1. Check whether `strace` or `ltrace` is already present.
-2. If available, trace the Apache/CGI processes for:
-   - one successful read-only Legacy WebUI request;
-   - the equivalent failed Modern REST read.
-3. Compare only these syscall-level facts:
-   - `socket`, `fcntl`, `connect`;
-   - byte counts and return values from `send`/`write` and `recv`/`read`;
-   - `errno`, close timing, and response termination.
-4. If no tracer exists, build a narrow PPC diagnostic adapter that reports stage, syscall, `errno`, and message lengths without logging payload contents.
-5. Only if syscall metadata is insufficient, capture the Unix-socket payload on the appliance and sanitize it before analysis.
-6. Split the generic backend error into stable transport, controller-login-response, read-response, and logout phases before the next candidate release.
-7. Validate `GET /api/v1/outlets` on the real device before considering any control-token or outlet-action test.
+1. Add a regression test containing the exact safe vendor preamble before a sanitized successful login response.
+2. Accept only the known static `xml-stylesheet` instruction before the root element; continue rejecting arbitrary processing instructions, external URLs, DTDs, and entities.
+3. Verify the parser against the captured response locally without retaining credentials, private addresses, labels, or session values.
+4. Keep stage-specific safe diagnostics so later transport and parser failures are distinguishable.
+5. Run the complete host, sanitizer, QEMU/PPC, and deployment suites.
+6. Validate browser login and `GET /api/v1/outlets` on the real device before considering any control-token or outlet-action test.
 
 ## Capture safety
 
