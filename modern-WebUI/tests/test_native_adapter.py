@@ -317,6 +317,25 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertNotIn(b"p&<secret", persisted)
             self.assertNotIn(cookie.encode(), persisted)
 
+    def test_session_login_ignores_inherited_basic_authorization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            socket_path = root / "avtrans.sock"
+            body = b'{"username":"operator","password":"p&<secret"}'
+            with FakeAvtransController(socket_path, [
+                LOGIN_RESPONSE.read_bytes(), NAVIGATION_RESPONSE.read_bytes(), OBSERVED.read_bytes(),
+            ]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/session", authorization="Basic Zm9vOmJhcg==",
+                    body=body, content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 201", result.stdout)
+            self.assertEqual(3, len(controller.requests))
+
     def test_session_login_escapes_maximum_length_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -392,13 +411,12 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(created, response)
             self.assertNotIn("[REDACTED-SID]", restored.stdout.decode())
 
-    def test_session_route_rejects_explicit_authorization_even_with_valid_cookie(self) -> None:
+    def test_session_route_rejects_bearer_and_malformed_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             cookie, session, _controller, _result = self.login_session(root)
             environment = {"PM3000_SESSION_DIR": str(root / "sessions")}
             for method, authorization, csrf in (
-                ("GET", "Basic Zm9vOmJhcg==", None),
                 ("GET", "malformed", None),
                 ("DELETE", "Bearer malformed", str(session["csrfToken"])),
             ):

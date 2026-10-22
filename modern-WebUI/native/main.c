@@ -530,7 +530,9 @@ static int run_session_route(const char *method, const char *session_directory,
     char error[160] = {0};
     char cookie[160];
     pm3000_session session;
-    if (getenv("HTTP_AUTHORIZATION") != NULL)
+    const char *authorization = getenv("HTTP_AUTHORIZATION");
+    if (authorization != NULL && authorization[0] != '\0' &&
+        strncmp(authorization, "Basic ", 6U) != 0)
         return cgi_error(401U, "Unauthorized", "unauthorized",
                          "Authorization is not accepted for browser sessions.");
     if (strcmp(method, "POST") == 0) {
