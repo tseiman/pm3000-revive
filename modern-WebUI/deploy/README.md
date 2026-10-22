@@ -59,8 +59,8 @@ host-side installation entry point is:
 ```sh
 modern-WebUI/deploy/stage7-install.sh \
   root@pm3000 \
-  /private/path/to/completed-backup \
-  /path/to/pm3000-release-<release-id>.tar
+  /path/to/pm3000-release-<release-id>.tar \
+  /private/path/to/completed-backup
 ```
 
 This is a write operation. Run it only during an approved maintenance window.
