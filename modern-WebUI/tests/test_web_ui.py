@@ -289,6 +289,13 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('$("new-password").value = ""', self.javascript)
         self.assertIn('$("confirm-password").value = ""', self.javascript)
 
+    def test_disabled_small_buttons_have_no_interactive_effects(self) -> None:
+        self.assertIn('.small-button:not(:disabled):hover', self.css)
+        self.assertIn('.small-button:not(:disabled):focus-visible', self.css)
+        self.assertIn('.small-button:not(:disabled):active', self.css)
+        self.assertIn('.small-button:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;transition:none;animation:none}', self.css)
+        self.assertNotIn('.small-button:hover', self.css)
+
     def test_navigation_is_collapsible_and_preserves_the_active_path(self) -> None:
         self.assertIn('button.setAttribute("aria-expanded", "false")', self.javascript)
         self.assertIn("children.hidden = true", self.javascript)
