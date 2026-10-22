@@ -222,7 +222,7 @@ static void free_document(struct token_document *document) {
 }
 
 static int parse_document(const unsigned char *data, size_t length, struct token_document *document) {
-    struct cursor cursor = {data, length, 0U}; uint64_t schema; unsigned int enabled_admins = 0U;
+    struct cursor cursor = {data, length, 0U}; uint64_t schema;
     memset(document, 0, sizeof(*document));
     if (expect(&cursor, "{\"generation\":") != 0 || parse_uint64(&cursor, &document->generation) != 0 || document->generation < 1U || document->generation > INT64_MAX || expect(&cursor, ",\"schemaVersion\":") != 0 || parse_uint64(&cursor, &schema) != 0 || schema != 1U || expect(&cursor, ",\"tokens\":[") != 0) goto rejected;
     while (cursor.offset < cursor.length && cursor.data[cursor.offset] != ']') {
@@ -243,12 +243,11 @@ static int parse_document(const unsigned char *data, size_t length, struct token
         }
         if (expect(&cursor, ",\"scope\":") != 0 || parse_string(&cursor, record->scope, sizeof(record->scope)) != 0 || expect(&cursor, "}") != 0 || !valid_created(record->created) || !valid_digest(record->digest) || !valid_token_id(record->id) || !valid_label(record->label) || !valid_scope(record->scope)) goto rejected;
         for (index = 0U; index < document->count; ++index) if (strcmp(document->records[index].id, record->id) == 0 || strcmp(document->records[index].digest, record->digest) == 0) goto rejected;
-        if (record->enabled && strcmp(record->scope, "admin") == 0) ++enabled_admins;
         ++document->count;
     }
     if (expect(&cursor, "]}") != 0) goto rejected;
     if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '\n') ++cursor.offset;
-    if (cursor.offset != cursor.length || document->count == 0U || enabled_admins == 0U) goto rejected;
+    if (cursor.offset != cursor.length) goto rejected;
     return 0;
 rejected:
     free_document(document); return -1;
@@ -271,7 +270,7 @@ static const char trusted_session_administrator = '\0';
 
 static int administrator_index(const struct token_document *document, const char *plaintext) {
     char digest[65]; unsigned int index; int found = -1;
-    if (plaintext == &trusted_session_administrator) return document->count > 0U ? 0 : -1;
+    if (plaintext == &trusted_session_administrator) return 0;
     if (plaintext == NULL || strlen(plaintext) != 47U || memcmp(plaintext, "pm3_", 4U) != 0) return -1;
     digest_plaintext(plaintext, digest);
     for (index = 0U; index < document->count; ++index) if (constant_equal(digest, document->records[index].digest, 64U) && document->records[index].enabled && strcmp(document->records[index].scope, "admin") == 0) found = (int)index;
@@ -547,7 +546,7 @@ pm3000_token_result pm3000_token_set_enabled(const char *store_path, const char 
     for (index = 0U; index < transaction.document.count; ++index) if (transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0) ++enabled_admins;
     for (index = 0U; index < transaction.document.count; ++index) if (strcmp(transaction.document.records[index].id, token_id_value) == 0) break;
     if (index == transaction.document.count) { result = PM3000_TOKEN_NOT_FOUND; goto done; }
-    if (!enabled && transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0 && enabled_admins == 1U) { result = PM3000_TOKEN_LAST_ADMIN; goto done; }
+    if (administrator != &trusted_session_administrator && !enabled && transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0 && enabled_admins == 1U) { result = PM3000_TOKEN_LAST_ADMIN; goto done; }
     if (transaction.document.generation >= INT64_MAX) goto done;
     transaction.document.records[index].enabled = enabled; ++transaction.document.generation;
     { int commit = commit_document(&transaction); if (commit == 0) result = PM3000_TOKEN_OK; else if (commit > 0) result = PM3000_TOKEN_COMMITTED_UNCERTAIN; }
@@ -563,7 +562,7 @@ pm3000_token_result pm3000_token_revoke(const char *store_path, const char *admi
     for (index = 0U; index < transaction.document.count; ++index) if (transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0) ++enabled_admins;
     for (index = 0U; index < transaction.document.count; ++index) if (strcmp(transaction.document.records[index].id, token_id_value) == 0) break;
     if (index == transaction.document.count) { result = PM3000_TOKEN_NOT_FOUND; goto done; }
-    if (transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0 && enabled_admins == 1U) { result = PM3000_TOKEN_LAST_ADMIN; goto done; }
+    if (administrator != &trusted_session_administrator && transaction.document.records[index].enabled && strcmp(transaction.document.records[index].scope, "admin") == 0 && enabled_admins == 1U) { result = PM3000_TOKEN_LAST_ADMIN; goto done; }
     if (transaction.document.generation >= INT64_MAX) goto done;
     free(transaction.document.records[index].outlets);
     if (index + 1U < transaction.document.count) memmove(&transaction.document.records[index], &transaction.document.records[index + 1U], (size_t)(transaction.document.count - index - 1U) * sizeof(transaction.document.records[0]));

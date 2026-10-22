@@ -196,14 +196,18 @@ rest=$work/release/bin/pm3000-rest
 log "Checking private runtime ownership and permissions"
 daemon_uid=$(id -u daemon)
 case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
-"$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest 2>/dev/null ||
-    "$helper" --verify-private-directory-owner /mnt/hdUser/pm3000-revive/rest "$daemon_uid"
+if [ -e /mnt/hdUser/pm3000-revive/rest ] || [ -L /mnt/hdUser/pm3000-revive/rest ]; then
+    "$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest 2>/dev/null ||
+        "$helper" --verify-private-directory-owner /mnt/hdUser/pm3000-revive/rest "$daemon_uid"
+fi
 "$helper" --verify-private-directory /etc/pm3000-rest 2>/dev/null ||
     "$helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
-"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json 2>/dev/null ||
-    "$helper" --verify-private-regular-owner /mnt/hdUser/pm3000-revive/rest/tokens.json "$daemon_uid"
-"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json.lock 2>/dev/null ||
-    "$helper" --verify-private-regular-owner /mnt/hdUser/pm3000-revive/rest/tokens.json.lock "$daemon_uid"
+for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-revive/rest/tokens.json.lock; do
+    if [ -e "$token_file" ] || [ -L "$token_file" ]; then
+        "$helper" --verify-private-regular "$token_file" 2>/dev/null ||
+            "$helper" --verify-private-regular-owner "$token_file" "$daemon_uid"
+    fi
+done
 "$helper" --verify-private-regular /etc/pm3000-rest/controller.credentials 2>/dev/null ||
     "$helper" --verify-private-regular-owner /etc/pm3000-rest/controller.credentials "$daemon_uid"
 

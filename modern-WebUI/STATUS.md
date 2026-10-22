@@ -10,7 +10,7 @@ Stage 9 milestone 2B is the current published offline checkpoint at commit `0ee3
 - Existing-PM3000 username/password login, server-side GSP sessions, 15-minute idle expiry, hardened cookie, CSRF, logout, and bounded session cleanup.
 - Server-derived, fixed-allowlist navigation and conservative rights gates.
 - External REST bearer authentication with `read`, `control`, and `admin` scopes and optional outlet allowlists.
-- Token list/create/enable/disable/revoke with digest-only persistence, one-time secret output, final-administrator protection, and preservation of `/mnt/hdUser/pm3000-revive/rest/tokens.json`.
+- Token list/create/enable/disable/revoke with digest-only persistence and one-time secret output. A private authorized browser session may remove every bearer token and later create a replacement; bearer-authenticated administration retains final-administrator protection. `/mnt/hdUser/pm3000-revive/rest/tokens.json` is preserved across upgrades and may validly contain no records.
 - Outlet inventory and `on`, `off`, and `cycle`. Public actions map to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` on `units.topology` / `topologyTable` after a fresh server-side row lookup.
 - PDU inventory plus PDU-wide `on`, `off`, and `cycle` on `units.powermanagement.pdu_management` / `pdu_devices_table`, also using a fresh server-side row lookup.
 - Inventory-revision checks reject stale client mappings. Neither outlet nor PDU APIs accept raw controller row IDs.
@@ -33,7 +33,7 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current candidate repository suite: 206 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
+- Current candidate repository suite: 217 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
 - OpenAPI v1.6.0 describes the conditional Time Zone resource and passes JSON parsing, local contract tests, and `swagger-cli validate`.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.

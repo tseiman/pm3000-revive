@@ -537,12 +537,20 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('base=$root/webui', installer)
         self.assertIn('chmod 755 "$root" "$base" "$releases"', installer)
         self.assertIn("--verify-release \"$release\"", installer)
-        self.assertIn('verify_private_directory "$root/rest"', installer)
+        self.assertIn('initialize_private_directory "$root/rest"', installer)
         self.assertIn('verify_private_directory /etc/pm3000-rest', installer)
-        self.assertIn('verify_private_regular "$prerequisite"', installer)
+        self.assertIn('initialize_private_regular "$root/rest/tokens.json"', installer)
+        self.assertIn('{"generation":1,"schemaVersion":1,"tokens":[]}', installer)
+        self.assertIn('initialize_private_regular "$root/rest/tokens.json.lock"', installer)
+        self.assertIn('verify_private_regular /etc/pm3000-rest/controller.credentials', installer)
         self.assertIn('--verify-private-directory-owner "$1" "$daemon_uid"', installer)
         self.assertIn('--verify-private-regular-owner "$1" "$daemon_uid"', installer)
-        self.assertIn('chown daemon:daemon "$root/rest" /etc/pm3000-rest', installer)
+        self.assertNotIn('chown daemon:daemon "$root/rest"', installer)
+        self.assertNotIn('chmod 600 "$root/rest/tokens.json"', installer)
+        self.assertIn('--set-private-regular-owner "$private_file" "$daemon_uid" "$daemon_gid"', installer)
+        self.assertIn('--set-private-directory-owner "$private_directory" "$daemon_uid" "$daemon_gid"', installer)
+        self.assertIn("fchown(descriptor, target_uid, target_gid)", atomic_source)
+        self.assertIn("fchmod(descriptor, target_mode)", atomic_source)
         self.assertIn("st_uid != geteuid()", atomic_source)
         self.assertIn('package_snapshot=$work/release.tar', installer)
         self.assertNotIn('package path must be absolute', installer)
@@ -613,6 +621,11 @@ class ScriptStructureTests(unittest.TestCase):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
                 0,
             )
+            subprocess.run([
+                str(helper), "--set-private-regular-owner", str(private_regular),
+                str(os.geteuid()), str(os.getegid()),
+            ], check=True)
+            self.assertEqual(private_regular.stat().st_mode & 0o7777, 0o600)
             symlink = root / "symlink"
             symlink.symlink_to("regular")
             self.assertNotEqual(
@@ -620,6 +633,27 @@ class ScriptStructureTests(unittest.TestCase):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
                 0,
             )
+            original_mode = regular.stat().st_mode & 0o7777
+            self.assertNotEqual(
+                subprocess.run([
+                    str(helper), "--set-private-regular-owner", str(symlink),
+                    str(os.geteuid()), str(os.getegid()),
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
+            self.assertEqual(regular.stat().st_mode & 0o7777, original_mode)
+            fifo = root / "fifo"
+            os.mkfifo(fifo, 0o600)
+            for arguments in (
+                [str(helper), "--verify-private-regular", str(fifo)],
+                [str(helper), "--set-private-regular-owner", str(fifo),
+                 str(os.geteuid()), str(os.getegid())],
+            ):
+                self.assertNotEqual(
+                    subprocess.run(arguments, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=2).returncode,
+                    0,
+                )
             hardlink = root / "hardlink"
             os.link(regular, hardlink)
             self.assertNotEqual(
@@ -640,6 +674,11 @@ class ScriptStructureTests(unittest.TestCase):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
                 0,
             )
+            subprocess.run([
+                str(helper), "--set-private-directory-owner", str(private),
+                str(os.geteuid()), str(os.getegid()),
+            ], check=True)
+            self.assertEqual(private.stat().st_mode & 0o7777, 0o700)
 
     def test_atomic_helper_rejects_unsafe_existing_release_trees(self):
         subprocess.run(["make", "-C", str(DEPLOY), "clean", "host"], check=True,
@@ -735,7 +774,7 @@ class ScriptStructureTests(unittest.TestCase):
             helper.write_text(
                 "#!/bin/sh\n"
                 "set -eu\n"
-                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner) exit 0;; esac\n"
+                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner|--set-private-directory-owner|--set-private-regular-owner) exit 0;; esac\n"
                 "parent=$1; source=$2; destination=$3; expected_type=$4\n"
                 "rm -rf \"$parent/$destination\"\n"
                 "mv \"$parent/$source\" \"$parent/$destination\"\n"

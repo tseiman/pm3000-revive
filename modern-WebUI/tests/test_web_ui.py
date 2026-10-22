@@ -105,6 +105,13 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('actionButton(outlet, "on")', self.javascript)
         self.assertIn('actionButton(outlet, "off")', self.javascript)
         self.assertIn('actionButton(outlet, "cycle")', self.javascript)
+        self.assertIn('if (outlet.state === "off" && (action === "off" || action === "cycle")) return true', self.javascript)
+        self.assertIn('if (outlet.state === "on" && action === "on") return true', self.javascript)
+        self.assertIn('if (outlet.state !== "on" && outlet.state !== "off") return true', self.javascript)
+        self.assertIn('article.className = `outlet-card state-${outlet.state}`', self.javascript)
+        self.assertIn('status-chip${outlet.state === "off" ? " off"', self.javascript)
+        self.assertRegex(self.css, r"\.outlet-card\.state-on\{[^}]*border-left-color:var\(--accent\)")
+        self.assertRegex(self.css, r"\.outlet-card\.state-off\{[^}]*border-left-color:var\(--red\)")
 
     def test_ui_exposes_rights_gated_pdu_inventory_and_actions(self) -> None:
         self.assertIn('id="pdus-view"', self.html)

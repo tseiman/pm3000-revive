@@ -182,9 +182,16 @@ function switchView(view, path = "", label = "") {
 
 function statusLabel(value) { return value === "on" ? "On" : value === "off" ? "Off" : "Unknown"; }
 
+function outletActionDisabled(outlet, action) {
+  if (outlet.state === "off" && (action === "off" || action === "cycle")) return true;
+  if (outlet.state === "on" && action === "on") return true;
+  if (outlet.state !== "on" && outlet.state !== "off") return true;
+  return false;
+}
+
 function actionButton(outlet, action) {
   const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
-  if ((action === "on" && outlet.state === "on") || (action === "off" && outlet.state === "off")) button.disabled = true;
+  button.disabled = outletActionDisabled(outlet, action);
   button.addEventListener("click", async () => {
     if (!window.confirm(`${button.textContent} ${outlet.name || `outlet ${outlet.position}`}?`)) return;
     button.disabled = true;
@@ -201,10 +208,10 @@ function renderOutlets(collection) {
   state.outlets = outlets; state.inventoryRevision = collection.inventoryRevision || "";
   const grid = $("outlet-grid"); clear(grid);
   for (const outlet of outlets) {
-    const article = document.createElement("article"); article.className = "outlet-card";
+    const article = document.createElement("article"); article.className = `outlet-card state-${outlet.state}`;
     const header = document.createElement("div"); header.className = "outlet-card-header";
     const position = document.createElement("span"); position.className = "outlet-position"; position.textContent = `OUTLET ${String(outlet.position).padStart(2, "0")}`;
-    const status = document.createElement("span"); status.className = `status-chip${outlet.state === "unknown" ? " unknown" : ""}`; status.textContent = statusLabel(outlet.state);
+    const status = document.createElement("span"); status.className = `status-chip${outlet.state === "off" ? " off" : outlet.state === "unknown" ? " unknown" : ""}`; status.textContent = statusLabel(outlet.state);
     const title = document.createElement("h3"); title.textContent = outlet.name || `Outlet ${outlet.position}`;
     const identifier = document.createElement("p"); identifier.textContent = outlet.id;
     header.append(position, status); article.append(header, title, identifier);

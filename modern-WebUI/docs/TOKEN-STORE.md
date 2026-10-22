@@ -64,7 +64,7 @@ The canonical document contains exactly:
 }
 ```
 
-The digest above is a format illustration, not a usable credential. Unknown or duplicate JSON members are rejected. IDs and digests must be unique, outlet IDs must be unique and sorted, and the store must contain at least one enabled administrator. Labels are immutable after creation, contain 1–64 visible characters, and are limited to 128 UTF-8 bytes.
+The digest above is a format illustration, not a usable credential. Unknown or duplicate JSON members are rejected. IDs and digests must be unique, and outlet IDs must be unique and sorted. An empty `tokens` array is valid: browser administration is authorized by the private PM3000 session rather than by a bearer token. Labels are immutable after creation, contain 1–64 visible characters, and are limited to 128 UTF-8 bytes.
 
 `generation` increments on every committed mutation, is limited to the positive signed 64-bit range `1..2^63-1`, and fails closed before replacement on overflow. It is an internal persistence generation and is unrelated to the outlet `inventoryRevision`.
 
@@ -91,7 +91,8 @@ An `admin` scope does not bypass its outlet allowlist. Token-administration rout
 - Disable retains metadata and the digest but immediately denies authorization.
 - Enable restores authorization using the existing digest.
 - Revoke atomically removes both metadata and digest.
-- The final enabled administrator cannot be disabled or revoked.
+- An authenticated PM3000 browser administrator may disable or revoke every bearer token, including the final enabled bearer administrator.
+- Bearer-authenticated administration retains final-administrator protection because a bearer client has no independent recovery identity.
 - A disabled administrator cannot perform administration.
 
 The runtime must reload or otherwise invalidate authorization state on each committed generation so disable and revoke take effect immediately.
@@ -116,7 +117,7 @@ A delivery failure occurs before replacement and therefore leaves the previous s
 
 ## Host-side command
 
-All paths are explicit and absolute. Bootstrap is permitted only when no store object exists:
+All paths are explicit and absolute. Bootstrap is an optional host-side way to create the first bearer credential when no store object exists; the browser WebUI does not require it:
 
 ```bash
 python3 modern-WebUI/tools/token_admin.py bootstrap \
@@ -152,4 +153,4 @@ POST   /api/v1/tokens/{tokenId}/enable
 DELETE /api/v1/tokens/{tokenId}
 ```
 
-Every operation requires `admin`, uses the token store only, and must never construct an Avtrans request. There is no HTTP bootstrap route, generic token patch, digest export, plaintext-token list, or token recovery route. The Stage 5 UI may call only these fixed operations.
+Every operation requires either an enabled bearer `admin` or a private PM3000 browser session with the server-derived token-management right. Token administration uses the token store only and must never construct an Avtrans request. There is no HTTP bootstrap route, generic token patch, digest export, plaintext-token list, or token recovery route. A permitted browser session can create a new bearer token from an empty store.

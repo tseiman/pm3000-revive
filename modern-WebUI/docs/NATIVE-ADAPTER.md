@@ -131,7 +131,7 @@ The native reader and writer enforce the Stage 3 canonical store contract:
 
 - strict schema and canonical field order
 - bounded store, token, and outlet counts
-- exactly one enabled administrator or more
+- zero to 128 records; an empty store and no enabled bearer administrator are valid
 - SHA-256 digests only; bearer plaintext is never stored
 - independent random token record IDs
 - exclusive lock during validation and mutation
@@ -139,7 +139,7 @@ The native reader and writer enforce the Stage 3 canonical store contract:
 - owner-only regular files and a mode-`0700` owner-only directory
 - verified parent-directory `fsync` before each transaction, followed by a same-directory temporary file, file `fsync`, atomic rename, and private-directory `fsync`
 - generation increment for every successful mutation
-- protection against disabling or revoking the final enabled administrator
+- final-enabled-administrator protection for bearer-authenticated administration; an authorized private browser session may disable or revoke every bearer token and recreate one from an empty store
 
 A created bearer value appears only in its one-time `201` response. While the exclusive lock is held, the candidate store is first written and `fsync`ed to a same-directory temporary file. The response is then written and flushed before the atomic rename. A response-delivery failure removes the candidate and preserves the old store byte-for-byte. A subsequent pre-rename failure can leave the client with an inactive credential, but cannot leave an active credential whose plaintext was not delivered. Once rename succeeds, directory-`fsync` uncertainty is reported locally and never rolled back; the already delivered credential remains the authoritative result. List responses contain metadata only. Error responses and tests must not contain token plaintext or digests.
 
@@ -157,8 +157,8 @@ Power `on`/`off` responses must be valid operation-specific inventories that rep
 
 Before installing a write-capable candidate, the installer must independently provide and verify:
 
-1. an owner-only persistent directory at `/mnt/hdUser/pm3000-revive/rest/` with mode `0700`;
-2. the canonical token store and lock file with mode `0600`;
+1. a safe persistent parent for `/mnt/hdUser/pm3000-revive/rest/`; the installer creates the private mode-`0700` directory when absent;
+2. optional existing canonical token store and lock files; the installer creates a canonical empty mode-`0600` store and private lock when absent;
 3. an owner-only credentials file at `/etc/pm3000-rest/controller.credentials`;
 4. an Apache mapping that preserves the existing vendor Web UI as a fallback;
 5. HTTPS-only access and the required CGI environment;

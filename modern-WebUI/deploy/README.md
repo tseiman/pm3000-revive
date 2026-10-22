@@ -132,6 +132,13 @@ Defaults represented by the transaction are:
 - isolated config: `/etc/apache2/conf.d/pm3000-revive.conf`
 - preserved private store: `/mnt/hdUser/pm3000-revive/rest/tokens.json`
 
+An initial bearer token is not an installation prerequisite. If the private token
+store directory, store, or lock file do not yet exist, the device installer
+creates the private directory, a canonical empty store, and a private lock file.
+Existing objects are validated and preserved.
+The authorized browser WebUI can create a bearer token later if an external REST
+client needs one.
+
 The transaction recursively inventories and archives every existing regular
 file below the managed `webui`, `rest`, `deploy`, Apache-config, and private
 REST-config scopes. Directories and symlinks are represented in the manifest

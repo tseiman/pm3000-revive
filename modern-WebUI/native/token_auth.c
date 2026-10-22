@@ -244,7 +244,7 @@ static int parse_store(const unsigned char *data, size_t length, const char *pla
     struct cursor cursor = {data, length, 0};
     struct record_key keys[MAX_TOKENS];
     unsigned int token_count = 0;
-    unsigned int enabled_admins = 0;
+
     char presented[65];
     uint64_t generation;
     uint64_t schema;
@@ -293,7 +293,7 @@ static int parse_store(const unsigned char *data, size_t length, const char *pla
         }
         strcpy(keys[token_count].id, id); strcpy(keys[token_count].digest, digest);
         ++token_count;
-        if (enabled && strcmp(scope, "admin") == 0) ++enabled_admins;
+
         if (constant_equal(digest, presented, 64U)) {
             authorization->authenticated = enabled;
             matched = enabled && scope_level(scope) >= required_level;
@@ -304,7 +304,7 @@ static int parse_store(const unsigned char *data, size_t length, const char *pla
     }
     if (expect(&cursor, "]}") != 0) return -1;
     if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '\n') ++cursor.offset;
-    if (cursor.offset != cursor.length || token_count == 0U || enabled_admins == 0U) return -1;
+    if (cursor.offset != cursor.length) return -1;
     if (matched && required_outlet != NULL) {
         unsigned int index;
         matched = authorization->unrestricted;

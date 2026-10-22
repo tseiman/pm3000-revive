@@ -540,8 +540,8 @@ class TokenStore:
             raise TokenStoreError(
                 "token-store generation must be an integer from 1 through 2^63-1"
             )
-        if not isinstance(document["tokens"], list) or not 1 <= len(document["tokens"]) <= 128:
-            raise TokenStoreError("token-store tokens must contain 1 to 128 records")
+        if not isinstance(document["tokens"], list) or not 0 <= len(document["tokens"]) <= 128:
+            raise TokenStoreError("token-store tokens must contain 0 to 128 records")
         expected_record_members = {
             "id",
             "label",
@@ -553,7 +553,6 @@ class TokenStore:
         }
         identifiers: set[str] = set()
         digests: set[str] = set()
-        enabled_administrators = 0
         for value in document["tokens"]:
             if not isinstance(value, dict) or set(value) != expected_record_members:
                 raise TokenStoreError("token record has unknown or missing members")
@@ -597,10 +596,7 @@ class TokenStore:
                 raise TokenStoreError("token IDs and digests must be unique")
             identifiers.add(value["id"])
             digests.add(value["digest"])
-            if value["scope"] == "admin" and value["enabled"]:
-                enabled_administrators += 1
-        if enabled_administrators == 0:
-            raise TokenStoreError("token store has no enabled administrator")
+
 
     def _atomic_write(self, document: dict, directory_descriptor: int) -> None:
         self._validate_candidate(document)

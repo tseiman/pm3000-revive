@@ -41,7 +41,7 @@ static int verify_entries(int directory_fd, const char *const *names, size_t cou
 }
 
 static int verify_regular_at(int directory_fd, const char *name, mode_t mode) {
-    int file_fd = openat(directory_fd, name, O_RDONLY | O_NOFOLLOW);
+    int file_fd = openat(directory_fd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
     struct stat value;
     if (file_fd < 0) return -1;
     if (fstat(file_fd, &value) != 0 || !S_ISREG(value.st_mode)
@@ -100,6 +100,14 @@ static int verify_release(const char *path) {
     return result;
 }
 
+static int parse_id(const char *value, unsigned long maximum, unsigned long *parsed) {
+    char *end = NULL;
+    errno = 0;
+    *parsed = strtoul(value, &end, 10);
+    return errno == 0 && value[0] != '\0' && end != NULL && *end == '\0' &&
+           *parsed <= maximum;
+}
+
 int main(int argc, char **argv) {
     int directory_fd;
     struct stat source;
@@ -108,22 +116,18 @@ int main(int argc, char **argv) {
     if (argc == 4 &&
             (strcmp(argv[1], "--verify-private-directory-owner") == 0 ||
              strcmp(argv[1], "--verify-private-regular-owner") == 0)) {
-        char *end = NULL;
-        unsigned long parsed;
+        unsigned long parsed = 0UL;
         uid_t expected_owner;
         int descriptor;
-        errno = 0;
-        parsed = strtoul(argv[3], &end, 10);
-        expected_owner = (uid_t)parsed;
-        if (errno != 0 || argv[3][0] == '\0' || end == NULL || *end != '\0' ||
-                (unsigned long)expected_owner != parsed) {
+        if (!parse_id(argv[3], (unsigned long)(uid_t)-1, &parsed)) {
             fprintf(stderr, "invalid expected owner\n");
             return 2;
         }
+        expected_owner = (uid_t)parsed;
         if (strcmp(argv[1], "--verify-private-directory-owner") == 0)
             descriptor = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
         else
-            descriptor = open(argv[2], O_RDONLY | O_NOFOLLOW);
+            descriptor = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
         if (descriptor < 0) {
             perror("open private path");
             return 1;
@@ -134,6 +138,45 @@ int main(int argc, char **argv) {
                     : (!S_ISREG(source.st_mode) || source.st_nlink != 1 ||
                        (source.st_mode & 07777) != 0600))) {
             fprintf(stderr, "path is not trusted private storage for expected owner\n");
+            close(descriptor);
+            return 1;
+        }
+        return close(descriptor) == 0 ? 0 : 1;
+    }
+
+    if (argc == 5 &&
+            (strcmp(argv[1], "--set-private-directory-owner") == 0 ||
+             strcmp(argv[1], "--set-private-regular-owner") == 0)) {
+        unsigned long parsed_uid = 0UL, parsed_gid = 0UL;
+        uid_t target_uid;
+        gid_t target_gid;
+        mode_t target_mode;
+        int descriptor;
+        int is_directory = strcmp(argv[1], "--set-private-directory-owner") == 0;
+        if (!parse_id(argv[3], (unsigned long)(uid_t)-1, &parsed_uid) ||
+                !parse_id(argv[4], (unsigned long)(gid_t)-1, &parsed_gid)) {
+            fprintf(stderr, "invalid target owner\n");
+            return 2;
+        }
+        target_uid = (uid_t)parsed_uid;
+        target_gid = (gid_t)parsed_gid;
+        target_mode = is_directory ? 0700 : 0600;
+        descriptor = open(argv[2], O_RDONLY | O_NOFOLLOW |
+                          (is_directory ? O_DIRECTORY : O_NONBLOCK));
+        if (descriptor < 0) {
+            perror("open private path for ownership update");
+            return 1;
+        }
+        if (fstat(descriptor, &source) != 0 ||
+                (is_directory ? !S_ISDIR(source.st_mode) :
+                 (!S_ISREG(source.st_mode) || source.st_nlink != 1)) ||
+                (source.st_uid != geteuid() && source.st_uid != target_uid) ||
+                fchown(descriptor, target_uid, target_gid) != 0 ||
+                fchmod(descriptor, target_mode) != 0 ||
+                fstat(descriptor, &source) != 0 || source.st_uid != target_uid ||
+                source.st_gid != target_gid ||
+                (source.st_mode & 07777) != target_mode) {
+            fprintf(stderr, "could not safely set private path ownership\n");
             close(descriptor);
             return 1;
         }
@@ -160,7 +203,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc == 3 && strcmp(argv[1], "--verify-private-regular") == 0) {
-        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW);
+        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
         if (file_fd < 0) {
             perror("open private regular file");
             return 1;
@@ -180,7 +223,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc == 3 && strcmp(argv[1], "--verify-regular") == 0) {
-        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW);
+        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
         if (file_fd < 0) {
             perror("open regular file");
             return 1;
@@ -207,7 +250,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc != 5 || !safe_name(argv[2]) || !safe_name(argv[3])) {
-        fprintf(stderr, "usage: pm3000-atomic-publish --verify-private-directory DIRECTORY | --verify-regular FILE | --verify-release DIRECTORY | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
+        fprintf(stderr, "usage: pm3000-atomic-publish --verify-private-directory DIRECTORY | --set-private-regular-owner FILE UID GID | --verify-regular FILE | --verify-release DIRECTORY | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
         return 2;
     }
     if (strcmp(argv[4], "symlink") == 0) {

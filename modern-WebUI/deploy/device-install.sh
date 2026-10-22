@@ -163,6 +163,8 @@ chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
 daemon_uid=$(id -u daemon)
 case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
+daemon_gid=$(id -g daemon)
+case "$daemon_gid" in ''|*[!0-9]*) echo "invalid Apache daemon group" >&2; exit 1;; esac
 verify_private_directory()
 {
     "$atomic_helper" --verify-private-directory "$1" 2>/dev/null ||
@@ -173,20 +175,46 @@ verify_private_regular()
     "$atomic_helper" --verify-private-regular "$1" 2>/dev/null ||
         "$atomic_helper" --verify-private-regular-owner "$1" "$daemon_uid"
 }
-verify_private_directory "$root/rest" || { echo "unsafe or missing REST private directory" >&2; exit 1; }
+initialize_private_directory()
+{
+    _private_directory=$1
+    [ ! -L "$_private_directory" ] || return 1
+    if [ ! -e "$_private_directory" ]; then
+        mkdir -m 700 "$_private_directory" || return 1
+    fi
+    verify_private_directory "$_private_directory"
+}
+initialize_private_regular()
+{
+    _private_path=$1
+    [ ! -L "$_private_path" ] || return 1
+    if [ ! -e "$_private_path" ]; then
+        if [ "$#" -eq 2 ]; then
+            (umask 077; set -C; printf '%s\n' "$2" >"$_private_path") || return 1
+        else
+            (umask 077; set -C; : >"$_private_path") || return 1
+        fi
+    fi
+    verify_private_regular "$_private_path"
+}
+initialize_private_directory "$root/rest" || { echo "unsafe REST private directory" >&2; exit 1; }
 verify_private_directory /etc/pm3000-rest || { echo "unsafe or missing credentials directory" >&2; exit 1; }
-for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do
-    verify_private_regular "$prerequisite" || {
-        echo "unsafe or missing write-capable runtime prerequisite: $prerequisite" >&2
-        exit 1
-    }
+initialize_private_regular "$root/rest/tokens.json" '{"generation":1,"schemaVersion":1,"tokens":[]}' || {
+    echo "unsafe token store" >&2; exit 1;
+}
+initialize_private_regular "$root/rest/tokens.json.lock" || {
+    echo "unsafe token-store lock" >&2; exit 1;
+}
+verify_private_regular /etc/pm3000-rest/controller.credentials || {
+    echo "unsafe or missing controller credentials" >&2; exit 1;
+}
+for private_file in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
+    /etc/pm3000-rest/controller.credentials; do
+    "$atomic_helper" --set-private-regular-owner "$private_file" "$daemon_uid" "$daemon_gid"
 done
-chown daemon:daemon "$root/rest" /etc/pm3000-rest
-chown daemon:daemon "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
-    /etc/pm3000-rest/controller.credentials
-chmod 700 "$root/rest" /etc/pm3000-rest
-chmod 600 "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
-    /etc/pm3000-rest/controller.credentials
+for private_directory in "$root/rest" /etc/pm3000-rest; do
+    "$atomic_helper" --set-private-directory-owner "$private_directory" "$daemon_uid" "$daemon_gid"
+done
 "$atomic_helper" --verify-private-directory-owner "$root/rest" "$daemon_uid"
 "$atomic_helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
 for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do

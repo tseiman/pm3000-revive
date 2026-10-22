@@ -717,6 +717,65 @@ class NativeAdapterTests(unittest.TestCase):
             )
             self.assertIn(b"Status: 200", bearer.stdout)
 
+    def test_session_can_disable_and_remove_every_token_then_recreate_from_empty_store(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = self.token_environment(root, store_path)
+            environment["PM3000_SESSION_DIR"] = str(root / "sessions")
+
+            disabled = self.run_cgi(
+                "POST", f"/api/v1/tokens/{administrator.record.id}/disable",
+                cookie=cookie, csrf=str(session["csrfToken"]),
+                extra_environment=environment,
+            )
+            self.assertIn(b"Status: 204", disabled.stdout)
+            self.assertFalse(json.loads(store_path.read_text())["tokens"][0]["enabled"])
+
+            enabled = self.run_cgi(
+                "POST", f"/api/v1/tokens/{administrator.record.id}/enable",
+                cookie=cookie, csrf=str(session["csrfToken"]),
+                extra_environment=environment,
+            )
+            self.assertIn(b"Status: 204", enabled.stdout)
+
+            revoked = self.run_cgi(
+                "DELETE", f"/api/v1/tokens/{administrator.record.id}",
+                cookie=cookie, csrf=str(session["csrfToken"]),
+                extra_environment=environment,
+            )
+            self.assertIn(b"Status: 204", revoked.stdout)
+            self.assertEqual([], json.loads(store_path.read_text())["tokens"])
+
+            listed = self.run_cgi(
+                "GET", "/api/v1/tokens", cookie=cookie,
+                extra_environment=environment,
+            )
+            _headers, listed_body = self.cgi_json(listed)
+            self.assertEqual([], listed_body["tokens"])
+
+            former_bearer = self.run_cgi(
+                "GET", "/api/v1/outlets",
+                authorization=f"Bearer {administrator.plaintext}",
+                extra_environment=environment,
+            )
+            former_headers, former_body = self.cgi_json(former_bearer)
+            self.assertIn(b"Status: 401", former_headers)
+            self.assertEqual("unauthorized", former_body["code"])
+
+            recreated = self.run_cgi(
+                "POST", "/api/v1/tokens", cookie=cookie,
+                csrf=str(session["csrfToken"]),
+                body=b'{"label":"Replacement administrator","scope":"admin"}',
+                content_type="application/json", extra_environment=environment,
+            )
+            recreated_headers, recreated_body = self.cgi_json(recreated)
+            self.assertIn(b"Status: 201", recreated_headers)
+            self.assertRegex(recreated_body["token"], r"^pm3_[A-Za-z0-9_-]{43}$")
+
     def test_token_administration_success_returns_plaintext_once_without_digest_or_avtrans(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

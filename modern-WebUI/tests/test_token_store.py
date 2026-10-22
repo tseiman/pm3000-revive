@@ -354,7 +354,7 @@ class TokenStoreTests(unittest.TestCase):
                     with self.assertRaises(token_store.TokenStoreError):
                         store.authenticate("not-the-token")
 
-    def test_document_wide_identity_and_admin_invariants_are_enforced(self) -> None:
+    def test_document_wide_identity_invariants_are_enforced(self) -> None:
         administrator = {
             "id": "tok_" + "A" * 22,
             "label": "Administrator",
@@ -370,11 +370,9 @@ class TokenStoreTests(unittest.TestCase):
             id="tok_" + "B" * 22,
             label="Duplicate digest",
         )
-        no_active_admin = dict(administrator, enabled=False)
         cases = {
             "duplicate-id": [administrator, duplicate_id],
             "duplicate-digest": [administrator, duplicate_digest],
-            "no-active-admin": [no_active_admin],
         }
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "rest"
@@ -396,6 +394,28 @@ class TokenStoreTests(unittest.TestCase):
                     store_path.chmod(0o600)
                     with self.assertRaises(token_store.TokenStoreError):
                         store.authenticate("not-the-token")
+
+    def test_store_accepts_no_enabled_administrator_and_no_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "rest"
+            directory.mkdir(mode=0o700)
+            store_path = directory / "tokens.json"
+            store = token_store.TokenStore(store_path)
+            disabled_administrator = {
+                "id": "tok_" + "A" * 22,
+                "label": "Disabled administrator",
+                "createdAt": "2026-10-20T12:00:00Z",
+                "digest": "0" * 64,
+                "enabled": False,
+                "scope": "admin",
+                "outlets": None,
+            }
+            for records in ([disabled_administrator], []):
+                store_path.write_text(json.dumps({
+                    "schemaVersion": 1, "generation": 1, "tokens": records,
+                }) + "\n")
+                store_path.chmod(0o600)
+                self.assertIsNone(store.authenticate("not-the-token"))
 
     def test_bootstrap_rejects_broken_store_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

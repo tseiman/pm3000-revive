@@ -115,14 +115,14 @@ Token list/create/enable/disable/revoke is local to the token store and never co
 - Only a new token's plaintext is returned, exactly once.
 - Lists contain metadata only, never digest or plaintext.
 - Disable retains the digest and metadata; revoke removes the record.
-- The final enabled administrator cannot be disabled or revoked.
+- Bearer-authenticated administration cannot disable or revoke the final enabled bearer administrator. A private authorized browser session may do so and can create a replacement from an empty store.
 - Production persistence remains `/mnt/hdUser/pm3000-revive/rest/tokens.json` and is excluded from release installation and normal restore.
 
 ## Response and error behavior
 
 All responses disable caching and content sniffing. Errors use a closed JSON object with `code` and `message` and never contain backend XML, GSP SIDs, cookies, credentials, bearer values, raw row IDs, or internal paths.
 
-Important failures include malformed input, unsupported media type, oversized body, authentication/authorization denial, missing outlet, stale inventory, backend protocol/unavailability, unknown action outcome, final-administrator protection, token limit, and unavailable token storage. Exact status codes and the complete vocabulary are in OpenAPI.
+Important failures include malformed input, unsupported media type, oversized body, authentication/authorization denial, missing outlet, stale inventory, backend protocol/unavailability, unknown action outcome, bearer-side final-administrator protection, token limit, and unavailable token storage. A private authorized browser session can remove the final bearer administrator because it retains an independent recovery identity. Exact status codes and the complete vocabulary are in OpenAPI.
 
 ## Further writable settings
 
