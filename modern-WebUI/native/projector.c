@@ -89,6 +89,7 @@ struct parser {
     struct pdu pdus[MAX_PDUS];
     size_t pdu_count;
     unsigned int root_count;
+    unsigned int xml_declarations;
     unsigned int vendor_stylesheets;
     unsigned int action_count;
     unsigned int path_count;
@@ -492,6 +493,7 @@ static int parse_document(struct parser *parser) {
         ++parser->offset;
         if (parser->offset >= parser->length) return -1;
         if (parser->input[parser->offset] == '?') {
+            static const char vendor_declaration[] = "xml version=\"1.0\"";
             static const char vendor_stylesheet[] =
                 "xml-stylesheet type=\"text/xsl\" href=\"transformation.xsl\"";
             const unsigned char *end;
@@ -500,8 +502,14 @@ static int parse_document(struct parser *parser) {
             end = (const unsigned char *)strstr((const char *)parser->input + parser->offset, "?>");
             if (end == NULL) return -1;
             content_length = (size_t)(end - parser->input) - content_start;
-            if (parser->offset != 1U) {
+            if (parser->offset == 1U) {
+                if (content_length != sizeof(vendor_declaration) - 1U ||
+                    memcmp(parser->input + content_start, vendor_declaration,
+                           sizeof(vendor_declaration) - 1U) != 0) return -1;
+                ++parser->xml_declarations;
+            } else {
                 if (parser->depth != 0U || parser->root_count != 0U ||
+                    parser->xml_declarations != 1U ||
                     parser->vendor_stylesheets != 0U ||
                     content_length != sizeof(vendor_stylesheet) - 1U ||
                     memcmp(parser->input + content_start, vendor_stylesheet,

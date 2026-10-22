@@ -77,6 +77,7 @@ struct document {
     unsigned int sids;
     unsigned int errors;
     unsigned int payloads;
+    unsigned int xml_declarations;
     unsigned int vendor_stylesheets;
     char action[XML_MAX_TEXT + 1U];
     char path[XML_MAX_TEXT + 1U];
@@ -803,7 +804,9 @@ static int parse_document(const unsigned char *xml, size_t length,
             if (document->offset == 1U) {
                 if (!valid_xml_declaration(document->input + content_start,
                                            end - content_start)) return -1;
+                ++document->xml_declarations;
             } else if (document->depth == 0U && document->roots == 0U &&
+                       document->xml_declarations == 1U &&
                        document->vendor_stylesheets == 0U &&
                        valid_vendor_stylesheet(document->input + content_start,
                                                end - content_start)) {

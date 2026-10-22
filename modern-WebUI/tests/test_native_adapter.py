@@ -348,6 +348,7 @@ class NativeAdapterTests(unittest.TestCase):
             declaration + b'<?xml-stylesheet href="transformation.xsl" type="text/xsl"?>',
             declaration + b'<?xml-stylesheet type="text/xsl" href="transformation.xsl" media="all"?>',
             VENDOR_XML_PREAMBLE + b'<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>',
+            b' \n<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>',
         )
         for preamble in candidates:
             with self.subTest(preamble=preamble), tempfile.TemporaryDirectory() as temporary:
@@ -2599,6 +2600,23 @@ class NativeAdapterTests(unittest.TestCase):
         self.assertEqual(b"", duplicate.stdout)
         self.assertEqual(3, noncanonical.returncode)
         self.assertEqual(b"", noncanonical.stdout)
+
+    def test_topology_projector_rejects_unapproved_processing_instructions(self) -> None:
+        candidates = (
+            b"<?arbitrary?>",
+            b'<?xml-stylesheet type="text/xsl" href="https://example.test/x.xsl"?>',
+            b"<??>",
+            VENDOR_XML_PREAMBLE + b'<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>',
+        )
+        for preamble in candidates:
+            with self.subTest(preamble=preamble), tempfile.TemporaryDirectory() as temporary:
+                candidate = Path(temporary) / "topology.xml"
+                candidate.write_bytes(preamble + OBSERVED.read_bytes())
+
+                result = self.run_adapter("--project", str(candidate))
+
+                self.assertEqual(3, result.returncode)
+                self.assertEqual(b"", result.stdout)
 
     def test_observed_topology_projects_closed_read_only_inventory(self) -> None:
         result = self.run_adapter("--project", str(OBSERVED))

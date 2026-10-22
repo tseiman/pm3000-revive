@@ -77,7 +77,7 @@ RC5 narrowly accepts only the firmware's exact static instruction before the XML
 <?xml-stylesheet type="text/xsl" href="transformation.xsl"?>
 ```
 
-Both the controller-response parser and the topology projector apply the same allowlist. Regression coverage sends login, navigation, and topology responses with the complete real preamble. Alternate attribute order, extra attributes, external URLs, and duplicate stylesheet instructions remain rejected. The complete offline suite passes 210 tests, and the PPC32 release build passes its QEMU e300c3 execution gate.
+Both the controller-response parser and the topology projector apply the same allowlist. Regression coverage sends login, navigation, and topology responses with the complete real preamble. Alternate attribute order, extra attributes, external URLs, and duplicate stylesheet instructions remain rejected. The complete offline suite passes 211 tests, and the PPC32 release build passes its QEMU e300c3 execution gate.
 
 ## Next investigation
 
