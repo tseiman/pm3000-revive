@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -103,6 +104,41 @@ int main(int argc, char **argv) {
     int directory_fd;
     struct stat source;
     int expected_type;
+
+    if (argc == 4 &&
+            (strcmp(argv[1], "--verify-private-directory-owner") == 0 ||
+             strcmp(argv[1], "--verify-private-regular-owner") == 0)) {
+        char *end = NULL;
+        unsigned long parsed;
+        uid_t expected_owner;
+        int descriptor;
+        errno = 0;
+        parsed = strtoul(argv[3], &end, 10);
+        expected_owner = (uid_t)parsed;
+        if (errno != 0 || argv[3][0] == '\0' || end == NULL || *end != '\0' ||
+                (unsigned long)expected_owner != parsed) {
+            fprintf(stderr, "invalid expected owner\n");
+            return 2;
+        }
+        if (strcmp(argv[1], "--verify-private-directory-owner") == 0)
+            descriptor = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        else
+            descriptor = open(argv[2], O_RDONLY | O_NOFOLLOW);
+        if (descriptor < 0) {
+            perror("open private path");
+            return 1;
+        }
+        if (fstat(descriptor, &source) != 0 || source.st_uid != expected_owner ||
+                (strcmp(argv[1], "--verify-private-directory-owner") == 0
+                    ? (!S_ISDIR(source.st_mode) || (source.st_mode & 07777) != 0700)
+                    : (!S_ISREG(source.st_mode) || source.st_nlink != 1 ||
+                       (source.st_mode & 07777) != 0600))) {
+            fprintf(stderr, "path is not trusted private storage for expected owner\n");
+            close(descriptor);
+            return 1;
+        }
+        return close(descriptor) == 0 ? 0 : 1;
+    }
 
     if (argc == 3 && strcmp(argv[1], "--verify-private-directory") == 0) {
         int private_fd = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);

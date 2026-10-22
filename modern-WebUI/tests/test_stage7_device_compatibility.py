@@ -183,6 +183,8 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertNotIn("/etc/apache2", transport)
         self.assertIn("--verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json", transport)
         self.assertIn("--verify-private-regular /etc/pm3000-rest/controller.credentials", transport)
+        self.assertIn("--verify-private-directory-owner", transport)
+        self.assertIn("--verify-private-regular-owner", transport)
         self.assert_no_remote_tree()
 
     def test_rejects_backup_from_other_target_before_transport(self):

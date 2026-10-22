@@ -161,13 +161,36 @@ atomic_helper=$work/pm3000-atomic-publish
 cp "$packaged_helper" "$atomic_helper"
 chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
-"$atomic_helper" --verify-private-directory "$root/rest" || { echo "unsafe or missing REST private directory" >&2; exit 1; }
-"$atomic_helper" --verify-private-directory /etc/pm3000-rest || { echo "unsafe or missing credentials directory" >&2; exit 1; }
+daemon_uid=$(id -u daemon)
+case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
+verify_private_directory()
+{
+    "$atomic_helper" --verify-private-directory "$1" 2>/dev/null ||
+        "$atomic_helper" --verify-private-directory-owner "$1" "$daemon_uid"
+}
+verify_private_regular()
+{
+    "$atomic_helper" --verify-private-regular "$1" 2>/dev/null ||
+        "$atomic_helper" --verify-private-regular-owner "$1" "$daemon_uid"
+}
+verify_private_directory "$root/rest" || { echo "unsafe or missing REST private directory" >&2; exit 1; }
+verify_private_directory /etc/pm3000-rest || { echo "unsafe or missing credentials directory" >&2; exit 1; }
 for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do
-    "$atomic_helper" --verify-private-regular "$prerequisite" || {
+    verify_private_regular "$prerequisite" || {
         echo "unsafe or missing write-capable runtime prerequisite: $prerequisite" >&2
         exit 1
     }
+done
+chown daemon:daemon "$root/rest" /etc/pm3000-rest
+chown daemon:daemon "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
+    /etc/pm3000-rest/controller.credentials
+chmod 700 "$root/rest" /etc/pm3000-rest
+chmod 600 "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
+    /etc/pm3000-rest/controller.credentials
+"$atomic_helper" --verify-private-directory-owner "$root/rest" "$daemon_uid"
+"$atomic_helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
+for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do
+    "$atomic_helper" --verify-private-regular-owner "$prerequisite" "$daemon_uid"
 done
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
     bin/pm3000-atomic-publish bin/pm3000-rest web/app.js web/index.html web/styles.css; do

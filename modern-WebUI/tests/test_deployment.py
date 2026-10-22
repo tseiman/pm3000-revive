@@ -531,9 +531,12 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('base=$root/webui', installer)
         self.assertIn('chmod 755 "$root" "$base" "$releases"', installer)
         self.assertIn("--verify-release \"$release\"", installer)
-        self.assertIn('--verify-private-directory "$root/rest"', installer)
-        self.assertIn('--verify-private-directory /etc/pm3000-rest', installer)
-        self.assertIn('--verify-private-regular "$prerequisite"', installer)
+        self.assertIn('verify_private_directory "$root/rest"', installer)
+        self.assertIn('verify_private_directory /etc/pm3000-rest', installer)
+        self.assertIn('verify_private_regular "$prerequisite"', installer)
+        self.assertIn('--verify-private-directory-owner "$1" "$daemon_uid"', installer)
+        self.assertIn('--verify-private-regular-owner "$1" "$daemon_uid"', installer)
+        self.assertIn('chown daemon:daemon "$root/rest" /etc/pm3000-rest', installer)
         self.assertIn("st_uid != geteuid()", atomic_source)
         self.assertIn('package_snapshot=$work/release.tar', installer)
         self.assertNotIn('package path must be absolute', installer)
@@ -587,6 +590,17 @@ class ScriptStructureTests(unittest.TestCase):
             private_regular.write_bytes(b"secret")
             private_regular.chmod(0o600)
             subprocess.run([str(helper), "--verify-private-regular", str(private_regular)], check=True)
+            subprocess.run([
+                str(helper), "--verify-private-regular-owner",
+                str(private_regular), str(os.geteuid()),
+            ], check=True)
+            self.assertNotEqual(
+                subprocess.run([
+                    str(helper), "--verify-private-regular-owner",
+                    str(private_regular), str(os.geteuid() + 1),
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
             private_regular.chmod(0o640)
             self.assertNotEqual(
                 subprocess.run([str(helper), "--verify-private-regular", str(private_regular)],
@@ -610,6 +624,10 @@ class ScriptStructureTests(unittest.TestCase):
             private = root / "private"
             private.mkdir(mode=0o700)
             subprocess.run([str(helper), "--verify-private-directory", str(private)], check=True)
+            subprocess.run([
+                str(helper), "--verify-private-directory-owner",
+                str(private), str(os.geteuid()),
+            ], check=True)
             private.chmod(0o755)
             self.assertNotEqual(
                 subprocess.run([str(helper), "--verify-private-directory", str(private)],
@@ -711,7 +729,7 @@ class ScriptStructureTests(unittest.TestCase):
             helper.write_text(
                 "#!/bin/sh\n"
                 "set -eu\n"
-                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular) exit 0;; esac\n"
+                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner) exit 0;; esac\n"
                 "parent=$1; source=$2; destination=$3; expected_type=$4\n"
                 "rm -rf \"$parent/$destination\"\n"
                 "mv \"$parent/$source\" \"$parent/$destination\"\n"
@@ -773,11 +791,16 @@ class ScriptStructureTests(unittest.TestCase):
             for path in (usr_sbin / "httpd", init_d / "apache2"):
                 path.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
                 path.chmod(0o755)
+            passwd = root / "passwd"
+            group = root / "group"
+            passwd.write_text("daemon:x:0:0:daemon:/:/bin/sh\n", encoding="ascii")
+            group.write_text("daemon:x:0:\n", encoding="ascii")
             command = [
                 "bwrap", "--unshare-user", "--uid", "0", "--gid", "0",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/etc",
                 "--bind", str(mnt), "/mnt", "--bind", str(apache), "/etc/apache2",
                 "--bind", str(credentials), "/etc/pm3000-rest",
+                "--ro-bind", str(passwd), "/etc/passwd", "--ro-bind", str(group), "/etc/group",
                 "--bind", str(tmp_root), "/tmp", "--bind", str(usr_sbin), "/usr/sbin",
                 "--bind", str(init_d), "/etc/init.d",
                 "/bin/sh", "/tmp/input/installer", "/tmp/input/release.tar", digest, "r2",

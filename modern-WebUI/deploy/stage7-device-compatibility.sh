@@ -189,11 +189,18 @@ rest=$work/release/bin/pm3000-rest
 "$helper" --verify-regular "$helper"
 "$helper" --verify-regular "$rest"
 "$helper" --verify-release "$work/release"
-"$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest
-"$helper" --verify-private-directory /etc/pm3000-rest
-"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json
-"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json.lock
-"$helper" --verify-private-regular /etc/pm3000-rest/controller.credentials
+daemon_uid=$(id -u daemon)
+case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
+"$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest 2>/dev/null ||
+    "$helper" --verify-private-directory-owner /mnt/hdUser/pm3000-revive/rest "$daemon_uid"
+"$helper" --verify-private-directory /etc/pm3000-rest 2>/dev/null ||
+    "$helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
+"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json 2>/dev/null ||
+    "$helper" --verify-private-regular-owner /mnt/hdUser/pm3000-revive/rest/tokens.json "$daemon_uid"
+"$helper" --verify-private-regular /mnt/hdUser/pm3000-revive/rest/tokens.json.lock 2>/dev/null ||
+    "$helper" --verify-private-regular-owner /mnt/hdUser/pm3000-revive/rest/tokens.json.lock "$daemon_uid"
+"$helper" --verify-private-regular /etc/pm3000-rest/controller.credentials 2>/dev/null ||
+    "$helper" --verify-private-regular-owner /etc/pm3000-rest/controller.credentials "$daemon_uid"
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on "$rest")
 case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
     *) echo "REST health compatibility check failed" >&2; exit 1;;

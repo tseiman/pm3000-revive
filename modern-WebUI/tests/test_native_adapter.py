@@ -212,7 +212,12 @@ class NativeAdapterTests(unittest.TestCase):
         extra_environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         environment = os.environ.copy()
-        environment.update({"REQUEST_METHOD": method, "PATH_INFO": path, "HTTPS": https})
+        environment.update({
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "HTTPS": https,
+            "REMOTE_ADDR": "192.0.2.1",
+        })
         if authorization is not None:
             environment["HTTP_AUTHORIZATION"] = authorization
         if cookie is not None:
@@ -2433,6 +2438,7 @@ class NativeAdapterTests(unittest.TestCase):
                 "PM3000_TOKEN_STORE": str(store_path),
                 "PM3000_CREDENTIALS": str(credentials_path),
                 "PM3000_AVTRANS_SOCKET": str(socket_path),
+                "REMOTE_ADDR": "198.51.100.27",
             }
 
             with FakeAvtransController(socket_path, responses) as controller:
@@ -2462,7 +2468,7 @@ class NativeAdapterTests(unittest.TestCase):
             for header, _request in controller.requests:
                 self.assertEqual(59, len(header))
                 self.assertEqual(b"\0\0\1", header[:3])
-                self.assertTrue(header[3:43].startswith(b"127.0.0.1\0"))
+                self.assertTrue(header[3:43].startswith(b"198.51.100.27\0"))
                 self.assertTrue(header[43:59].startswith(b"en\0"))
             requests = [request.decode("utf-8") for _, request in controller.requests]
             self.assertIn("<action>login</action>", requests[0])

@@ -4,6 +4,7 @@
 #include "controller_xml.h"
 #include "projector.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -106,13 +107,18 @@ static int exchange_internal(const char *socket_path, const char *request,
     struct sockaddr_un address;
     struct timeval timeout = {3, 0};
     unsigned char header[59] = {0};
+    unsigned char address_bytes[16];
     unsigned char *buffer = NULL;
+    const char *remote_address = getenv("REMOTE_ADDR");
     size_t used = 0;
     int found_nul = 0;
     ssize_t amount;
     size_t request_length = strlen(request);
     if (dispatched != NULL) *dispatched = 0;
-    if (strlen(socket_path) >= sizeof(address.sun_path) || request_length >= MAX_REQUEST) goto failure;
+    if (strlen(socket_path) >= sizeof(address.sun_path) || request_length >= MAX_REQUEST ||
+        remote_address == NULL || strlen(remote_address) > 39U ||
+        (inet_pton(AF_INET, remote_address, address_bytes) != 1 &&
+         inet_pton(AF_INET6, remote_address, address_bytes) != 1)) goto failure;
     descriptor = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (descriptor < 0) goto failure;
     (void)setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -121,7 +127,7 @@ static int exchange_internal(const char *socket_path, const char *request,
     strcpy(address.sun_path, socket_path);
     if (connect(descriptor, (struct sockaddr *)&address, sizeof(address)) != 0) goto failure;
     header[2] = 1U;
-    memcpy(header + 3U, "127.0.0.1", 9U);
+    memcpy(header + 3U, remote_address, strlen(remote_address));
     memcpy(header + 43U, "en", 2U);
     if (send(descriptor, header, sizeof(header), MSG_NOSIGNAL) != (ssize_t)sizeof(header) ||
         send(descriptor, request, request_length, MSG_NOSIGNAL) != (ssize_t)request_length ||
