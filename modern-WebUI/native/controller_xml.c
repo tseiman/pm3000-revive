@@ -77,6 +77,7 @@ struct document {
     unsigned int sids;
     unsigned int errors;
     unsigned int payloads;
+    unsigned int vendor_stylesheets;
     char action[XML_MAX_TEXT + 1U];
     char path[XML_MAX_TEXT + 1U];
     char sid[129];
@@ -220,6 +221,13 @@ static int valid_xml_declaration(const unsigned char *input, size_t length) {
         }
     }
     return attribute == 1U || attribute == 2U;
+}
+
+static int valid_vendor_stylesheet(const unsigned char *input, size_t length) {
+    static const char expected[] =
+        "xml-stylesheet type=\"text/xsl\" href=\"transformation.xsl\"";
+    return length == sizeof(expected) - 1U &&
+           memcmp(input, expected, sizeof(expected) - 1U) == 0;
 }
 
 static void skip_space(struct document *document) {
@@ -787,14 +795,20 @@ static int parse_document(const unsigned char *xml, size_t length,
         if (document->offset >= document->length) return -1;
         if (document->input[document->offset] == '?') {
             size_t content_start, end;
-            if (document->offset != 1U) return -1;
             content_start = document->offset + 1U;
             end = content_start;
             while (end + 1U < document->length &&
                    !(document->input[end] == '?' && document->input[end + 1U] == '>')) ++end;
-            if (end + 1U >= document->length ||
-                !valid_xml_declaration(document->input + content_start,
-                                       end - content_start)) return -1;
+            if (end + 1U >= document->length) return -1;
+            if (document->offset == 1U) {
+                if (!valid_xml_declaration(document->input + content_start,
+                                           end - content_start)) return -1;
+            } else if (document->depth == 0U && document->roots == 0U &&
+                       document->vendor_stylesheets == 0U &&
+                       valid_vendor_stylesheet(document->input + content_start,
+                                               end - content_start)) {
+                ++document->vendor_stylesheets;
+            } else return -1;
             document->offset = end + 2U;
         } else if (document->input[document->offset] == '!') {
             return -1;

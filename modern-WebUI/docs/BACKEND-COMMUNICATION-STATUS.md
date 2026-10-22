@@ -69,16 +69,25 @@ The real response starts with two processing instructions:
 
 RC4 accepts the XML declaration but rejects every subsequent processing instruction. Earlier sanitized fixtures did not retain the stylesheet instruction, so the fake-controller tests did not reproduce the real response. This causes login parsing to fail before navigation or topology is requested and is surfaced as `Controller login rejected.` or `backend_unavailable`.
 
+## RC5 correction
+
+RC5 narrowly accepts only the firmware's exact static instruction before the XML root:
+
+```xml
+<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>
+```
+
+Both the controller-response parser and the topology projector apply the same allowlist. Regression coverage sends login, navigation, and topology responses with the complete real preamble. Alternate attribute order, extra attributes, external URLs, and duplicate stylesheet instructions remain rejected. The complete offline suite passes 210 tests, and the PPC32 release build passes its QEMU e300c3 execution gate.
+
 ## Next investigation
 
-Do not publish another release based only on a new hypothesis. The next candidate should:
+RC5 must now be validated on `pdu1.tsei.mdn` without performing any write action:
 
-1. Add a regression test containing the exact safe vendor preamble before a sanitized successful login response.
-2. Accept only the known static `xml-stylesheet` instruction before the root element; continue rejecting arbitrary processing instructions, external URLs, DTDs, and entities.
-3. Verify the parser against the captured response locally without retaining credentials, private addresses, labels, or session values.
-4. Keep stage-specific safe diagnostics so later transport and parser failures are distinguishable.
-5. Run the complete host, sanitizer, QEMU/PPC, and deployment suites.
-6. Validate browser login and `GET /api/v1/outlets` on the real device before considering any control-token or outlet-action test.
+1. Install RC5 using the normal verified package and sidecar flow.
+2. Verify one browser login.
+3. Verify one bearer-authenticated `GET /api/v1/outlets` and require HTTP 200 with a current `inventoryRevision`.
+4. If either check fails, preserve a single direct `uicontrold` trace covering both checks; do not publish another hypothesis-based release.
+5. Do not create or exercise a control token until the read-only gate passes.
 
 ## Capture safety
 

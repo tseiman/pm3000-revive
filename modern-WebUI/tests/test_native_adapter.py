@@ -32,6 +32,10 @@ IPV4_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv4-routes-response.x
 IPV6_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv6-routes-response.xml"
 SERIAL_RESPONSE = ROOT / "fixtures" / "synthetic" / "serial-stats-response.xml"
 TIME_ZONE_RESPONSE = ROOT / "fixtures" / "synthetic" / "time-zone-response.xml"
+VENDOR_XML_PREAMBLE = (
+    b'<?xml version="1.0"?>'
+    b'<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>'
+)
 sys.path.insert(0, str(ROOT / "tools"))
 import token_store  # noqa: E402
 
@@ -321,6 +325,48 @@ class NativeAdapterTests(unittest.TestCase):
             persisted = files[0].read_bytes()
             self.assertNotIn(b"p&<secret", persisted)
             self.assertNotIn(cookie.encode(), persisted)
+
+    def test_session_login_accepts_exact_vendor_stylesheet_preamble(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            preamble = VENDOR_XML_PREAMBLE
+
+            _cookie, _response, controller, result = self.login_session(
+                root,
+                login_response=preamble + LOGIN_RESPONSE.read_bytes(),
+                navigation=preamble + NAVIGATION_RESPONSE.read_bytes(),
+                topology=preamble + OBSERVED.read_bytes(),
+            )
+
+            self.assertIn(b"Status: 201", result.stdout)
+            self.assertEqual(3, len(controller.requests))
+
+    def test_session_login_rejects_other_stylesheet_processing_instructions(self) -> None:
+        declaration = b'<?xml version="1.0"?>'
+        candidates = (
+            declaration + b'<?xml-stylesheet type="text/xsl" href="https://example.test/x.xsl"?>',
+            declaration + b'<?xml-stylesheet href="transformation.xsl" type="text/xsl"?>',
+            declaration + b'<?xml-stylesheet type="text/xsl" href="transformation.xsl" media="all"?>',
+            VENDOR_XML_PREAMBLE + b'<?xml-stylesheet type="text/xsl" href="transformation.xsl"?>',
+        )
+        for preamble in candidates:
+            with self.subTest(preamble=preamble), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                socket_path = root / "avtrans.sock"
+                with FakeAvtransController(
+                    socket_path, [preamble + LOGIN_RESPONSE.read_bytes()]
+                ):
+                    result = self.run_cgi(
+                        "POST", "/api/v1/session",
+                        body=b'{"username":"operator","password":"secret"}',
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_SESSION_DIR": str(root / "sessions"),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                self.assertIn(b"Status: 401", result.stdout)
+                self.assertFalse((root / "sessions").exists())
 
     def test_session_login_ignores_inherited_basic_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
