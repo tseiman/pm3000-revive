@@ -181,6 +181,45 @@
           </div>
         </section>
 
+        <section id="time-zone-view" class="view" aria-labelledby="time-zone-title" hidden>
+          <div class="page-heading">
+            <div><span class="eyebrow">System</span><h1 id="time-zone-title">Time Zone</h1><p>Configure the appliance time zone from a fresh controller read. Runtime filesystem and service effects require a separate device validation gate.</p></div>
+            <button id="reload-time-zone" class="secondary-button" type="button">Reload</button>
+          </div>
+          <div class="panel">
+            <form id="time-zone-form">
+              <fieldset><legend>Mode</legend>
+                <label class="check-row"><input id="time-zone-mode-predefined" name="time-zone-mode" type="radio" value="predefined" disabled><span><strong>Predefined time zone</strong></span></label>
+                <label class="check-row"><input id="time-zone-mode-custom" name="time-zone-mode" type="radio" value="custom" disabled><span><strong>Custom time zone</strong></span></label>
+              </fieldset>
+              <div id="time-zone-predefined-options"><label for="time-zone-predefined">Time zone</label><select id="time-zone-predefined" disabled required></select></div>
+              <div id="time-zone-custom-options" hidden>
+                <div class="form-grid">
+                  <div><label for="time-zone-name">Name</label><input id="time-zone-name" maxlength="256" disabled required></div>
+                  <div><label for="time-zone-standard-acronym">Standard acronym</label><input id="time-zone-standard-acronym" maxlength="4" disabled required></div>
+                  <div><label for="time-zone-gmt-offset">GMT offset</label><input id="time-zone-gmt-offset" placeholder="-7:00" disabled required></div>
+                </div>
+                <label class="check-row"><input id="time-zone-dst-enabled" type="checkbox" disabled><span><strong>Enable daylight saving time</strong></span></label>
+                <div id="time-zone-dst-options" class="form-grid" hidden>
+                  <div><label for="time-zone-dst-acronym">DST acronym</label><input id="time-zone-dst-acronym" maxlength="4" disabled required></div>
+                  <div><label for="time-zone-save-time">Save time</label><input id="time-zone-save-time" placeholder="1:00" disabled required></div>
+                  <div><label for="time-zone-start-month">Start month</label><select id="time-zone-start-month" disabled required></select></div>
+                  <div><label for="time-zone-start-week">Start week</label><select id="time-zone-start-week" disabled required></select></div>
+                  <div><label for="time-zone-start-weekday">Start weekday</label><select id="time-zone-start-weekday" disabled required></select></div>
+                  <div><label for="time-zone-start-hour">Start hour</label><input id="time-zone-start-hour" placeholder="2:00" disabled required></div>
+                  <div><label for="time-zone-end-month">End month</label><select id="time-zone-end-month" disabled required></select></div>
+                  <div><label for="time-zone-end-week">End week</label><select id="time-zone-end-week" disabled required></select></div>
+                  <div><label for="time-zone-end-weekday">End weekday</label><select id="time-zone-end-weekday" disabled required></select></div>
+                  <div><label for="time-zone-end-hour">End hour</label><input id="time-zone-end-hour" placeholder="2:00" disabled required></div>
+                </div>
+              </div>
+              <p id="time-zone-status" class="panel-status" aria-live="polite">Load the current setting before saving.</p>
+              <p id="time-zone-error" class="form-error" role="alert"></p>
+              <button id="save-time-zone" class="primary-button" type="submit" disabled>Save setting</button>
+            </form>
+          </div>
+        </section>
+
         <section id="password-change-view" class="view" aria-labelledby="password-change-title" hidden>
           <div class="page-heading"><div><span class="eyebrow">Account security</span><h1 id="password-change-title">Change password</h1><p>Update the password of the signed-in PM3000 user.</p></div></div>
           <div class="panel">

@@ -119,12 +119,15 @@ the confirmed `openssl dgst -sha256`; the appliance has no `sha256sum` command.
 
 ### 🟡 Stage 9 milestone 2B — Remaining low-risk fixed settings
 
-**Status:** in progress. The first candidate adds the bounded Appliance Logging `GET|PUT` resource offline; release gates and independent review remain open.
+**Status:** in progress. Appliance Logging is published at `0ee3fbc`. Time Zone is the next bounded offline candidate; final release gates and independent review remain open.
 
 - Validates the exact nested firmware form, fixed destination/timestamp choices, booleans, and ten 64-byte alert strings.
 - Uses a closed conditional request union: inactive descendants are omitted from the save and must remain unchanged in the typed post-save response.
 - Requires cookie session, exact `configuration.event-notify:w` capability, CSRF, strong `ETag`/`If-Match`, and no retry after uncertain dispatch.
 - Applies to newly opened sessions only. No real setting write or runtime-effect validation has been performed.
+- Adds conditional Time Zone `GET|PUT` with inherited `management.date:w`, firmware-bound runtime choices, predefined/custom/custom-with-DST serialization, inactive-state preservation, exact typed read-back, and a cross-process settings-write lock.
+- The parser's fixed 569-choice capacity covers the 521 firmware-provided predefined zones plus 48 fixed transition choices. The zones remain runtime values, not a hard-coded enum.
+- No observed Time Zone GET/save capture exists. Firmware file/script side effects and post-commit error ordering remain unverified; no live write or installation is authorized by this offline slice.
 - Further lockout-sensitive network, security, boot, and authentication writes require a documented recovery path and explicit device-test approval.
 
 ### ⬜ Stage 9 milestone 3 — Static create/save flows

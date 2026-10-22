@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.5.0",
-    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language, Data Buffering, and conditional Appliance Logging settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
+    "version": "1.6.0",
+    "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language, Data Buffering, and conditional Appliance Logging and Time Zone settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
   },
   "servers": [
     {
@@ -1161,6 +1161,141 @@
           }
         },
         "x-conditional-replacement": "Inactive descendants are omitted from the firmware save and preserved from the fresh GET."
+      }
+    },
+    "/api/v1/settings/time-zone": {
+      "get": {
+        "operationId": "getTimeZoneSetting",
+        "summary": "Read the complete Time Zone setting and fresh predefined choices",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.applianceSettings.date_and_time.time_zone",
+        "x-required-write-capability": "management.date:w",
+        "x-backend-template": "action=get;path=units.applianceSettings.date_and_time.time_zone;form=time_zoneform",
+        "responses": {
+          "200": {
+            "description": "Current complete setting, fresh runtime choices, and strong revision.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/StrongETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeZoneSetting"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceTimeZoneSetting",
+        "summary": "Conditionally replace the active Time Zone branch after a fresh revision check",
+        "security": [
+          {
+            "cookieAuth": []
+          }
+        ],
+        "x-bearer-rejected": true,
+        "x-required-nav-path": "units.applianceSettings.date_and_time.time_zone",
+        "x-required-write-capability": "management.date:w",
+        "x-csrf-required": true,
+        "x-full-replacement": false,
+        "x-max-body-bytes": 4096,
+        "x-success-confirmation": "exact-controller-read-back-of-active-writes-and-preserved-inactive-fields-not-runtime-filesystem-effects",
+        "x-backend-template": "get-current-revision;conditional-action=save;path=units.applianceSettings.date_and_time.time_zone;form=time_zoneform;parse-exact-read-back",
+        "parameters": [
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "description": "Strong revision returned in the latest successful GET response body and ETag header.",
+            "schema": {
+              "$ref": "#/components/schemas/StrongRevision"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimeZoneReplacement"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Active submitted fields and all preserved inactive fields exactly matched controller read-back; /etc/localtime generation, service reloads, and runtime timezone behavior are not asserted.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "X-Content-Type-Options": {
+                "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "412": {
+            "$ref": "#/components/responses/RevisionChanged"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "502": {
+            "$ref": "#/components/responses/BackendProtocolError"
+          },
+          "503": {
+            "$ref": "#/components/responses/SettingWriteUnconfirmed"
+          }
+        },
+        "x-conditional-replacement": "Only the selected radio branch and enabled checkbox descendants are serialized; all inactive fields are preserved from the fresh GET."
       }
     },
     "/api/v1/system/information": {
@@ -2393,6 +2528,314 @@
             "items": { "$ref": "#/components/schemas/SerialPort" }
           }
         }
+      },
+      "TimeZoneTransition": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "month",
+          "week",
+          "weekday",
+          "hour"
+        ],
+        "properties": {
+          "month": {
+            "type": "string",
+            "pattern": "^(?:[1-9]|1[0-2])$"
+          },
+          "week": {
+            "type": "string",
+            "pattern": "^[1-5]$"
+          },
+          "weekday": {
+            "type": "string",
+            "pattern": "^[1-7]$"
+          },
+          "hour": {
+            "type": "string",
+            "pattern": "^(?:[1-9]|1[0-2]):[0-5][0-9]$"
+          }
+        }
+      },
+      "TimeZoneDstState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "enabled",
+          "acronym",
+          "saveTime",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "acronym": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{1,4}$"
+          },
+          "saveTime": {
+            "type": "string",
+            "pattern": "^(?:[0-4]:[0-5][0-9]|5:00)$"
+          },
+          "start": {
+            "$ref": "#/components/schemas/TimeZoneTransition"
+          },
+          "end": {
+            "$ref": "#/components/schemas/TimeZoneTransition"
+          }
+        },
+        "description": "The runtime additionally rejects a DST start/end combination that the firmware validator treats as equal."
+      },
+      "TimeZoneCustomState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "standardAcronym",
+          "gmtOffset",
+          "dst"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "maxLength": 256,
+            "x-max-utf8-bytes": 256
+          },
+          "standardAcronym": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{1,4}$"
+          },
+          "gmtOffset": {
+            "type": "string",
+            "pattern": "^-?(?:[1-9]|1[0-4]):[0-5][0-9]$"
+          },
+          "dst": {
+            "$ref": "#/components/schemas/TimeZoneDstState"
+          }
+        }
+      },
+      "TimeZoneSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "predefined",
+          "custom",
+          "revision"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "predefined",
+              "custom"
+            ]
+          },
+          "predefined": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "selected",
+              "choices"
+            ],
+            "properties": {
+              "selected": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "x-max-utf8-bytes": 32
+              },
+              "choices": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 521,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 32,
+                  "x-max-utf8-bytes": 32
+                }
+              }
+            }
+          },
+          "custom": {
+            "$ref": "#/components/schemas/TimeZoneCustomState"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/StrongRevision"
+          }
+        }
+      },
+      "TimeZonePredefinedReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "predefinedZone"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "predefined"
+            ]
+          },
+          "predefinedZone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "x-max-utf8-bytes": 32
+          }
+        }
+      },
+      "TimeZoneCustomNoDstReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "custom"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "custom"
+            ]
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "standardAcronym",
+              "gmtOffset",
+              "dst"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "maxLength": 256,
+                "x-max-utf8-bytes": 256
+              },
+              "standardAcronym": {
+                "type": "string",
+                "pattern": "^[A-Za-z]{1,4}$"
+              },
+              "gmtOffset": {
+                "type": "string",
+                "pattern": "^-?(?:[1-9]|1[0-4]):[0-5][0-9]$"
+              },
+              "dst": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "enum": [
+                      false
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "TimeZoneCustomDstReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "custom"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "custom"
+            ]
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "standardAcronym",
+              "gmtOffset",
+              "dst"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "maxLength": 256,
+                "x-max-utf8-bytes": 256
+              },
+              "standardAcronym": {
+                "type": "string",
+                "pattern": "^[A-Za-z]{1,4}$"
+              },
+              "gmtOffset": {
+                "type": "string",
+                "pattern": "^-?(?:[1-9]|1[0-4]):[0-5][0-9]$"
+              },
+              "dst": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled",
+                  "acronym",
+                  "saveTime",
+                  "start",
+                  "end"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  },
+                  "acronym": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z]{1,4}$"
+                  },
+                  "saveTime": {
+                    "type": "string",
+                    "pattern": "^(?:[0-4]:[0-5][0-9]|5:00)$"
+                  },
+                  "start": {
+                    "$ref": "#/components/schemas/TimeZoneTransition"
+                  },
+                  "end": {
+                    "$ref": "#/components/schemas/TimeZoneTransition"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "TimeZoneReplacement": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TimeZonePredefinedReplacement"
+          },
+          {
+            "$ref": "#/components/schemas/TimeZoneCustomNoDstReplacement"
+          },
+          {
+            "$ref": "#/components/schemas/TimeZoneCustomDstReplacement"
+          }
+        ]
       }
     },
     "responses": {

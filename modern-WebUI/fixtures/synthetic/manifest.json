@@ -108,6 +108,12 @@
       "direction": "response",
       "purpose": "Synthetic Appliance Logging conditional fixed-form values and choices",
       "evidence": "synthetic"
+    },
+    {
+      "file": "time-zone-response.xml",
+      "direction": "response",
+      "purpose": "Synthetic Time Zone conditional fixed-form geometry and representative choices",
+      "evidence": "synthetic"
     }
   ],
   "transport_timeout": {

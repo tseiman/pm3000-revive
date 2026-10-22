@@ -95,6 +95,45 @@ static const struct pm3000_xml_fixed_parameter logging_parameters[] = {
     {"alertstring10", "RWtext", "alertenable", "checkbox"}
 };
 
+static const struct pm3000_xml_fixed_field time_zone_fields[] = {
+    {"customtimezone", "radiobox", NULL, NULL},
+    {"timezone_list", "combo", "@no", "radio"},
+    {"tzName", "RWtext", "@yes", "radio"},
+    {"stdTimeAcronym", "RWtext", "@yes", "radio"},
+    {"gmtOffset", "RWtext", "@yes", "radio"},
+    {"enableDst", "checkbox", "@yes", "radio"},
+    {"dstAcronym", "RWtext", "enableDst", "checkbox"},
+    {"saveTime", "RWtext", "enableDst", "checkbox"},
+    {"startMonth", "combo", "enableDst", "checkbox"},
+    {"startWeek", "combo", "enableDst", "checkbox"},
+    {"startWeekday", "combo", "enableDst", "checkbox"},
+    {"startHour", "RWtext", "enableDst", "checkbox"},
+    {"endMonth", "combo", "enableDst", "checkbox"},
+    {"endWeek", "combo", "enableDst", "checkbox"},
+    {"endWeekday", "combo", "enableDst", "checkbox"},
+    {"endHour", "RWtext", "enableDst", "checkbox"}
+};
+static const struct pm3000_xml_fixed_parameter time_zone_parameters[] = {
+    {"customtimezone", "radiobox", NULL, NULL},
+    {"@no", "radio", "customtimezone", "radiobox"},
+    {"timezone_list", "combo", "@no", "radio"},
+    {"@yes", "radio", "customtimezone", "radiobox"},
+    {"tzName", "RWtext", "@yes", "radio"},
+    {"stdTimeAcronym", "RWtext", "@yes", "radio"},
+    {"gmtOffset", "RWtext", "@yes", "radio"},
+    {"enableDst", "checkbox", "@yes", "radio"},
+    {"dstAcronym", "RWtext", "enableDst", "checkbox"},
+    {"saveTime", "RWtext", "enableDst", "checkbox"},
+    {"startMonth", "combo", "enableDst", "checkbox"},
+    {"startWeek", "combo", "enableDst", "checkbox"},
+    {"startWeekday", "combo", "enableDst", "checkbox"},
+    {"startHour", "RWtext", "enableDst", "checkbox"},
+    {"endMonth", "combo", "enableDst", "checkbox"},
+    {"endWeek", "combo", "enableDst", "checkbox"},
+    {"endWeekday", "combo", "enableDst", "checkbox"},
+    {"endHour", "RWtext", "enableDst", "checkbox"}
+};
+
 static const struct fixed_descriptor help_descriptor = {
     "units.applianceSettings.help", "sessionform", help_fields, help_parameters,
     help_keys, help_types, 2U, 2U, UINT32_C(1) << 0
@@ -109,11 +148,19 @@ static const struct fixed_descriptor logging_descriptor = {
     logging_parameters, NULL, NULL, 14U, 16U,
     (UINT32_C(1) << 1) | (UINT32_C(1) << 2)
 };
+static const struct fixed_descriptor time_zone_descriptor = {
+    "units.applianceSettings.date_and_time.time_zone", "time_zoneform",
+    time_zone_fields, time_zone_parameters, NULL, NULL, 16U, 18U,
+    (UINT32_C(1) << 1) | (UINT32_C(1) << 8) | (UINT32_C(1) << 9) |
+    (UINT32_C(1) << 10) | (UINT32_C(1) << 12) | (UINT32_C(1) << 13) |
+    (UINT32_C(1) << 14)
+};
 
 static const struct fixed_descriptor *descriptor(pm3000_fixed_form_kind kind) {
     if (kind == PM3000_FORM_HELP_LANGUAGE) return &help_descriptor;
     if (kind == PM3000_FORM_DATA_BUFFERING) return &buffering_descriptor;
     if (kind == PM3000_FORM_APPLIANCE_LOGGING) return &logging_descriptor;
+    if (kind == PM3000_FORM_TIME_ZONE) return &time_zone_descriptor;
     return NULL;
 }
 
@@ -223,6 +270,42 @@ static int destination(const char *value) {
            strcmp(value, "syslog") == 0 || strcmp(value, "dsview") == 0;
 }
 
+static int ascii_identifier(const char *value) {
+    const unsigned char *cursor = (const unsigned char *)value;
+    if (!(isalpha(*cursor) || *cursor == '_')) return 0;
+    while (*++cursor != '\0') if (!(isalnum(*cursor) || *cursor == '_')) return 0;
+    return 1;
+}
+
+static int acronym(const char *value) {
+    size_t index, length = strlen(value);
+    if (length < 1U || length > 4U) return 0;
+    for (index = 0U; index < length; ++index)
+        if (!isalpha((unsigned char)value[index])) return 0;
+    return 1;
+}
+
+static int hour_minute(const char *value, unsigned int minimum_hour,
+                       unsigned int maximum_hour, int final_hour_zero_only) {
+    const char *colon = strchr(value, ':');
+    unsigned long hour, minute;
+    char hour_text[4];
+    size_t amount;
+    if (colon == NULL || strchr(colon + 1, ':') != NULL || strlen(colon + 1) != 2U ||
+        !isdigit((unsigned char)colon[1]) || !isdigit((unsigned char)colon[2])) return 0;
+    amount = (size_t)(colon - value);
+    if (amount == 0U || amount >= sizeof(hour_text)) return 0;
+    memcpy(hour_text, value, amount); hour_text[amount] = '\0';
+    minute = (unsigned long)(colon[1] - '0') * 10U + (unsigned long)(colon[2] - '0');
+    if (decimal_value(hour_text, minimum_hour, maximum_hour, &hour) != 0 ||
+        minute > 59U) return 0;
+    return !(final_hour_zero_only && hour == maximum_hour && minute != 0U);
+}
+
+static int gmt_offset(const char *value) {
+    return hour_minute(value[0] == '-' ? value + 1 : value, 1U, 14U, 0);
+}
+
 static int validate_values(pm3000_fixed_form_kind kind,
                            char values[PM3000_FIXED_MAX_FIELDS][PM3000_FIXED_VALUE_SIZE]) {
     unsigned long ignored;
@@ -240,6 +323,25 @@ static int validate_values(pm3000_fixed_form_kind kind,
             strlen(values[3]) > 100U ||
             decimal_value(values[4], 0U, 99999U, &ignored) != 0 ||
             decimal_value(values[5], 0U, 99U, &ignored) != 0 || !facility(values[6])) return -1;
+        return 0;
+    }
+    if (kind == PM3000_FORM_TIME_ZONE) {
+        if ((strcmp(values[0], "no") != 0 && strcmp(values[0], "yes") != 0) ||
+            values[1][0] == '\0' || strlen(values[1]) > 32U ||
+            !ascii_identifier(values[2]) || !acronym(values[3]) ||
+            !gmt_offset(values[4]) || !boolean_text(values[5]) ||
+            !acronym(values[6]) || !hour_minute(values[7], 0U, 5U, 1)) return -1;
+        if (decimal_value(values[8], 1U, 12U, &ignored) != 0 ||
+            decimal_value(values[9], 1U, 5U, &ignored) != 0 ||
+            decimal_value(values[10], 1U, 7U, &ignored) != 0 ||
+            !hour_minute(values[11], 1U, 12U, 0) ||
+            decimal_value(values[12], 1U, 12U, &ignored) != 0 ||
+            decimal_value(values[13], 1U, 5U, &ignored) != 0 ||
+            decimal_value(values[14], 1U, 7U, &ignored) != 0 ||
+            !hour_minute(values[15], 1U, 12U, 0)) return -1;
+        if (strcmp(values[5], "true") == 0 && strcmp(values[8], values[12]) == 0 &&
+            strcmp(values[10], values[14]) == 0 && strcmp(values[11], values[15]) == 0)
+            return -1;
         return 0;
     }
     if (kind != PM3000_FORM_APPLIANCE_LOGGING || !boolean_text(values[0]) ||
@@ -264,9 +366,11 @@ static void revision(pm3000_fixed_form_kind kind,
         sha256_update(&context, snapshot->form.values[index],
                       strlen(snapshot->form.values[index]) + 1U);
     }
-    for (index = 0U; index < snapshot->form.choice_count; ++index)
+    for (index = 0U; index < snapshot->form.choice_count; ++index) {
+        sha256_update(&context, &snapshot->form.choice_fields[index], 1U);
         sha256_update(&context, snapshot->form.choices[index],
                       strlen(snapshot->form.choices[index]) + 1U);
+    }
     sha256_final(&context, digest);
     snapshot->revision[0] = '"';
     for (index = 0U; index < 32U; ++index) {
@@ -313,6 +417,22 @@ int pm3000_fixed_parse_backend(pm3000_fixed_form_kind kind,
             "LOG_LOCAL3", "LOG_LOCAL4", "LOG_LOCAL5"
         };
         if (!choices_equal(out, 6U, facilities, 6U)) return -1;
+    } else if (kind == PM3000_FORM_TIME_ZONE) {
+        static const char *const months[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"};
+        static const char *const weeks[] = {"1", "2", "3", "4", "5"};
+        static const char *const weekdays[] = {"1", "2", "3", "4", "5", "6", "7"};
+        unsigned int zone_count = 0U, selected = 0U;
+        for (index = 0U; index < out->form.choice_count; ++index) {
+            if (out->form.choice_fields[index] == 1U) {
+                ++zone_count;
+                if (strcmp(out->form.choices[index], out->form.values[1]) == 0) ++selected;
+            }
+        }
+        if (zone_count == 0U || selected != 1U ||
+            !choices_equal(out, 8U, months, 12U) || !choices_equal(out, 12U, months, 12U) ||
+            !choices_equal(out, 9U, weeks, 5U) || !choices_equal(out, 13U, weeks, 5U) ||
+            !choices_equal(out, 10U, weekdays, 7U) || !choices_equal(out, 14U, weekdays, 7U) ||
+            out->form.choice_count != zone_count + 48U) return -1;
     } else {
         static const char *const destinations[] = {"local", "nfs", "syslog", "dsview"};
         static const char *const timestamps[] = {"yes", "no"};
@@ -499,6 +619,146 @@ static int parse_logging_request(const unsigned char *json, size_t length,
     return seen == 31U ? 0 : -1;
 }
 
+static int parse_time_zone_transition(struct json_cursor *cursor,
+                                      struct pm3000_fixed_input *out,
+                                      unsigned int base) {
+    unsigned int seen = 0U, members = 0U;
+    if (json_char(cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[24]; unsigned int relative;
+        json_space(cursor);
+        if (cursor->offset < cursor->length && cursor->data[cursor->offset] == '}') {
+            ++cursor->offset; break;
+        }
+        if (members++ > 0U && json_char(cursor, ',') != 0) return -1;
+        json_space(cursor);
+        if (json_string(cursor, key, sizeof(key)) != 0 || json_char(cursor, ':') != 0) return -1;
+        json_space(cursor);
+        if (strcmp(key, "month") == 0) relative = 0U;
+        else if (strcmp(key, "week") == 0) relative = 1U;
+        else if (strcmp(key, "weekday") == 0) relative = 2U;
+        else if (strcmp(key, "hour") == 0) relative = 3U;
+        else return -1;
+        if ((seen & (1U << relative)) != 0U ||
+            json_string(cursor, out->values[base + relative],
+                        sizeof(out->values[base + relative])) != 0) return -1;
+        seen |= 1U << relative; out->present[base + relative] = 1U;
+    }
+    return seen == 15U ? 0 : -1;
+}
+
+static int parse_time_zone_dst(struct json_cursor *cursor,
+                               struct pm3000_fixed_input *out) {
+    unsigned int seen = 0U, members = 0U;
+    if (json_char(cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[24]; unsigned int bit;
+        json_space(cursor);
+        if (cursor->offset < cursor->length && cursor->data[cursor->offset] == '}') {
+            ++cursor->offset; break;
+        }
+        if (members++ > 0U && json_char(cursor, ',') != 0) return -1;
+        json_space(cursor);
+        if (json_string(cursor, key, sizeof(key)) != 0 || json_char(cursor, ':') != 0) return -1;
+        json_space(cursor);
+        if (strcmp(key, "enabled") == 0) bit = 0U;
+        else if (strcmp(key, "acronym") == 0) bit = 1U;
+        else if (strcmp(key, "saveTime") == 0) bit = 2U;
+        else if (strcmp(key, "start") == 0) bit = 3U;
+        else if (strcmp(key, "end") == 0) bit = 4U;
+        else return -1;
+        if ((seen & (1U << bit)) != 0U) return -1;
+        seen |= 1U << bit;
+        if (bit == 0U) {
+            if (json_boolean(cursor, out->values[5]) != 0) return -1;
+            out->present[5] = 1U;
+        } else if (bit == 1U) {
+            if (json_string(cursor, out->values[6], sizeof(out->values[6])) != 0) return -1;
+            out->present[6] = 1U;
+        } else if (bit == 2U) {
+            if (json_string(cursor, out->values[7], sizeof(out->values[7])) != 0) return -1;
+            out->present[7] = 1U;
+        } else if (bit == 3U) {
+            if (parse_time_zone_transition(cursor, out, 8U) != 0) return -1;
+        } else if (parse_time_zone_transition(cursor, out, 12U) != 0) return -1;
+    }
+    if ((seen & 1U) == 0U) return -1;
+    return strcmp(out->values[5], "true") == 0 ? (seen == 31U ? 0 : -1) :
+                                                   (seen == 1U ? 0 : -1);
+}
+
+static int parse_time_zone_custom(struct json_cursor *cursor,
+                                  struct pm3000_fixed_input *out) {
+    unsigned int seen = 0U, members = 0U;
+    if (json_char(cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[32]; unsigned int bit;
+        json_space(cursor);
+        if (cursor->offset < cursor->length && cursor->data[cursor->offset] == '}') {
+            ++cursor->offset; break;
+        }
+        if (members++ > 0U && json_char(cursor, ',') != 0) return -1;
+        json_space(cursor);
+        if (json_string(cursor, key, sizeof(key)) != 0 || json_char(cursor, ':') != 0) return -1;
+        json_space(cursor);
+        if (strcmp(key, "name") == 0) bit = 0U;
+        else if (strcmp(key, "standardAcronym") == 0) bit = 1U;
+        else if (strcmp(key, "gmtOffset") == 0) bit = 2U;
+        else if (strcmp(key, "dst") == 0) bit = 3U;
+        else return -1;
+        if ((seen & (1U << bit)) != 0U) return -1;
+        seen |= 1U << bit;
+        if (bit < 3U) {
+            if (json_string(cursor, out->values[2U + bit],
+                            sizeof(out->values[2U + bit])) != 0) return -1;
+            out->present[2U + bit] = 1U;
+        } else if (parse_time_zone_dst(cursor, out) != 0) return -1;
+    }
+    return seen == 15U ? 0 : -1;
+}
+
+static int parse_time_zone_request(const unsigned char *json, size_t length,
+                                   struct pm3000_fixed_input *out) {
+    struct json_cursor cursor = {json, length, 0U};
+    unsigned int seen = 0U, members = 0U;
+    char mode[16] = {0};
+    if (length == 0U || !valid_utf8(json, length) || json_char(&cursor, '{') != 0) return -1;
+    memset(out, 0, sizeof(*out));
+    for (;;) {
+        char key[32]; unsigned int bit;
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset; break;
+        }
+        if (members++ > 0U && json_char(&cursor, ',') != 0) return -1;
+        json_space(&cursor);
+        if (json_string(&cursor, key, sizeof(key)) != 0 || json_char(&cursor, ':') != 0) return -1;
+        json_space(&cursor);
+        if (strcmp(key, "mode") == 0) bit = 0U;
+        else if (strcmp(key, "predefinedZone") == 0) bit = 1U;
+        else if (strcmp(key, "custom") == 0) bit = 2U;
+        else return -1;
+        if ((seen & (1U << bit)) != 0U) return -1;
+        seen |= 1U << bit;
+        if (bit == 0U) {
+            if (json_string(&cursor, mode, sizeof(mode)) != 0) return -1;
+        } else if (bit == 1U) {
+            if (json_string(&cursor, out->values[1], sizeof(out->values[1])) != 0) return -1;
+            out->present[1] = 1U;
+        } else if (parse_time_zone_custom(&cursor, out) != 0) return -1;
+    }
+    json_space(&cursor);
+    if (cursor.offset != cursor.length || (seen & 1U) == 0U) return -1;
+    out->present[0] = 1U;
+    if (strcmp(mode, "predefined") == 0 && seen == 3U) {
+        strcpy(out->values[0], "no"); return 0;
+    }
+    if (strcmp(mode, "custom") == 0 && seen == 5U) {
+        strcpy(out->values[0], "yes"); return 0;
+    }
+    return -1;
+}
+
 int pm3000_fixed_parse_request(pm3000_fixed_form_kind kind,
                                const unsigned char *json, size_t length,
                                struct pm3000_fixed_input *out) {
@@ -508,6 +768,8 @@ int pm3000_fixed_parse_request(pm3000_fixed_form_kind kind,
     if (value == NULL || out == NULL || json == NULL || length == 0U) return -1;
     if (kind == PM3000_FORM_APPLIANCE_LOGGING)
         return parse_logging_request(json, length, out);
+    if (kind == PM3000_FORM_TIME_ZONE)
+        return parse_time_zone_request(json, length, out);
     if (!valid_utf8(json, length) || json_char(&cursor, '{') != 0) return -1;
     memset(out, 0, sizeof(*out));
     for (;;) {
@@ -552,7 +814,15 @@ int pm3000_fixed_merge_inactive(pm3000_fixed_form_kind kind,
             strcpy(input->values[index], snapshot->form.values[index]);
         }
     }
-    return validate_values(kind, input->values);
+    if (validate_values(kind, input->values) != 0) return -1;
+    if (kind == PM3000_FORM_TIME_ZONE) {
+        unsigned int matches = 0U;
+        for (index = 0U; index < snapshot->form.choice_count; ++index)
+            if (snapshot->form.choice_fields[index] == 1U &&
+                strcmp(snapshot->form.choices[index], input->values[1]) == 0) ++matches;
+        if (matches != 1U) return -1;
+    }
+    return 0;
 }
 
 int pm3000_fixed_values_match(pm3000_fixed_form_kind kind,
@@ -593,6 +863,44 @@ int pm3000_fixed_serialize(pm3000_fixed_form_kind kind,
     amount = snprintf(output, capacity, "<section structure=\"form\">");
     if (amount < 0 || (size_t)amount >= capacity) return -1;
     used = (size_t)amount;
+    if (kind == PM3000_FORM_TIME_ZONE) {
+        amount = snprintf(output + used, capacity - used,
+                          "<parameter id=\"customtimezone\" structure=\"radiobox\"><value>%s</value>",
+                          escaped[0]);
+        if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+        used += (size_t)amount;
+        if (strcmp(input->values[0], "no") == 0) {
+            amount = snprintf(output + used, capacity - used,
+                              "<parameter id=\"timezone_list\" structure=\"combo\"><value>%s</value></parameter>",
+                              escaped[1]);
+        } else {
+            amount = snprintf(output + used, capacity - used,
+                              "<parameter id=\"tzName\" structure=\"RWtext\"><value>%s</value></parameter>"
+                              "<parameter id=\"stdTimeAcronym\" structure=\"RWtext\"><value>%s</value></parameter>"
+                              "<parameter id=\"gmtOffset\" structure=\"RWtext\"><value>%s</value></parameter>"
+                              "<parameter id=\"enableDst\" structure=\"checkbox\"><value>%s</value>",
+                              escaped[2], escaped[3], escaped[4], escaped[5]);
+        }
+        if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+        used += (size_t)amount;
+        if (strcmp(input->values[0], "yes") == 0) {
+            if (strcmp(input->values[5], "true") == 0) {
+                for (index = 6U; index < 16U; ++index) {
+                    amount = snprintf(output + used, capacity - used,
+                                      "<parameter id=\"%s\" structure=\"%s\"><value>%s</value></parameter>",
+                                      value->fields[index].id, value->fields[index].structure,
+                                      escaped[index]);
+                    if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+                    used += (size_t)amount;
+                }
+            }
+            amount = snprintf(output + used, capacity - used, "</parameter>");
+            if (amount < 0 || (size_t)amount >= capacity - used) return -1;
+            used += (size_t)amount;
+        }
+        amount = snprintf(output + used, capacity - used, "</parameter></section>");
+        return amount < 0 || (size_t)amount >= capacity - used ? -1 : 0;
+    }
     if (kind == PM3000_FORM_APPLIANCE_LOGGING) {
         amount = snprintf(output + used, capacity - used,
                           "<parameter id=\"sessionlogenable\" structure=\"checkbox\"><value>%s</value>",

@@ -21,6 +21,7 @@ struct frame {
     char access_path[XML_MAX_TEXT + 1U];
     char access_rights[XML_MAX_NAME + 1U];
     char text[XML_MAX_TEXT + 1U];
+    char attribute_value[33];
     size_t text_length;
     unsigned int fixed_child_stage;
 };
@@ -32,6 +33,7 @@ struct parameter_value {
     char container_name[XML_MAX_NAME + 1U];
     char container_id[XML_MAX_TEXT + 1U];
     char container_structure[XML_MAX_NAME + 1U];
+    char container_attribute_value[33];
     unsigned int direct_form_child;
     char value[XML_MAX_TEXT + 1U];
 };
@@ -43,13 +45,15 @@ struct parameter_declaration {
     char container_name[XML_MAX_NAME + 1U];
     char container_id[XML_MAX_TEXT + 1U];
     char container_structure[XML_MAX_NAME + 1U];
+    char container_attribute_value[33];
     unsigned int direct_form_child;
+    char attribute_value[33];
 };
 
 struct option_value {
-    char form[XML_MAX_TEXT + 1U];
-    char parameter[XML_MAX_TEXT + 1U];
-    char value[XML_MAX_TEXT + 1U];
+    char form[XML_MAX_NAME + 1U];
+    char parameter[XML_MAX_NAME + 1U];
+    char value[33];
 };
 
 struct xml_row_param {
@@ -104,7 +108,7 @@ struct document {
     unsigned int unexpected_fixed_sequence;
     unsigned int fixed_envelope_stage;
     unsigned int fixed_payload_stage;
-    struct option_value option_values[PM3000_FIXED_MAX_CHOICES + 1U];
+    struct option_value *option_values;
     unsigned int option_value_count;
     char form_ids[32][XML_MAX_TEXT + 1U];
     unsigned int form_count;
@@ -113,6 +117,7 @@ struct document {
     unsigned int help_language_capability;
     unsigned int data_buffering_capability;
     unsigned int appliance_logging_capability;
+    unsigned int time_zone_capability;
     char table_id[XML_MAX_NAME + 1U];
     char current_table_id[XML_MAX_NAME + 1U];
     unsigned int table_count;
@@ -362,6 +367,7 @@ static int close_element(struct document *document, const char *name) {
                 strcpy(record->container_name, container->name);
                 strcpy(record->container_id, container->id);
                 strcpy(record->container_structure, container->structure);
+                strcpy(record->container_attribute_value, container->attribute_value);
                 record->direct_form_child =
                     strcmp(container->name, "section") == 0 &&
                     strcmp(container->id, form) == 0 &&
@@ -396,7 +402,9 @@ static int close_element(struct document *document, const char *name) {
         const char *form = ancestor_form_id(document);
         const struct frame *parameter = &document->stack[document->depth - 2U];
         struct option_value *record;
-        if (form == NULL || form[0] == '\0' || parameter->id[0] == '\0' ||
+        if (form == NULL || form[0] == '\0' || strlen(form) > XML_MAX_NAME ||
+            parameter->id[0] == '\0' || strlen(parameter->id) > XML_MAX_NAME ||
+            frame->text_length >= sizeof(record->value) ||
             document->option_value_count >= PM3000_FIXED_MAX_CHOICES + 1U)
             return -1;
         record = &document->option_values[document->option_value_count++];
@@ -435,7 +443,8 @@ static int close_element(struct document *document, const char *name) {
 static int fixed_attribute_allowed(const char *element, const char *attribute) {
     if (strcmp(element, "control") == 0 || strcmp(element, "section") == 0 ||
         strcmp(element, "parameter") == 0)
-        return strcmp(attribute, "id") == 0 || strcmp(attribute, "structure") == 0;
+        return strcmp(attribute, "id") == 0 || strcmp(attribute, "structure") == 0 ||
+               (strcmp(element, "parameter") == 0 && strcmp(attribute, "value") == 0);
     if (strcmp(element, "option") == 0) return strcmp(attribute, "label") == 0;
     return 0;
 }
@@ -448,6 +457,7 @@ static int start_element(struct document *document, int *self_closing) {
     char access_path[XML_MAX_TEXT + 1U] = {0};
     char access_rights[XML_MAX_NAME + 1U] = {0};
     char structure[XML_MAX_NAME + 1U] = {0};
+    char parameter_value[33] = {0};
     unsigned int attribute_count = 0U;
     if (document->depth >= XML_MAX_DEPTH) return -1;
     frame = &document->stack[document->depth];
@@ -489,6 +499,10 @@ static int start_element(struct document *document, int *self_closing) {
             if (strlen(value) > XML_MAX_NAME) return -1;
             strcpy(structure, value);
         }
+        else if (strcmp(name, "value") == 0) {
+            if (strlen(value) >= sizeof(parameter_value)) return -1;
+            strcpy(parameter_value, value);
+        }
     }
     {
         unsigned int index;
@@ -510,6 +524,7 @@ static int start_element(struct document *document, int *self_closing) {
     strcpy(frame->path, path);
     strcpy(frame->access_path, access_path);
     strcpy(frame->access_rights, access_rights);
+    strcpy(frame->attribute_value, parameter_value);
     if (document->depth == 1U) {
         unsigned int expected = document->fixed_envelope_stage;
         if ((expected == 0U && strcmp(frame->name, "action") == 0) ||
@@ -579,8 +594,10 @@ static int start_element(struct document *document, int *self_closing) {
         if (form != NULL) {
             struct parameter_declaration *record;
             const struct frame *container;
-            if (form[0] == '\0' || id[0] == '\0' || document->depth == 0U ||
+            if (form[0] == '\0' || document->depth == 0U ||
                 document->parameter_declaration_count >= XML_MAX_PARAMETERS) return -1;
+            if (id[0] == '\0' && !(strcmp(structure, "radio") == 0 &&
+                                   parameter_value[0] != '\0')) return -1;
             record = &document->parameter_declarations[document->parameter_declaration_count++];
             container = &document->stack[document->depth - 1U];
             strcpy(record->form, form);
@@ -589,10 +606,12 @@ static int start_element(struct document *document, int *self_closing) {
             strcpy(record->container_name, container->name);
             strcpy(record->container_id, container->id);
             strcpy(record->container_structure, container->structure);
+            strcpy(record->container_attribute_value, container->attribute_value);
             record->direct_form_child =
                 strcmp(container->name, "section") == 0 &&
                 strcmp(container->id, form) == 0 &&
                 strcmp(container->structure, "form") == 0;
+            strcpy(record->attribute_value, parameter_value);
         }
     }
     if (document->depth == 2U && strcmp(frame->name, "section") == 0 &&
@@ -624,6 +643,16 @@ static int start_element(struct document *document, int *self_closing) {
             strcmp(access_path, "configuration.appliance.language") == 0 &&
             strcmp(access_rights, "w") == 0)
             document->help_language_capability = 1U;
+        if (strcmp(path, "units.applianceSettings.date_and_time.time_zone") == 0) {
+            size_t ancestor;
+            for (ancestor = 0U; ancestor < document->depth; ++ancestor) {
+                const struct frame *candidate = &document->stack[ancestor];
+                if (strcmp(candidate->path, "units.applianceSettings.date_and_time") == 0 &&
+                    strcmp(candidate->access_path, "management.date") == 0 &&
+                    strcmp(candidate->access_rights, "w") == 0)
+                    document->time_zone_capability = 1U;
+            }
+        }
         if (strcmp(path, "units.event_notification.global_settings_databuffering") == 0 ||
             strcmp(path, "units.event_notification.sessions") == 0) {
             size_t ancestor;
@@ -689,7 +718,11 @@ static int start_element(struct document *document, int *self_closing) {
 
 static int parse_document(const unsigned char *xml, size_t length,
                           struct document *document) {
+    /* A CGI process handles one request, so keeping this bounded parser workspace
+       outside the call stack is safe and avoids exhausting legacy stack limits. */
+    static struct option_value option_values[PM3000_FIXED_MAX_CHOICES + 1U];
     memset(document, 0, sizeof(*document));
+    document->option_values = option_values;
     document->current_row_index = -1;
     if (xml == NULL || length == 0U || length > XML_MAX_BYTES ||
         !valid_utf8(xml, length)) return -1;
@@ -800,7 +833,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           unsigned int allowed_count, uint64_t *path_mask,
                           int *can_manage, int *can_help_language,
                           int *can_data_buffering,
-                          int *can_appliance_logging) {
+                          int *can_appliance_logging,
+                          int *can_time_zone) {
     struct document document;
     unsigned int index, candidate;
     if (allowed_count > 64U || parse_document(xml, length, &document) != 0 ||
@@ -821,6 +855,7 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
     *can_help_language = document.help_language_capability == 1U;
     *can_data_buffering = document.data_buffering_capability == 1U;
     *can_appliance_logging = document.appliance_logging_capability == 1U;
+    *can_time_zone = document.time_zone_capability == 1U;
     return 0;
 }
 
@@ -1046,13 +1081,21 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
         const struct pm3000_xml_fixed_parameter *expected = &parameters[index];
         const char *parent_structure = expected->parent_structure == NULL ? "title" : expected->parent_structure;
         if (strcmp(record->form, form) != 0 ||
-            strcmp(record->parameter, expected->id) != 0 ||
             strcmp(record->structure, expected->structure) != 0) return -1;
+        if (expected->id[0] == '@') {
+            if (record->parameter[0] != '\0' ||
+                strcmp(record->attribute_value, expected->id + 1) != 0) return -1;
+        } else if (strcmp(record->parameter, expected->id) != 0 ||
+                   record->attribute_value[0] != '\0') return -1;
         if (expected->parent_id == NULL) {
             if (!record->direct_form_child) return -1;
         } else if (strcmp(record->container_name, "parameter") != 0 ||
-                   strcmp(record->container_id, expected->parent_id) != 0 ||
-                   strcmp(record->container_structure, parent_structure) != 0) return -1;
+                   strcmp(record->container_structure, parent_structure) != 0 ||
+                   (expected->parent_id[0] == '@' ?
+                    (record->container_id[0] != '\0' ||
+                     strcmp(record->container_attribute_value, expected->parent_id + 1) != 0) :
+                    (strcmp(record->container_id, expected->parent_id) != 0 ||
+                     record->container_attribute_value[0] != '\0'))) return -1;
     }
     for (index = 0U; index < document.parameter_value_count; ++index) {
         const struct parameter_value *record = &document.parameter_values[index];
@@ -1068,8 +1111,13 @@ int pm3000_xml_fixed_form(const unsigned char *xml, size_t length,
         if (fields[field_index].parent_id == NULL) {
             if (!record->direct_form_child) return -1;
         } else if (strcmp(record->container_name, "parameter") != 0 ||
-                   strcmp(record->container_id, fields[field_index].parent_id) != 0 ||
-                   strcmp(record->container_structure, parent_structure) != 0) return -1;
+                   strcmp(record->container_structure, parent_structure) != 0 ||
+                   (fields[field_index].parent_id[0] == '@' ?
+                    (record->container_id[0] != '\0' ||
+                     strcmp(record->container_attribute_value,
+                            fields[field_index].parent_id + 1) != 0) :
+                    (strcmp(record->container_id, fields[field_index].parent_id) != 0 ||
+                     record->container_attribute_value[0] != '\0'))) return -1;
         strcpy(out->values[field_index], record->value);
         ++next_field;
     }

@@ -8,7 +8,8 @@
 typedef enum {
     PM3000_FORM_HELP_LANGUAGE = 1,
     PM3000_FORM_DATA_BUFFERING = 2,
-    PM3000_FORM_APPLIANCE_LOGGING = 3
+    PM3000_FORM_APPLIANCE_LOGGING = 3,
+    PM3000_FORM_TIME_ZONE = 4
 } pm3000_fixed_form_kind;
 
 struct pm3000_fixed_snapshot {

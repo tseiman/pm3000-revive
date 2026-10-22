@@ -39,6 +39,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/settings/help-language",
                 "/api/v1/settings/data-buffering",
                 "/api/v1/settings/appliance-logging",
+                "/api/v1/settings/time-zone",
                 "/api/v1/system/information",
                 "/api/v1/system/usage/memory",
                 "/api/v1/system/usage/flash",
@@ -66,6 +67,7 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/help-language"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/data-buffering"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/appliance-logging"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/time-zone"]))
         for route in (
             "/api/v1/system/information",
             "/api/v1/system/usage/memory",
@@ -236,6 +238,39 @@ class RestV1ContractTests(unittest.TestCase):
             self.assertIs(enabled, variant["properties"]["sessionLoggingEnabled"]["const"])
             if alerts_enabled is not None:
                 self.assertIs(alerts_enabled, variant["properties"]["alertsEnabled"]["const"])
+
+    def test_time_zone_is_closed_conditional_and_runtime_choice_bounded(self) -> None:
+        route = self.contract["paths"]["/api/v1/settings/time-zone"]
+        schemas = self.contract["components"]["schemas"]
+        for operation in route.values():
+            self.assertEqual([{"cookieAuth": []}], operation["security"])
+            self.assertTrue(operation["x-bearer-rejected"])
+            self.assertEqual("units.applianceSettings.date_and_time.time_zone", operation["x-required-nav-path"])
+            self.assertEqual("management.date:w", operation["x-required-write-capability"])
+        self.assertFalse(route["put"]["x-full-replacement"])
+        self.assertEqual(
+            "#/components/schemas/TimeZoneReplacement",
+            route["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        )
+        setting = schemas["TimeZoneSetting"]
+        self.assertFalse(setting["additionalProperties"])
+        self.assertEqual({"mode", "predefined", "custom", "revision"}, set(setting["required"]))
+        choices = setting["properties"]["predefined"]["properties"]["choices"]
+        self.assertEqual((1, 521), (choices["minItems"], choices["maxItems"]))
+        self.assertTrue(choices["uniqueItems"])
+        variants = schemas["TimeZoneReplacement"]["oneOf"]
+        self.assertEqual(3, len(variants))
+        self.assertEqual(
+            {
+                "#/components/schemas/TimeZonePredefinedReplacement",
+                "#/components/schemas/TimeZoneCustomNoDstReplacement",
+                "#/components/schemas/TimeZoneCustomDstReplacement",
+            },
+            {variant["$ref"] for variant in variants},
+        )
+        for name in ("TimeZonePredefinedReplacement", "TimeZoneCustomNoDstReplacement", "TimeZoneCustomDstReplacement"):
+            self.assertFalse(schemas[name]["additionalProperties"])
+        self.assertIn("not-runtime-filesystem-effects", route["put"]["x-success-confirmation"])
 
     def test_token_administration_is_closed_admin_only_and_never_reaches_avtrans(self) -> None:
         paths = self.contract["paths"]

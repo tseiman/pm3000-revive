@@ -255,6 +255,7 @@ class SyntheticFixtureTests(unittest.TestCase):
             "help-language-response.xml",
             "data-buffering-response.xml",
             "appliance-logging-response.xml",
+            "time-zone-response.xml",
         }
         actual = {path.name for path in FIXTURES.glob("*.xml")}
         self.assertEqual(expected, actual)

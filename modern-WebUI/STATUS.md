@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stage 9 milestone 2A remains the current published offline checkpoint at commit `d2c97e6` and tree `e46500e776e17c94097c3c4bba7c7fe6b958ce29`. Milestone 2B is in progress in the working tree with Appliance Logging as its first bounded vertical slice. The previously installed `0.1` pilot remains the live baseline; none of the current write-capable code has been installed or executed on the appliance.
+Stage 9 milestone 2B is the current published offline checkpoint at commit `0ee3fbc`, including Appliance Logging. Time Zone is the next bounded milestone 2B candidate in the working tree. The previously installed `0.1` pilot remains the live baseline; none of the write-capable code has been installed or executed on the appliance.
 
 ## Implemented
 
@@ -18,10 +18,11 @@ Stage 9 milestone 2A remains the current published offline checkpoint at commit 
 - Session-only password change with `units.change_password` authorization, CSRF, old password, matching new-password confirmation, secret zeroing, and expected response path `units.change_password.changedPassword`.
 - Session-only complete-replacement settings for DSView HTTPS allowance (`SecurityDSView` / `dsviewControl`) and NIS (`nis` / `nisserver`). Both use fixed paths, actions, form structure/order, PM3000 navigation rights, CSRF, closed JSON, fresh-read UI gating, and fail-closed response parsing. They do not infer PM3000 configuration rights from REST bearer scopes. DSView remains supported at this level but is not a priority for further expansion.
 - Session-only complete-replacement Help and Language and Data Buffering settings. Both require their exact firmware-derived write capability, reject bearer authentication, GET the complete typed form before edits, return a quoted strong revision in the response body and `ETag`, and require that revision in `If-Match` with CSRF on PUT. Help and Language replaces `applianceLanguage` and `url`; Data Buffering replaces all seven local/NFS/syslog fields and limits the facility to `LOG_LOCAL0` through `LOG_LOCAL5`.
-- Milestone 2B candidate: session-only conditional Appliance Logging at `GET|PUT /api/v1/settings/appliance-logging`. It strictly validates the nested firmware form and fixed destination/timestamp choices, models booleans explicitly, requires exactly ten alert strings only when alerts are enabled, omits inactive descendants from save requests, and verifies that inactive values were preserved. The setting applies to new sessions only.
+- Milestone 2B: session-only conditional Appliance Logging at `GET|PUT /api/v1/settings/appliance-logging`. It strictly validates the nested firmware form and fixed destination/timestamp choices, models booleans explicitly, requires exactly ten alert strings only when alerts are enabled, omits inactive descendants from save requests, and verifies that inactive values were preserved. The setting applies to new sessions only.
+- Milestone 2B candidate: session-only conditional Time Zone at `GET|PUT /api/v1/settings/time-zone`. It requires inherited `management.date:w`, binds every runtime choice to its exact firmware field, supports the 521 firmware-provided predefined zones within a fixed 569-choice parser budget, preserves inactive branch state, serializes only the selected predefined/custom/custom-with-DST branch, and serializes revisioned settings writes through a private symlink-safe cross-process lock.
 - Revisioned settings writes return 204 only after the controller's typed post-save read-back exactly equals every submitted field. A stale revision returns 412. Transport failure after possible dispatch or any read-back mismatch returns `action_outcome_unknown`; the browser does not repeat the PUT and instead requires a fresh successful GET before another save.
 - Session-only read-only system and monitoring endpoints: `GET /api/v1/system/information` (appliance identity fields, serial number excluded), `GET /api/v1/system/usage/memory` (memory rows), `GET /api/v1/system/usage/flash` (filesystem rows), `GET /api/v1/monitoring/network/devices` (device rows), `GET /api/v1/monitoring/network/routes/ipv4` (IPv4 route rows), `GET /api/v1/monitoring/network/routes/ipv6` (IPv6 route rows), `GET /api/v1/monitoring/serial-ports` (serial port statistics rows). All seven reject bearer tokens with 401, use cookie session with navigation-path capability gates, return 503 on transport failure and 502 on malformed backend response, and have closed `additionalProperties: false` schemas.
-- Dependency-free browser UI for outlet and PDU inventory/actions, password change, REST-token administration, Help and Language, Data Buffering, Appliance Logging, and all seven read-only monitoring/system views. Revisioned forms start disabled, retain revisions only in page memory, use safe DOM/textContent construction, and reload after every save result. No innerHTML. No browser storage. Non-migrated pages remain available through the legacy UI.
+- Dependency-free browser UI for outlet and PDU inventory/actions, password change, REST-token administration, Help and Language, Data Buffering, Appliance Logging, Time Zone, and all seven read-only monitoring/system views. Revisioned forms start disabled, retain revisions only in page memory, use safe DOM/textContent construction, and reload after every save result. No innerHTML. No browser storage. Non-migrated pages remain available through the legacy UI.
 - Backup-first host installer using a temporary OpenSSH ControlMaster; manual rollback remains separate.
 
 ## Static write-contract analysis
@@ -32,20 +33,20 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current complete repository suite: 199 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
-- OpenAPI v1.5.0 passes JSON parsing, local contract tests, and `swagger-cli validate`.
+- Current candidate repository suite: 206 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
+- OpenAPI v1.6.0 describes the conditional Time Zone resource and passes JSON parsing, local contract tests, and `swagger-cli validate`.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
 - QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.
-- Independent review of the exact milestone 2A tree reported `BLOCKERS: NO` and no unresolved HIGH or MEDIUM findings. Earlier reviews drove regressions for credential/SID/password envelopes, complete XML 1.0 and fixed-form closure, revisioned UI write races, exact read-back semantics, and operation-specific session and cookie contracts.
+- Independent review of the exact published Appliance Logging tree reported `BLOCKERS: NO` and no unresolved HIGH or MEDIUM findings. Exact-tree review of the Time Zone candidate remains required before publication.
 
 ## Next milestone
 
-Stage 9 milestone 2B is in progress with Appliance Logging as its first low-risk fixed setting. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit. Stage 10 cutover and final product release have not started.
+Stage 9 milestone 2B continues with Time Zone as the current offline-only fixed-setting candidate. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit. Stage 10 cutover and final product release have not started.
 
 ## Controlled device-validation boundary
 
-No appliance action is automatic. A future device test requires an approved maintenance window and a designated target. Help and Language, Data Buffering, and Appliance Logging are implemented from static firmware contracts and synthetic offline fixtures only; none has real firmware write validation. Because no sanitized successful or failed response capture exists for these writes, the first approved test must capture and sanitize the response and compare it with the exact read-back parser before any broader rollout. Appliance Logging also requires a newly opened test session to verify runtime effect; configuration read-back alone does not prove that behavior.
+No appliance action is automatic. A future device test requires an approved maintenance window and a designated target. Help and Language, Data Buffering, Appliance Logging, and Time Zone are implemented from static firmware contracts and synthetic offline fixtures only; none has real firmware write validation. Because no sanitized successful or failed response capture exists for these writes, the first approved test must capture and sanitize the response and compare it with the exact read-back parser before any broader rollout. Appliance Logging also requires a newly opened test session to verify runtime effect. Time Zone may update `/etc/timezone`, `/etc/localtime`, and `/etc/simplified-tz` through firmware scripts; typed configuration read-back alone does not prove those side effects or their ordering.
 
 ## Safety statement
 

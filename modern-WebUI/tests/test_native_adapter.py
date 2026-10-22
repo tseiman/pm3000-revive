@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import socket
 import subprocess
@@ -30,6 +31,7 @@ NETDEV_RESPONSE = ROOT / "fixtures" / "synthetic" / "netdev-monitoring-response.
 IPV4_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv4-routes-response.xml"
 IPV6_ROUTES_RESPONSE = ROOT / "fixtures" / "synthetic" / "ipv6-routes-response.xml"
 SERIAL_RESPONSE = ROOT / "fixtures" / "synthetic" / "serial-stats-response.xml"
+TIME_ZONE_RESPONSE = ROOT / "fixtures" / "synthetic" / "time-zone-response.xml"
 sys.path.insert(0, str(ROOT / "tools"))
 import token_store  # noqa: E402
 
@@ -1473,6 +1475,41 @@ class NativeAdapterTests(unittest.TestCase):
             b'</parameter></parameter></parameter></section></payload></avtrans>'
         )
 
+    @staticmethod
+    def time_zone_page(
+        mode: bytes = b"no", selected: bytes = b"UTC", dst_enabled: bool = False,
+        choices: tuple[bytes, ...] = (b"Europe/Berlin", b"UTC"),
+    ) -> bytes:
+        options = b"".join(b'<option label="zone">' + value + b"</option>" for value in choices)
+        months = b"".join(b"<option>" + str(value).encode() + b"</option>" for value in range(1, 13))
+        weeks = b"".join(b"<option>" + str(value).encode() + b"</option>" for value in range(1, 6))
+        days = b"".join(b"<option>" + str(value).encode() + b"</option>" for value in range(1, 8))
+        return (
+            b'<avtrans><action>content</action><paths><path>units.applianceSettings.date_and_time.time_zone</path></paths><payload>'
+            b'<controls><control id="save" structure="button"/></controls>'
+            b'<section id="time_zoneform" structure="form">'
+            b'<parameter id="customtimezone" structure="radiobox"><value>' + mode + b'</value>'
+            b'<parameter value="no" structure="radio"><parameter id="timezone_list" structure="combo"><value>' +
+            selected + b'</value>' + options + b'</parameter></parameter>'
+            b'<parameter value="yes" structure="radio">'
+            b'<parameter id="tzName" structure="RWtext"><value>Example</value></parameter>'
+            b'<parameter id="stdTimeAcronym" structure="RWtext"><value>EX</value></parameter>'
+            b'<parameter id="gmtOffset" structure="RWtext"><value>-7:00</value></parameter>'
+            b'<parameter id="enableDst" structure="checkbox"><value>' +
+            (b"true" if dst_enabled else b"false") + b'</value>'
+            b'<parameter id="dstAcronym" structure="RWtext"><value>EDT</value></parameter>'
+            b'<parameter id="saveTime" structure="RWtext"><value>1:00</value></parameter>'
+            b'<parameter id="startMonth" structure="combo"><value>3</value>' + months + b'</parameter>'
+            b'<parameter id="startWeek" structure="combo"><value>2</value>' + weeks + b'</parameter>'
+            b'<parameter id="startWeekday" structure="combo"><value>1</value>' + days + b'</parameter>'
+            b'<parameter id="startHour" structure="RWtext"><value>2:00</value></parameter>'
+            b'<parameter id="endMonth" structure="combo"><value>11</value>' + months + b'</parameter>'
+            b'<parameter id="endWeek" structure="combo"><value>1</value>' + weeks + b'</parameter>'
+            b'<parameter id="endWeekday" structure="combo"><value>1</value>' + days + b'</parameter>'
+            b'<parameter id="endHour" structure="RWtext"><value>2:00</value></parameter>'
+            b'</parameter></parameter></parameter></section></payload></avtrans>'
+        )
+
     def setting_get(self, root: Path, cookie: str, route: str, page: bytes, name: str):
         socket_path = root / f"{name}-get.sock"
         with FakeAvtransController(socket_path, [page]) as controller:
@@ -1496,6 +1533,9 @@ class NativeAdapterTests(unittest.TestCase):
             (b'accessPath="configuration.event-notify" accessRights="w"',
              b'accessPath="configuration.event-notify" accessRights="r"',
              "/api/v1/settings/appliance-logging"),
+            (b'accessPath="management.date" accessRights="w"',
+             b'accessPath="management.date" accessRights="r"',
+             "/api/v1/settings/time-zone"),
         )
         for expected, replacement, route in cases:
             with self.subTest(route=route), tempfile.TemporaryDirectory() as temporary:
@@ -1553,6 +1593,7 @@ class NativeAdapterTests(unittest.TestCase):
             cookie, _session, _controller, _result = self.login_session(root)
             help_page = self.help_language_page()
             data_page = self.data_buffering_page()
+            time_zone_page = self.time_zone_page()
             cases = (
                 ("help-no-save", "/api/v1/settings/help-language", help_page.replace(b'<controls><control id="save" structure="button"/></controls>', b"")),
                 ("help-extra-control", "/api/v1/settings/help-language", help_page.replace(b'</controls>', b'<control id="other" structure="button"/></controls>')),
@@ -1610,6 +1651,10 @@ class NativeAdapterTests(unittest.TestCase):
                 ("help-stray-value", "/api/v1/settings/help-language", help_page.replace(b'<section id="sessionform"', b'<value>hidden</value><section id="sessionform"')),
                 ("data-parameter-in-nonform", "/api/v1/settings/data-buffering", data_page.replace(b'<section id="global_settings_form"', b'<section id="wrapper" structure="standard"><parameter id="hidden" structure="password"/></section><section id="global_settings_form"')),
                 ("data-out-of-range", "/api/v1/settings/data-buffering", self.data_buffering_page((b"2049", b"4", b"", b"/buffer", b"4096", b"8", b"LOG_LOCAL2"))),
+                ("time-zone-radio-value", "/api/v1/settings/time-zone", time_zone_page.replace(b'<parameter value="no" structure="radio">', b'<parameter value="other" structure="radio">', 1)),
+                ("time-zone-wrong-radio-parent", "/api/v1/settings/time-zone", time_zone_page.replace(b'<parameter value="no" structure="radio"><parameter id="timezone_list"', b'<parameter value="no" structure="radio"></parameter><parameter id="timezone_list"', 1)),
+                ("time-zone-duplicate-choice", "/api/v1/settings/time-zone", time_zone_page.replace(b'</parameter></parameter><parameter value="yes"', b'<option>UTC</option></parameter></parameter><parameter value="yes"', 1)),
+                ("time-zone-reordered-fields", "/api/v1/settings/time-zone", time_zone_page.replace(b'<parameter id="tzName" structure="RWtext"><value>Example</value></parameter><parameter id="stdTimeAcronym" structure="RWtext"><value>EX</value></parameter>', b'<parameter id="stdTimeAcronym" structure="RWtext"><value>EX</value></parameter><parameter id="tzName" structure="RWtext"><value>Example</value></parameter>', 1)),
             )
             for name, route, page in cases:
                 with self.subTest(name=name):
@@ -1767,6 +1812,169 @@ class NativeAdapterTests(unittest.TestCase):
                 )
                 self.assertIn(b"Status: 400", rejected.stdout, candidate)
             self.assertFalse((root / "never.sock").exists())
+
+    def test_time_zone_get_and_conditional_put_preserve_inactive_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            route = "/api/v1/settings/time-zone"
+            current = self.time_zone_page()
+            get_result, _controller = self.setting_get(root, cookie, route, current, "time-zone")
+            headers, payload = self.cgi_json(get_result)
+            self.assertIn(b"Status: 200", headers)
+            revision = next(line.split(b": ", 1)[1].decode() for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            self.assertEqual("predefined", payload["mode"])
+            self.assertEqual({"selected": "UTC", "choices": ["Europe/Berlin", "UTC"]}, payload["predefined"])
+            self.assertEqual("Example", payload["custom"]["name"])
+            self.assertFalse(payload["custom"]["dst"]["enabled"])
+            self.assertEqual(revision, payload["revision"])
+
+            cases = (
+                ("predefined", {"mode": "predefined", "predefinedZone": "Europe/Berlin"}, self.time_zone_page(selected=b"Europe/Berlin"), b'<parameter id="timezone_list" structure="combo"><value>Europe/Berlin</value></parameter>', b'id="tzName"'),
+                ("custom-no-dst", {"mode": "custom", "custom": {"name": "Example", "standardAcronym": "EX", "gmtOffset": "-7:00", "dst": {"enabled": False}}}, self.time_zone_page(mode=b"yes"), b'<parameter id="enableDst" structure="checkbox"><value>false</value></parameter>', b'id="dstAcronym"'),
+                (
+                    "custom-dst",
+                    {
+                        "mode": "custom",
+                        "custom": {
+                            "name": "Example", "standardAcronym": "EX", "gmtOffset": "-7:00",
+                            "dst": {
+                                "enabled": True, "acronym": "EDT", "saveTime": "1:00",
+                                "start": {"month": "3", "week": "2", "weekday": "1", "hour": "2:00"},
+                                "end": {"month": "11", "week": "1", "weekday": "1", "hour": "2:00"},
+                            },
+                        },
+                    },
+                    self.time_zone_page(mode=b"yes", dst_enabled=True),
+                    b'<parameter id="dstAcronym" structure="RWtext"><value>EDT</value></parameter>',
+                    b'id="timezone_list"',
+                ),
+            )
+            for name, body, saved, included, omitted in cases:
+                socket_path = root / f"time-zone-{name}.sock"
+                environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_AVTRANS_SOCKET": str(socket_path), "HTTP_IF_MATCH": revision}
+                with self.subTest(name=name), FakeAvtransController(socket_path, [current, saved]) as controller:
+                    result = self.run_cgi("PUT", route, cookie=cookie, csrf=str(session["csrfToken"]), body=json.dumps(body).encode(), content_type="application/json", extra_environment=environment)
+                self.assertIn(b"Status: 204", result.stdout)
+                self.assertEqual(2, len(controller.requests))
+                self.assertIn(included, controller.requests[1][1])
+                self.assertNotIn(omitted, controller.requests[1][1])
+
+    def test_time_zone_write_lock_rejects_symlink_and_contention_before_backend_access(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            victim = root / "victim"
+            victim.write_text("unchanged")
+            (root / "sessions" / "settings-write.lock").symlink_to(victim)
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/time-zone", cookie=cookie,
+                csrf=str(session["csrfToken"]),
+                body=b'{"mode":"predefined","predefinedZone":"UTC"}', content_type="application/json",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "never.sock"),
+                    "HTTP_IF_MATCH": '"' + "a" * 64 + '"',
+                },
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 503", headers)
+            self.assertEqual("backend_unavailable", payload["code"])
+            self.assertEqual("unchanged", victim.read_text())
+            self.assertFalse((root / "never.sock").exists())
+
+            (root / "sessions" / "settings-write.lock").unlink()
+            lock_path = root / "sessions" / "settings-write.lock"
+            lock_path.touch(mode=0o600)
+            with lock_path.open("r+") as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                busy = self.run_cgi(
+                    "PUT", "/api/v1/settings/time-zone", cookie=cookie,
+                    csrf=str(session["csrfToken"]),
+                    body=b'{"mode":"predefined","predefinedZone":"UTC"}',
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(root / "still-never.sock"),
+                        "HTTP_IF_MATCH": '"' + "a" * 64 + '"',
+                    },
+                )
+            headers, payload = self.cgi_json(busy)
+            self.assertIn(b"Status: 503", headers)
+            self.assertEqual("backend_unavailable", payload["code"])
+            self.assertFalse((root / "still-never.sock").exists())
+
+    def test_time_zone_synthetic_fixture_matches_native_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            result, _controller = self.setting_get(
+                root, cookie, "/api/v1/settings/time-zone",
+                TIME_ZONE_RESPONSE.read_bytes(), "time-zone-synthetic-fixture",
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual("predefined", payload["mode"])
+            self.assertIn(payload["predefined"]["selected"], payload["predefined"]["choices"])
+
+    def test_time_zone_accepts_exact_firmware_choice_ceiling_and_rejects_overflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            choices = tuple(f"Etc/Z{index:03d}".encode("ascii") for index in range(521))
+            accepted, _controller = self.setting_get(
+                root, cookie, "/api/v1/settings/time-zone",
+                self.time_zone_page(selected=choices[0], choices=choices), "time-zone-521",
+            )
+            headers, payload = self.cgi_json(accepted)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual(521, len(payload["predefined"]["choices"]))
+            rejected, _controller = self.setting_get(
+                root, cookie, "/api/v1/settings/time-zone",
+                self.time_zone_page(selected=choices[0], choices=choices + (b"Etc/Overflow",)), "time-zone-522",
+            )
+            headers, payload = self.cgi_json(rejected)
+            self.assertIn(b"Status: 502", headers)
+            self.assertEqual("backend_protocol_error", payload["code"])
+            duplicate, _controller = self.setting_get(
+                root, cookie, "/api/v1/settings/time-zone",
+                self.time_zone_page(
+                    selected=b"Etc/UTC", choices=(b"Etc/UTC", b"Europe/Berlin", b"Europe/Berlin")
+                ),
+                "time-zone-duplicate-choice",
+            )
+            headers, payload = self.cgi_json(duplicate)
+            self.assertIn(b"Status: 502", headers)
+            self.assertEqual("backend_protocol_error", payload["code"])
+
+    def test_time_zone_close_after_save_is_unknown_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            current = self.time_zone_page()
+            initial, _controller = self.setting_get(
+                root, cookie, "/api/v1/settings/time-zone", current, "time-zone-unknown-initial"
+            )
+            headers, _payload = self.cgi_json(initial)
+            revision = next(line.split(b": ", 1)[1].decode() for line in headers.split(b"\r\n") if line.startswith(b"ETag: "))
+            socket_path = root / "time-zone-unknown.sock"
+            body = json.dumps({"mode": "predefined", "predefinedZone": "Europe/Berlin"}).encode()
+            with FakeAvtransController(socket_path, [current, None]) as controller:
+                result = self.run_cgi(
+                    "PUT", "/api/v1/settings/time-zone", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body, content_type="application/json",
+                    extra_environment={
+                        "PM3000_SESSION_DIR": str(root / "sessions"),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        "HTTP_IF_MATCH": revision,
+                    },
+                )
+            response_headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 503", response_headers)
+            self.assertEqual("action_outcome_unknown", payload["code"])
+            self.assertEqual(2, len(controller.requests))
+            self.assertIn(b"<action>get</action>", controller.requests[0][1])
+            self.assertIn(b"<action>save</action>", controller.requests[1][1])
 
     def test_appliance_logging_get_and_conditional_put_preserve_inactive_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

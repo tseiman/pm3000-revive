@@ -19,6 +19,8 @@ The current candidate has not been installed on a device. Development and verifi
 - `GET|PUT /api/v1/settings/authentication/nis`
 - `GET|PUT /api/v1/settings/help-language`
 - `GET|PUT /api/v1/settings/data-buffering`
+- `GET|PUT /api/v1/settings/appliance-logging`
+- `GET|PUT /api/v1/settings/time-zone`
 - `GET /api/v1/system/information`
 - `GET /api/v1/system/usage/memory`
 - `GET /api/v1/system/usage/flash`
@@ -147,7 +149,7 @@ Power routes validate HTTPS, session or bearer authorization, scope/right, outle
 
 Password change is session-only, requires `units.change_password`, matching CSRF, and matching new-password confirmation. It emits only the fixed `save` form, accepts only the firmware-derived success-form hierarchy, and clears secret buffers with a non-optimizable wipe.
 
-Help and Language and Data Buffering are session-only complete-replacement resources. Appliance Logging is a session-only conditional replacement resource whose inactive descendants are omitted from the save and preserved from the fresh read. Each GET validates the exact fixed-form response and returns a strong revision in the body and `ETag`; PUT requires matching CSRF and `If-Match`, obtains a fresh backend state, emits only the fixed firmware form, and returns success only after exact typed read-back of active writes and preserved state. Bearer authentication is rejected before backend access. Appliance Logging validates the nested title/checkbox hierarchy, both fixed choice sets, ten bounded alert strings, and new-session-only semantics; success confirms configuration persistence rather than runtime behavior of existing sessions.
+Help and Language and Data Buffering are session-only complete-replacement resources. Appliance Logging and Time Zone are session-only conditional replacement resources whose inactive descendants are omitted from the save and preserved from the fresh read. Each GET validates the exact fixed-form response and returns a strong revision in the body and `ETag`; PUT requires matching CSRF and `If-Match`, obtains a fresh backend state under a private cross-process write lock, emits only the active fixed firmware branch, and returns success only after exact typed read-back of active writes and preserved state. Lock contention fails immediately with `503 backend_unavailable` before backend access instead of occupying another CGI worker. Bearer authentication is rejected before backend access. Appliance Logging validates the nested title/checkbox hierarchy, both fixed choice sets, ten bounded alert strings, and new-session-only semantics. Time Zone validates its 16-value radio/checkbox hierarchy, firmware-bound predefined choices, and fixed transition choices before serializing predefined, custom, or custom-with-DST state. In both cases success confirms typed configuration read-back, not unobserved runtime side effects.
 
 Power `on`/`off` responses must be valid operation-specific inventories that report the targeted object in the requested state. `cycle` has no stable confirmation state and therefore reports `action_outcome_unknown` after dispatch. A malformed, unrelated, or unexpected response after any write is likewise unknown; no write is retried automatically. No firmware, reboot, reset, factory-default, arbitrary settings, or generic Avtrans operation is exposed.
 

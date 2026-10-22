@@ -2,14 +2,14 @@ const fs = require("fs");
 const vm = require("vm");
 const setting = process.argv[3];
 const outcome = process.argv[4] || "pending";
-if (!["help-language", "data-buffering", "appliance-logging"].includes(setting)) throw new Error("setting argument required");
+if (!["help-language", "data-buffering", "appliance-logging", "time-zone"].includes(setting)) throw new Error("setting argument required");
 if (!["pending", "unknown"].includes(outcome)) throw new Error("outcome must be pending or unknown");
 const endpoint = `/api/v1/settings/${setting}`;
 const stem = setting;
 const formId = `${stem}-form`;
 const reloadId = `reload-${stem}`;
 const saveId = `save-${stem}`;
-const loader = setting === "help-language" ? "loadHelpLanguageSetting()" : setting === "data-buffering" ? "loadDataBufferingSetting()" : "loadApplianceLoggingSetting()";
+const loader = setting === "help-language" ? "loadHelpLanguageSetting()" : setting === "data-buffering" ? "loadDataBufferingSetting()" : setting === "appliance-logging" ? "loadApplianceLoggingSetting()" : "loadTimeZoneSetting()";
 
 class Element {
   constructor(id = "") {
@@ -35,7 +35,9 @@ const document = {
   documentElement: new Element("documentElement")
 };
 const pendingPuts = [];
+const pendingReadbacks = [];
 const calls = [];
+let putSettled = false;
 function response(status, payload) { return { status, ok: status >= 200 && status < 300, json: async () => payload }; }
 function fetch(path, options = {}) {
   const method = options.method || "GET";
@@ -47,11 +49,14 @@ function fetch(path, options = {}) {
       ? { applianceLanguage: "en", url: "https://help.example", allowedLanguages: ["en"], revision: `"${"a".repeat(64)}"` }
       : setting === "data-buffering"
         ? { localSize: 1024, localSegments: 4, nfsServer: "nfs.example", nfsPath: "/buffer", nfsSize: 4096, nfsSegments: 8, syslogFacility: "LOG_LOCAL2", revision: `"${"b".repeat(64)}"` }
-        : { sessionLoggingEnabled: true, destination: "local", timestampEnabled: true, alertsEnabled: false, alertStrings: Array(10).fill(""), allowedDestinations: ["local", "nfs", "syslog", "dsview"], revision: `"${"c".repeat(64)}"` };
+        : setting === "appliance-logging"
+          ? { sessionLoggingEnabled: true, destination: "local", timestampEnabled: true, alertsEnabled: false, alertStrings: Array(10).fill(""), allowedDestinations: ["local", "nfs", "syslog", "dsview"], revision: `"${"c".repeat(64)}"` }
+          : { mode: "predefined", predefined: { selected: "UTC", choices: ["UTC", "Europe/Berlin"] }, custom: { name: "Example", standardAcronym: "EX", gmtOffset: "-7:00", dst: { enabled: false, acronym: "EDT", saveTime: "1:00", start: { month: "3", week: "2", weekday: "1", hour: "2:00" }, end: { month: "11", week: "1", weekday: "1", hour: "2:00" } } }, revision: `"${"d".repeat(64)}"` };
+    if (putSettled) return new Promise((resolve) => pendingReadbacks.push({ resolve, payload }));
     return Promise.resolve(response(200, payload));
   }
   if (path === endpoint && method === "PUT") {
-    return new Promise((resolve) => pendingPuts.push({ resolve }));
+    return new Promise((resolve) => pendingPuts.push({ resolve(value) { putSettled = true; resolve(value); } }));
   }
   return Promise.resolve(response(500, { message: "unexpected" }));
 }
@@ -82,6 +87,17 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
   await tick();
   if (outcome === "unknown") {
     pendingPuts[0].resolve(response(503, { code: "action_outcome_unknown", message: "The write outcome is unknown." }));
+    await tick(); await tick(); await tick();
+    if (pendingReadbacks.length !== 1) throw new Error("post-write readback did not start");
+    if (!elements.get(reloadId).disabled) throw new Error("reload enabled before readback completed");
+    await vm.runInContext(loader, context);
+    form.listeners.submit[0]({ preventDefault() {} });
+    elements.get("disconnect").listeners.click[0]({});
+    await tick();
+    if (calls.filter((call) => call.path === endpoint && call.method === "GET").length !== 2) throw new Error("reload started during readback");
+    if (calls.filter((call) => call.path === endpoint && call.method === "PUT").length !== 1) throw new Error("second PUT started during readback");
+    if (calls.some((call) => call.path === "/api/v1/session" && call.method === "DELETE")) throw new Error("logout started during readback");
+    pendingReadbacks[0].resolve(response(200, pendingReadbacks[0].payload));
     await tick(); await tick(); await tick();
   }
   const settingsCalls = calls.filter((call) => call.path === endpoint);

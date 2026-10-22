@@ -19,7 +19,7 @@ This directory contains the dependency-free PM3000 browser interface. Production
 - Administrator-only REST-token list, create, enable, disable, and revoke operations.
 - New bearer secrets are displayed once and cleared when the dialog closes.
 - Self-service password change plus typed DSView and NIS settings.
-- Revision-protected Help and Language, Data Buffering, and conditional Appliance Logging forms. Each form remains disabled until a successful GET, keeps its revision only in memory, and reloads after every save result. Appliance Logging omits inactive descendants and affects newly opened sessions only.
+- Revision-protected Help and Language, Data Buffering, conditional Appliance Logging, and conditional Time Zone forms. Each form remains disabled until a successful GET, keeps its revision only in memory, and reloads after every save result. Appliance Logging omits inactive descendants and affects newly opened sessions only.
 - Typed system information, memory, flash, network-device, IPv4/IPv6 route, and serial-port views.
 - API-controlled values use safe DOM text sinks rather than HTML parsing.
 

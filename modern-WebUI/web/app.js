@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, timeZoneRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, timeZoneWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "", timeZoneRevision: "" };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -81,12 +81,12 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.applianceLoggingRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
-  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = ""; state.applianceLoggingRevision = "";
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.applianceLoggingRequest += 1; state.timeZoneRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
+  state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = ""; state.applianceLoggingRevision = ""; state.timeZoneRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
   clearOneTimeSecret(); clear($("outlet-grid")); clear($("pdu-grid")); clear($("token-rows")); clear($("navigation"));
-  setHelpLanguageLoaded(false); setDataBufferingLoaded(false); setApplianceLoggingLoaded(false);
+  setHelpLanguageLoaded(false); setDataBufferingLoaded(false); setApplianceLoggingLoaded(false); setTimeZoneLoaded(false);
   $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = ""; $("password-change-error").textContent = "";
   $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
   setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
@@ -134,6 +134,7 @@ function renderNavigation() {
       path === "units.applianceSettings.help" ? "help-language" :
       path === "units.event_notification.global_settings_databuffering" ? "data-buffering" :
       path === "units.event_notification.sessions" ? "appliance-logging" :
+      path === "units.applianceSettings.date_and_time.time_zone" ? "time-zone" :
       path === "units.powermanagement.pdu_management" ? "pdus" :
       path === "units.applianceSettings.information" ? "sysinfo" :
       path === "units.applianceSettings.usage.memory" ? "memory" :
@@ -155,7 +156,7 @@ function renderNavigation() {
 
 function switchView(view, path = "", label = "") {
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("appliance-logging-view").hidden = view !== "appliance-logging"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("appliance-logging-view").hidden = view !== "appliance-logging"; $("time-zone-view").hidden = view !== "time-zone"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
   let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
@@ -168,6 +169,7 @@ function switchView(view, path = "", label = "") {
   if (view === "help-language") loadHelpLanguageSetting();
   if (view === "data-buffering") loadDataBufferingSetting();
   if (view === "appliance-logging") loadApplianceLoggingSetting();
+  if (view === "time-zone") loadTimeZoneSetting();
   if (view === "sysinfo") loadSysinfo();
   if (view === "memory") loadMemory();
   if (view === "flash") loadFlash();
@@ -373,14 +375,15 @@ const bufferingFacilities = ["LOG_LOCAL0", "LOG_LOCAL1", "LOG_LOCAL2", "LOG_LOCA
 const strongRevision = (value) => typeof value === "string" && /^"[0-9a-f]{64}"$/u.test(value);
 
 function setHelpLanguageLoaded(loaded) {
-  $("help-language").disabled = !loaded; $("help-url").disabled = !loaded; $("save-help-language").disabled = !loaded;
+  const disabled = !loaded || state.helpLanguageWritePending;
+  $("help-language").disabled = disabled; $("help-url").disabled = disabled; $("save-help-language").disabled = disabled;
   if (!loaded) {
     state.helpLanguageRevision = ""; $("help-language").value = ""; $("help-url").value = ""; clear($("help-language"));
   }
 }
 
-async function loadHelpLanguageSetting() {
-  if (state.helpLanguageWritePending) return;
+async function loadHelpLanguageSetting(writeReadback = false) {
+  if (state.helpLanguageWritePending && !writeReadback) return;
   const request = ++state.helpLanguageRequest;
   setHelpLanguageLoaded(false); $("help-language-error").textContent = ""; setText("help-language-status", "Loading current setting…");
   try {
@@ -413,15 +416,17 @@ $("help-language-form").addEventListener("submit", async (event) => {
     toast("Help and Language setting saved.");
   } catch (error) { message = error.message; }
   finally {
+    await loadHelpLanguageSetting(true);
     state.helpLanguageWritePending = false; $("reload-help-language").disabled = false;
-    if (!state.dataBufferingWritePending && !state.applianceLoggingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
-    await loadHelpLanguageSetting();
+    setHelpLanguageLoaded(Boolean(state.helpLanguageRevision));
+    if (!state.dataBufferingWritePending && !state.applianceLoggingWritePending && !state.timeZoneWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
     if (message && state.session && generation === state.generation) $("help-language-error").textContent = message;
   }
 });
 
 function setDataBufferingLoaded(loaded) {
-  for (const id of ["buffer-local-size", "buffer-local-segments", "buffer-nfs-server", "buffer-nfs-path", "buffer-nfs-size", "buffer-nfs-segments", "buffer-syslog-facility", "save-data-buffering"]) $(id).disabled = !loaded;
+  const disabled = !loaded || state.dataBufferingWritePending;
+  for (const id of ["buffer-local-size", "buffer-local-segments", "buffer-nfs-server", "buffer-nfs-path", "buffer-nfs-size", "buffer-nfs-segments", "buffer-syslog-facility", "save-data-buffering"]) $(id).disabled = disabled;
   if (!loaded) {
     state.dataBufferingRevision = "";
     for (const id of ["buffer-local-size", "buffer-local-segments", "buffer-nfs-server", "buffer-nfs-path", "buffer-nfs-size", "buffer-nfs-segments"]) $(id).value = "";
@@ -429,8 +434,8 @@ function setDataBufferingLoaded(loaded) {
   }
 }
 
-async function loadDataBufferingSetting() {
-  if (state.dataBufferingWritePending) return;
+async function loadDataBufferingSetting(writeReadback = false) {
+  if (state.dataBufferingWritePending && !writeReadback) return;
   const request = ++state.dataBufferingRequest;
   setDataBufferingLoaded(false); $("data-buffering-error").textContent = ""; setText("data-buffering-status", "Loading current setting…");
   try {
@@ -473,9 +478,10 @@ $("data-buffering-form").addEventListener("submit", async (event) => {
     toast("Data Buffering setting saved.");
   } catch (error) { message = error.message; }
   finally {
+    await loadDataBufferingSetting(true);
     state.dataBufferingWritePending = false; $("reload-data-buffering").disabled = false;
-    if (!state.helpLanguageWritePending && !state.applianceLoggingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
-    await loadDataBufferingSetting();
+    setDataBufferingLoaded(Boolean(state.dataBufferingRevision));
+    if (!state.helpLanguageWritePending && !state.applianceLoggingWritePending && !state.timeZoneWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
     if (message && state.session && generation === state.generation) $("data-buffering-error").textContent = message;
   }
 });
@@ -495,7 +501,8 @@ function updateApplianceLoggingConditional() {
 }
 
 function setApplianceLoggingLoaded(loaded) {
-  $("logging-enabled").disabled = !loaded; $("save-appliance-logging").disabled = !loaded;
+  const disabled = !loaded || state.applianceLoggingWritePending;
+  $("logging-enabled").disabled = disabled; $("save-appliance-logging").disabled = disabled;
   if (!loaded) {
     state.applianceLoggingRevision = ""; $("logging-enabled").checked = false;
     $("logging-timestamp").checked = false; $("logging-alerts-enabled").checked = false;
@@ -505,8 +512,8 @@ function setApplianceLoggingLoaded(loaded) {
   updateApplianceLoggingConditional();
 }
 
-async function loadApplianceLoggingSetting() {
-  if (state.applianceLoggingWritePending) return;
+async function loadApplianceLoggingSetting(writeReadback = false) {
+  if (state.applianceLoggingWritePending && !writeReadback) return;
   const request = ++state.applianceLoggingRequest;
   setApplianceLoggingLoaded(false); $("appliance-logging-error").textContent = ""; setText("appliance-logging-status", "Loading current setting…");
   try {
@@ -564,16 +571,126 @@ $("appliance-logging-form").addEventListener("submit", async (event) => {
     toast("Appliance Logging setting saved.");
   } catch (error) { message = error.message; }
   finally {
+    await loadApplianceLoggingSetting(true);
     state.applianceLoggingWritePending = false; $("reload-appliance-logging").disabled = false;
-    if (!state.helpLanguageWritePending && !state.dataBufferingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
-    await loadApplianceLoggingSetting();
+    setApplianceLoggingLoaded(Boolean(state.applianceLoggingRevision));
+    if (!state.helpLanguageWritePending && !state.dataBufferingWritePending && !state.timeZoneWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
     if (message && state.session && generation === state.generation) $("appliance-logging-error").textContent = message;
+  }
+});
+
+const timeZoneSelectIds = ["time-zone-predefined", "time-zone-start-month", "time-zone-start-week", "time-zone-start-weekday", "time-zone-end-month", "time-zone-end-week", "time-zone-end-weekday"];
+const timeZoneCustomInputIds = ["time-zone-name", "time-zone-standard-acronym", "time-zone-gmt-offset", "time-zone-dst-enabled"];
+const timeZoneDstInputIds = ["time-zone-dst-acronym", "time-zone-save-time", "time-zone-start-month", "time-zone-start-week", "time-zone-start-weekday", "time-zone-start-hour", "time-zone-end-month", "time-zone-end-week", "time-zone-end-weekday", "time-zone-end-hour"];
+
+function fillSelect(id, values) {
+  clear($(id));
+  for (const value of values) { const option = document.createElement("option"); option.value = value; option.textContent = value; $(id).appendChild(option); }
+}
+
+function updateTimeZoneConditional() {
+  const loaded = Boolean(state.timeZoneRevision) && !state.timeZoneWritePending;
+  const custom = loaded && $("time-zone-mode-custom").checked;
+  const dst = custom && $("time-zone-dst-enabled").checked;
+  $("time-zone-mode-predefined").disabled = !loaded; $("time-zone-mode-custom").disabled = !loaded;
+  $("time-zone-predefined-options").hidden = custom; $("time-zone-custom-options").hidden = !custom; $("time-zone-dst-options").hidden = !dst;
+  $("time-zone-predefined").disabled = !loaded || custom;
+  for (const id of timeZoneCustomInputIds) $(id).disabled = !custom;
+  for (const id of timeZoneDstInputIds) $(id).disabled = !dst;
+  $("save-time-zone").disabled = !loaded;
+}
+
+function setTimeZoneLoaded(loaded) {
+  if (!loaded) {
+    state.timeZoneRevision = "";
+    $("time-zone-mode-predefined").checked = false; $("time-zone-mode-custom").checked = false;
+    for (const id of timeZoneSelectIds) clear($(id));
+    for (const id of ["time-zone-name", "time-zone-standard-acronym", "time-zone-gmt-offset", "time-zone-dst-acronym", "time-zone-save-time", "time-zone-start-hour", "time-zone-end-hour"]) $(id).value = "";
+    $("time-zone-dst-enabled").checked = false;
+  }
+  updateTimeZoneConditional();
+}
+
+function validTimeZonePayload(payload) {
+  const transition = (value) => value && ["month", "week", "weekday", "hour"].every((key) => typeof value[key] === "string");
+  return payload && strongRevision(payload.revision) && ["predefined", "custom"].includes(payload.mode) &&
+    payload.predefined && typeof payload.predefined.selected === "string" && Array.isArray(payload.predefined.choices) &&
+    payload.predefined.choices.length >= 1 && payload.predefined.choices.length <= 521 &&
+    payload.predefined.choices.every((value) => typeof value === "string" && value.length > 0 && value.length <= 32) &&
+    new Set(payload.predefined.choices).size === payload.predefined.choices.length && payload.predefined.choices.includes(payload.predefined.selected) &&
+    payload.custom && typeof payload.custom.name === "string" && typeof payload.custom.standardAcronym === "string" &&
+    typeof payload.custom.gmtOffset === "string" && payload.custom.dst && typeof payload.custom.dst.enabled === "boolean" &&
+    typeof payload.custom.dst.acronym === "string" && typeof payload.custom.dst.saveTime === "string" &&
+    transition(payload.custom.dst.start) && transition(payload.custom.dst.end);
+}
+
+async function loadTimeZoneSetting(writeReadback = false) {
+  if (state.timeZoneWritePending && !writeReadback) return;
+  const request = ++state.timeZoneRequest;
+  setTimeZoneLoaded(false); $("time-zone-error").textContent = ""; setText("time-zone-status", "Loading current setting…");
+  try {
+    const payload = await api("/api/v1/settings/time-zone");
+    if (request !== state.timeZoneRequest) return;
+    if (!validTimeZonePayload(payload)) throw new Error("The settings response was invalid.");
+    fillSelect("time-zone-predefined", payload.predefined.choices);
+    fillSelect("time-zone-start-month", Array.from({ length: 12 }, (_, index) => String(index + 1)));
+    fillSelect("time-zone-end-month", Array.from({ length: 12 }, (_, index) => String(index + 1)));
+    fillSelect("time-zone-start-week", ["1", "2", "3", "4", "5"]); fillSelect("time-zone-end-week", ["1", "2", "3", "4", "5"]);
+    fillSelect("time-zone-start-weekday", ["1", "2", "3", "4", "5", "6", "7"]); fillSelect("time-zone-end-weekday", ["1", "2", "3", "4", "5", "6", "7"]);
+    $("time-zone-mode-predefined").checked = payload.mode === "predefined"; $("time-zone-mode-custom").checked = payload.mode === "custom";
+    $("time-zone-predefined").value = payload.predefined.selected; $("time-zone-name").value = payload.custom.name;
+    $("time-zone-standard-acronym").value = payload.custom.standardAcronym; $("time-zone-gmt-offset").value = payload.custom.gmtOffset;
+    $("time-zone-dst-enabled").checked = payload.custom.dst.enabled; $("time-zone-dst-acronym").value = payload.custom.dst.acronym;
+    $("time-zone-save-time").value = payload.custom.dst.saveTime;
+    for (const edge of ["start", "end"]) for (const field of ["month", "week", "weekday", "hour"]) $(
+      `time-zone-${edge}-${field}`
+    ).value = payload.custom.dst[edge][field];
+    state.timeZoneRevision = payload.revision; setTimeZoneLoaded(true);
+    setText("time-zone-status", "Current controller setting loaded. Runtime timezone effects are not confirmed.");
+  } catch (error) {
+    if (request === state.timeZoneRequest) { setTimeZoneLoaded(false); setText("time-zone-status", "Current setting unavailable. Reload before saving."); if (state.session) $("time-zone-error").textContent = error.message; }
+  }
+}
+
+$("time-zone-mode-predefined").addEventListener("change", updateTimeZoneConditional);
+$("time-zone-mode-custom").addEventListener("change", updateTimeZoneConditional);
+$("time-zone-dst-enabled").addEventListener("change", updateTimeZoneConditional);
+$("time-zone-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.timeZoneWritePending || $("save-time-zone").disabled || !state.timeZoneRevision) return;
+  const generation = state.generation;
+  const customMode = $("time-zone-mode-custom").checked;
+  let replacement = { mode: "predefined", predefinedZone: $("time-zone-predefined").value };
+  if (customMode) {
+    const dstEnabled = $("time-zone-dst-enabled").checked;
+    const custom = { name: $("time-zone-name").value, standardAcronym: $("time-zone-standard-acronym").value, gmtOffset: $("time-zone-gmt-offset").value, dst: { enabled: dstEnabled } };
+    if (new TextEncoder().encode(custom.name).length > 256) { $("time-zone-error").textContent = "The custom name must be at most 256 UTF-8 bytes."; return; }
+    if (dstEnabled) {
+      custom.dst.acronym = $("time-zone-dst-acronym").value; custom.dst.saveTime = $("time-zone-save-time").value;
+      custom.dst.start = { month: $("time-zone-start-month").value, week: $("time-zone-start-week").value, weekday: $("time-zone-start-weekday").value, hour: $("time-zone-start-hour").value };
+      custom.dst.end = { month: $("time-zone-end-month").value, week: $("time-zone-end-week").value, weekday: $("time-zone-end-weekday").value, hour: $("time-zone-end-hour").value };
+    }
+    replacement = { mode: "custom", custom };
+  }
+  state.timeZoneWritePending = true; $("reload-time-zone").disabled = true; $("disconnect").disabled = true; $("save-time-zone").disabled = true; updateTimeZoneConditional(); $("time-zone-error").textContent = "";
+  let message = "";
+  try {
+    await api("/api/v1/settings/time-zone", { method: "PUT", headers: { "If-Match": state.timeZoneRevision }, body: JSON.stringify(replacement) });
+    toast("Time Zone setting saved. Runtime effect is not yet validated.");
+  } catch (error) { message = error.message; }
+  finally {
+    await loadTimeZoneSetting(true);
+    state.timeZoneWritePending = false; $("reload-time-zone").disabled = false;
+    setTimeZoneLoaded(Boolean(state.timeZoneRevision));
+    if (!state.helpLanguageWritePending && !state.dataBufferingWritePending && !state.applianceLoggingWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    if (message && state.session && generation === state.generation) $("time-zone-error").textContent = message;
   }
 });
 
 $("reload-help-language").addEventListener("click", loadHelpLanguageSetting);
 $("reload-data-buffering").addEventListener("click", loadDataBufferingSetting);
 $("reload-appliance-logging").addEventListener("click", loadApplianceLoggingSetting);
+$("reload-time-zone").addEventListener("click", loadTimeZoneSetting);
 
 $("password-change-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -627,7 +744,7 @@ $("connect-form").addEventListener("submit", (event) => {
 
 $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
-  if (state.helpLanguageWritePending || state.dataBufferingWritePending || state.applianceLoggingWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
+  if (state.helpLanguageWritePending || state.dataBufferingWritePending || state.applianceLoggingWritePending || state.timeZoneWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);
 }); $("refresh-outlets").addEventListener("click", loadOutlets); $("refresh-pdus").addEventListener("click", loadPdus); $("refresh-tokens").addEventListener("click", loadTokens);

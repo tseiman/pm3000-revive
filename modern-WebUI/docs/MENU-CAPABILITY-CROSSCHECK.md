@@ -10,9 +10,9 @@ This document compares the firmware 2.0.1.23 navigation model with the compact m
 - the extracted CACPD feature-module contracts;
 - the current REST API, native adapter, and browser client.
 
-No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed. Help and Language, Data Buffering, and Appliance Logging are offline static-contract implementations; their real firmware write behavior has not been validated on a device.
+No appliance or legacy WebUI request was made while producing this cross-check. No firmware binary was executed. Help and Language, Data Buffering, Appliance Logging, and Time Zone are offline static-contract implementations; their real firmware write behavior has not been validated on a device.
 
-The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), self-service password change (`units.change_password`), Help and Language (`units.applianceSettings.help`), Data Buffering (`units.event_notification.global_settings_databuffering`), and Appliance Logging (`units.event_notification.sessions`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
+The observed navigation contains 58 `units.*` paths: 15 grouping nodes and 43 actionable leaf pages visible in the supplied screenshot. The modern client renders every authorized allowlisted path using hard-coded labels. Native capabilities now cover outlet inventory and power actions (`units.topology`), PDU inventory and PDU-wide power actions (`units.powermanagement.pdu_management`), self-service password change (`units.change_password`), Help and Language (`units.applianceSettings.help`), Data Buffering (`units.event_notification.global_settings_databuffering`), Appliance Logging (`units.event_notification.sessions`), and Time Zone (`units.applianceSettings.date_and_time.time_zone`). Other visible legacy leaves remain linked to the original UI until their typed contracts are implemented. The legacy UI remains separately available at `/`.
 
 ## Classification
 
@@ -77,9 +77,10 @@ A known CACPD `set`, `admin`, `add`, or `del` verb is not by itself permission t
   - **Decision:** read candidate. Setting time can affect logs, certificates, sessions, and authentication; capture a complete form/action pair before write support.
 
 - **Time Zone** — `units.applianceSettings.date_and_time.time_zone`
-  - **Current:** Placeholder.
-  - **Static contract:** timezone list/custom timezone and save behavior.
-  - **Decision:** read candidate; write requires a complete form pair.
+  - **Current:** Implemented offline as session-only `GET|PUT /api/v1/settings/time-zone` and a rights-gated browser form.
+  - **Static contract:** exact 16-value `time_zoneform`, firmware-supplied predefined-zone choices, custom/DST hierarchy, inherited `management.date:w`, and fixed save ordering.
+  - **Write semantics:** predefined, custom without DST, and custom with DST are separate closed replacements. PUT requires CSRF, strong `If-Match`, a fresh validated GET, cross-process serialization, and exact typed read-back without retry after a possible dispatch.
+  - **Validation status:** parser, serializer, runtime-choice bounds, conditional UI, and unknown-outcome behavior are tested only with static firmware evidence and synthetic fixtures. No real GET/save capture or live write exists; firmware file/script side effects remain an explicit device gate.
 
 - **Help and Language** — `units.applianceSettings.help`
   - **Current:** Implemented offline as session-only `GET|PUT /api/v1/settings/help-language` and a dependency-free browser form. GET returns the current language, help URL, runtime `allowedLanguages`, and a quoted strong revision in both the body and `ETag` header.

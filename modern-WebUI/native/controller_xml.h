@@ -11,7 +11,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           unsigned int allowed_count, uint64_t *path_mask,
                           int *can_manage, int *can_help_language,
                           int *can_data_buffering,
-                          int *can_appliance_logging);
+                          int *can_appliance_logging,
+                          int *can_time_zone);
 int pm3000_xml_topology_controls(const unsigned char *xml, size_t length,
                                  int *can_control);
 int pm3000_xml_confirm(const unsigned char *xml, size_t length,
@@ -33,7 +34,7 @@ int pm3000_xml_nis_values(const unsigned char *xml, size_t length,
                           char *address, size_t address_size);
 
 #define PM3000_FIXED_MAX_FIELDS 16U
-#define PM3000_FIXED_MAX_CHOICES 16U
+#define PM3000_FIXED_MAX_CHOICES 569U
 #define PM3000_FIXED_VALUE_SIZE 257U
 
 struct pm3000_xml_fixed_field {

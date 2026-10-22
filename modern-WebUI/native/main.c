@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "avtrans.h"
 #include "controller_xml.h"
 #include "fixed_form.h"
@@ -8,9 +10,13 @@
 #include "token_auth.h"
 
 #include <signal.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static void cgi_headers_extra(unsigned int status, const char *reason,
                               const char *cookie) {
@@ -700,6 +706,38 @@ static int run_token_route(const char *method, const char *path, const char *sto
     }
 }
 
+static int settings_lock_fd = -1;
+
+static void close_settings_lock(void) {
+    if (settings_lock_fd >= 0) {
+        close(settings_lock_fd);
+        settings_lock_fd = -1;
+    }
+}
+
+static int acquire_settings_write_lock(void) {
+    const char *directory = configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions");
+    char path[1024];
+    struct stat metadata;
+    int amount;
+    if (settings_lock_fd >= 0) return 0;
+    amount = snprintf(path, sizeof(path), "%s/settings-write.lock", directory);
+    if (amount < 0 || (size_t)amount >= sizeof(path)) return -1;
+    settings_lock_fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, 0600);
+    if (settings_lock_fd < 0 || fstat(settings_lock_fd, &metadata) != 0 ||
+        !S_ISREG(metadata.st_mode) || metadata.st_nlink != 1 ||
+        metadata.st_uid != geteuid() || (metadata.st_mode & 077U) != 0U ||
+        flock(settings_lock_fd, LOCK_EX | LOCK_NB) != 0) {
+        close_settings_lock();
+        return -1;
+    }
+    if (atexit(close_settings_lock) != 0) {
+        close_settings_lock();
+        return -1;
+    }
+    return 0;
+}
+
 static int write_fixed_setting(pm3000_fixed_form_kind kind,
                                const struct pm3000_fixed_snapshot *snapshot) {
     unsigned int index;
@@ -727,6 +765,47 @@ static int write_fixed_setting(pm3000_fixed_form_kind kind,
                 snapshot->form.values[4], snapshot->form.values[5]);
         if (write_json_ascii_string(stdout, snapshot->form.values[6]) != 0) return 1;
         fputs(",\"revision\":", stdout);
+    } else if (kind == PM3000_FORM_TIME_ZONE) {
+        unsigned int written = 0U;
+        fputs("{\"mode\":", stdout);
+        if (write_json_ascii_string(stdout,
+                strcmp(snapshot->form.values[0], "yes") == 0 ? "custom" : "predefined") != 0) return 1;
+        fputs(",\"predefined\":{\"selected\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[1]) != 0) return 1;
+        fputs(",\"choices\":[", stdout);
+        for (index = 0U; index < snapshot->form.choice_count; ++index) {
+            if (snapshot->form.choice_fields[index] != 1U) continue;
+            if (written++ > 0U) fputc(',', stdout);
+            if (write_json_ascii_string(stdout, snapshot->form.choices[index]) != 0) return 1;
+        }
+        fputs("]},\"custom\":{\"name\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[2]) != 0) return 1;
+        fputs(",\"standardAcronym\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[3]) != 0) return 1;
+        fputs(",\"gmtOffset\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[4]) != 0) return 1;
+        fprintf(stdout, ",\"dst\":{\"enabled\":%s,\"acronym\":",
+                snapshot->form.values[5]);
+        if (write_json_ascii_string(stdout, snapshot->form.values[6]) != 0) return 1;
+        fputs(",\"saveTime\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[7]) != 0) return 1;
+        fputs(",\"start\":{\"month\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[8]) != 0) return 1;
+        fputs(",\"week\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[9]) != 0) return 1;
+        fputs(",\"weekday\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[10]) != 0) return 1;
+        fputs(",\"hour\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[11]) != 0) return 1;
+        fputs("},\"end\":{\"month\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[12]) != 0) return 1;
+        fputs(",\"week\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[13]) != 0) return 1;
+        fputs(",\"weekday\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[14]) != 0) return 1;
+        fputs(",\"hour\":", stdout);
+        if (write_json_ascii_string(stdout, snapshot->form.values[15]) != 0) return 1;
+        fputs("}}},\"revision\":", stdout);
     } else {
         fprintf(stdout,
                 "{\"sessionLoggingEnabled\":%s,\"destination\":",
@@ -800,6 +879,9 @@ static int run_fixed_setting_route(const char *method,
         if (body_result != 0 || pm3000_fixed_parse_request(kind, body, body_length, &input) != 0)
             return cgi_error(400U, "Bad Request", "bad_request",
                              "The complete settings request is invalid.");
+        if (acquire_settings_write_lock() != 0)
+            return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                             "The settings write lock was unavailable.");
         if (pm3000_fetch_fixed_setting_session(socket_path, session->sid, path,
                                                 &response, &response_length,
                                                 error, sizeof(error)) != 0)
@@ -945,14 +1027,17 @@ static int run_cgi(void) {
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/settings/help-language") == 0 ||
          strcmp(path, "/api/v1/settings/data-buffering") == 0 ||
-         strcmp(path, "/api/v1/settings/appliance-logging") == 0)) {
+         strcmp(path, "/api/v1/settings/appliance-logging") == 0 ||
+         strcmp(path, "/api/v1/settings/time-zone") == 0)) {
         pm3000_fixed_form_kind kind;
         if (strcmp(path, "/api/v1/settings/help-language") == 0)
             kind = PM3000_FORM_HELP_LANGUAGE;
         else if (strcmp(path, "/api/v1/settings/data-buffering") == 0)
             kind = PM3000_FORM_DATA_BUFFERING;
-        else
+        else if (strcmp(path, "/api/v1/settings/appliance-logging") == 0)
             kind = PM3000_FORM_APPLIANCE_LOGGING;
+        else
+            kind = PM3000_FORM_TIME_ZONE;
         if (getenv("HTTP_AUTHORIZATION") != NULL)
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for this browser setting.");
@@ -963,7 +1048,8 @@ static int run_cgi(void) {
                              "Session authentication required.");
         if ((kind == PM3000_FORM_HELP_LANGUAGE && !gui_session.can_help_language) ||
             (kind == PM3000_FORM_DATA_BUFFERING && !gui_session.can_data_buffering) ||
-            (kind == PM3000_FORM_APPLIANCE_LOGGING && !gui_session.can_appliance_logging))
+            (kind == PM3000_FORM_APPLIANCE_LOGGING && !gui_session.can_appliance_logging) ||
+            (kind == PM3000_FORM_TIME_ZONE && !gui_session.can_time_zone))
             return cgi_error(403U, "Forbidden", "forbidden",
                              "The exact configuration write capability is required.");
         return run_fixed_setting_route(
