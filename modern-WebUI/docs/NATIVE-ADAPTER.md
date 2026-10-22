@@ -6,7 +6,7 @@ This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contrac
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-Release candidate RC5 is installed on the appliance. It accepts the firmware's exact static `xml-stylesheet` instruction and completes controller authentication, but the real topology response exposed an off-by-one defect in decoding predefined XML entities such as `&amp;`. The corrected projector accepts all five predefined entities while continuing to reject unknown entities, external entities, and DTDs. The exact captured topology now projects successfully offline. The evidence and appliance validation gate are recorded in [`BACKEND-COMMUNICATION-STATUS.md`](BACKEND-COMMUNICATION-STATUS.md). No real outlet write has been issued through the replacement adapter.
+Release candidate RC6 is installed on the appliance. Bearer-authenticated read-only outlet inventory succeeds live with HTTP 200. Browser login also completes, but the following cookie-authenticated request exposed that inherited Apache `Basic` Authorization was incorrectly selecting the Bearer path. Session-capable routes now ignore inherited `Basic` or `Digest` headers while still requiring a valid private session cookie; explicit Bearer and malformed Authorization headers retain their strict handling. The evidence and appliance validation gate are recorded in [`BACKEND-COMMUNICATION-STATUS.md`](BACKEND-COMMUNICATION-STATUS.md). No real outlet write has been issued through the replacement adapter.
 
 ## Implemented routes
 

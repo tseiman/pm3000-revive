@@ -17,17 +17,12 @@ The relevant backend traffic exists only on `pdu1.tsei.mdn`. It does not cross a
 
 ## Verified live-device state
 
-- Release `0.2-rest-control-rc5` is installed successfully.
+- Release `0.2-rest-control-rc6` is installed successfully.
 - Legacy WebUI remains available.
 - Bearer authentication and the token store work: the earlier `token_store_unavailable` response disappeared after correcting runtime ownership.
-- Bearer-authenticated `GET /api/v1/outlets` now reaches and authenticates to the controller, receives the complete topology response, and returns:
+- Bearer-authenticated `GET /api/v1/outlets` now succeeds with HTTP 200 and returns all ten outlets with a current `inventoryRevision`.
 
-  ```json
-  {"code":"backend_protocol_error","message":"Backend response rejected."}
-  ```
-
-  with HTTP 502.
-- Browser login completes controller authentication but reports `Session storage is unavailable.` because session creation validates the same rejected topology response before writing the session.
+- Browser login completes controller login, navigation, topology projection, and local session creation. Its first authenticated outlet request then receives HTTP 401, and the browser reports `Your PM3000 session has expired.`
 - A direct `uicontrold` trace of the RC4 login proves that the empty-SID login request is accepted, PAM/GSP and CACPD authentication succeed with `read write exec` permissions, and `uicontrold` returns a complete NUL-terminated `action=header` response with a 32-character SID.
 - The same captured response is rejected by the RC4 native XML parser. Removing only the vendor's exact `xml-stylesheet` processing instruction makes that response pass. The current failure is therefore localized to response parsing, not controller authentication or Unix-socket transport.
 - No Modern REST outlet action has been attempted and no outlet has been switched through the replacement adapter.
@@ -85,13 +80,19 @@ The complete live topology response is 19,255 XML bytes plus its terminating NUL
 
 The correction fixes the length checks for `&lt;`, `&gt;`, `&amp;`, `&quot;`, and `&apos;` without permitting unknown entities, DTDs, or external entities. A synthetic redacted regression covers all five predefined entities. The previously rejected complete live response then projects successfully to ten outlets, positions 1 through 10, with a current inventory revision. The complete offline suite passes 212 tests, and the PPC32 RC6 candidate passes its QEMU e300c3 execution gate.
 
+## Confirmed RC6 browser-session root cause
+
+The appliance's outer Apache authentication forwards an inherited `Basic` Authorization header on browser requests. The session-login route already ignores this header and successfully creates the private cookie-backed session. Mixed session-or-Bearer routes, including `GET /api/v1/outlets`, previously treated the mere presence of any Authorization header as a Bearer request and returned HTTP 401 before contacting `uicontrold`. The browser interpreted that response as an expired session.
+
+Session-capable routes now ignore inherited `Basic` or `Digest` headers while still requiring a valid session cookie. Explicit Bearer headers continue to select token authentication, and malformed or unsupported Authorization schemes remain rejected. The browser outlet regression and complete offline suite pass 213 tests.
+
 ## Next investigation
 
-The entity-decoder correction must be released and validated on `pdu1.tsei.mdn` without performing any write action:
+The browser-session Authorization correction must be released and validated on `pdu1.tsei.mdn` without performing any write action:
 
 1. Publish and install the next release candidate using the normal verified package and sidecar flow.
 2. Verify one browser login.
-3. Verify one bearer-authenticated `GET /api/v1/outlets` and require HTTP 200 with a current `inventoryRevision`.
+3. Verify that the outlet inventory remains visible after login.
 4. If either check fails, preserve a single direct `uicontrold` trace covering both checks; do not publish another hypothesis-based release.
 5. Do not create or exercise a control token until the read-only gate passes.
 
