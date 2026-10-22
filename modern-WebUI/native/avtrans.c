@@ -119,8 +119,8 @@ static int exchange_internal(const char *socket_path, const char *request,
         remote_address == NULL || strlen(remote_address) > 39U ||
         (inet_pton(AF_INET, remote_address, address_bytes) != 1 &&
          inet_pton(AF_INET6, remote_address, address_bytes) != 1)) goto failure;
-    descriptor = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (descriptor < 0) goto failure;
+    descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (descriptor < 0 || fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) goto failure;
     (void)setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     (void)setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     memset(&address, 0, sizeof(address)); address.sun_family = AF_UNIX;

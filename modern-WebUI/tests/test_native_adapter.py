@@ -2299,6 +2299,12 @@ class NativeAdapterTests(unittest.TestCase):
         production = (NATIVE / "build" / "pm3000-rest-ppc32").read_bytes()
         self.assertNotIn(b"--authorize", production)
 
+    def test_controller_socket_does_not_require_post_2623_atomic_cloexec(self) -> None:
+        source = (NATIVE / "avtrans.c").read_text(encoding="utf-8")
+        self.assertNotIn("SOCK_STREAM | SOCK_CLOEXEC", source)
+        self.assertIn("socket(AF_UNIX, SOCK_STREAM, 0)", source)
+        self.assertIn("fcntl(descriptor, F_SETFD, FD_CLOEXEC)", source)
+
     def test_token_store_rejects_symlinks_hardlinks_and_wrong_modes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
