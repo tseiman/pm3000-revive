@@ -20,16 +20,15 @@ class Stage7InstallContractTests(unittest.TestCase):
         self.assertIn("ControlPersist=no", source)
         self.assertNotIn("ControlMaster=yes", source)
         self.assertNotIn("scp ", source)
-        self.assertIn("tar cf - release.tar BACKUP_COMPLETE device-install.sh remote-install.sh", source)
+        self.assertIn("format=tarfile.USTAR_FORMAT", source)
+        self.assertIn('("release.tar", "BACKUP_COMPLETE", "device-install.sh", "remote-install.sh")', source)
+        self.assertNotIn("tar cf -", source)
         self.assertIn("RELEASE_MANIFEST.json", source)
         self.assertIn("BACKUP_COMPLETE", source)
         self.assertIn("device-install.sh", source)
         self.assertIn("compatibility.complete=yes", source)
         self.assertIn("install.complete=yes", source)
-        ssh_invocations = [
-            line for line in source.splitlines()
-            if re.match(r"^\)?\s*\|?\s*ssh(?:\s|$)", line)
-        ]
+        ssh_invocations = re.findall(r"\|\s*ssh(?:\s|$)", source)
         self.assertEqual(1, len(ssh_invocations), ssh_invocations)
         for forbidden in (
             "sshpass", "read -s", "SSH_ASKPASS", "device-rollback.sh",
@@ -42,7 +41,7 @@ class Stage7InstallContractTests(unittest.TestCase):
         source = SCRIPT.read_text(encoding="utf-8")
         for message in (
             "Validating the release package and full backup locally",
-            "Preparing a single-stream installation payload",
+            "Preparing a POSIX ustar installation payload",
             "Opening one non-multiplexed SSH connection",
             "Verifying uploaded release checksum",
             "Checking release archive allowlist",

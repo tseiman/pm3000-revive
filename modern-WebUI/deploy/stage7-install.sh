@@ -237,13 +237,27 @@ rm -rf "$work"
 REMOTE
 chmod 600 "$local_work/remote-install.sh"
 
-log "Preparing a single-stream installation payload for $release_id"
+log "Preparing a POSIX ustar installation payload for $release_id"
 log "Opening one non-multiplexed SSH connection to $target (one password prompt expected)"
-(
-    cd "$local_work"
-    tar cf - release.tar BACKUP_COMPLETE device-install.sh remote-install.sh
-) | ssh -o ControlMaster=no -o ControlPath=none -o ControlPersist=no "$target" \
+python3 - "$local_work" <<'PY' | ssh -o ControlMaster=no -o ControlPath=none -o ControlPersist=no "$target" \
     "umask 077; mkdir '$remote_work' && cd '$remote_work' && tar xf - && /bin/sh ./remote-install.sh '$remote_work' '$package_digest' '$release_id'"
+import sys
+import tarfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+with tarfile.open(fileobj=sys.stdout.buffer, mode="w|", format=tarfile.USTAR_FORMAT) as archive:
+    for name in ("release.tar", "BACKUP_COMPLETE", "device-install.sh", "remote-install.sh"):
+        path = root / name
+        info = archive.gettarinfo(str(path), arcname=name)
+        info.uid = 0
+        info.gid = 0
+        info.uname = ""
+        info.gname = ""
+        info.mtime = 0
+        with path.open("rb") as source:
+            archive.addfile(info, source)
+PY
 installed=yes
 log "Installation completed successfully"
 printf '%s\n' "release_id=$release_id" "package_sha256=$package_digest" "install.complete=yes"
