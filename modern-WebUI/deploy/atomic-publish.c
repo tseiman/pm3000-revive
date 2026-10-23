@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +54,17 @@ static int verify_regular_at(int directory_fd, const char *name, mode_t mode) {
     return close(file_fd);
 }
 
+static int verify_group_at(int directory_fd, const char *name, gid_t group) {
+    int file_fd = openat(directory_fd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+    struct stat value;
+    int result = -1;
+    if (file_fd < 0) return -1;
+    if (fstat(file_fd, &value) == 0 && S_ISREG(value.st_mode) && value.st_gid == group)
+        result = 0;
+    if (close(file_fd) != 0) result = -1;
+    return result;
+}
+
 static int verify_subdirectory(int root_fd, const char *name,
                                const char *const *files, const mode_t *modes, size_t count) {
     int directory_fd = openat(root_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -74,17 +86,20 @@ static int verify_subdirectory(int root_fd, const char *name,
     return close(directory_fd);
 }
 
-static int verify_release(const char *path) {
+static int verify_release(const char *path, gid_t expected_helper_group, int verify_helper_group) {
     static const char *const root_names[] = {
         "RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS", "apache", "bin", "web"
     };
     static const char *const apache_files[] = {"pm3000-revive.conf"};
     static const mode_t apache_modes[] = {0644};
-    static const char *const bin_files[] = {"pm3000-atomic-publish", "pm3000-rest"};
-    static const mode_t bin_modes[] = {0755, 0755};
+    static const char *const bin_files[] = {
+        "pm3000-atomic-publish", "pm3000-gsp-session-helper", "pm3000-rest"
+    };
+    static const mode_t bin_modes[] = {0755, 04750, 0755};
     static const char *const web_files[] = {"app.js", "index.html", "styles.css"};
     static const mode_t web_modes[] = {0644, 0644, 0644};
     int root_fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    int bin_fd = -1;
     struct stat root;
     int result = -1;
     if (root_fd < 0) return -1;
@@ -94,8 +109,15 @@ static int verify_release(const char *path) {
             && verify_regular_at(root_fd, "RELEASE_MANIFEST.json", 0600) == 0
             && verify_regular_at(root_fd, "RELEASE_SHA256SUMS", 0600) == 0
             && verify_subdirectory(root_fd, "apache", apache_files, apache_modes, 1) == 0
-            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 2) == 0
-            && verify_subdirectory(root_fd, "web", web_files, web_modes, 3) == 0) result = 0;
+            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 3) == 0
+            && verify_subdirectory(root_fd, "web", web_files, web_modes, 3) == 0) {
+        bin_fd = openat(root_fd, "bin", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (bin_fd >= 0 && (!verify_helper_group ||
+                verify_group_at(bin_fd, "pm3000-gsp-session-helper",
+                                expected_helper_group) == 0))
+            result = 0;
+    }
+    if (bin_fd >= 0 && close(bin_fd) != 0) result = -1;
     if (close(root_fd) != 0) result = -1;
     return result;
 }
@@ -241,8 +263,13 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (argc == 3 && strcmp(argv[1], "--verify-release") == 0) {
-        if (verify_release(argv[2]) != 0) {
+    if ((argc == 3 || argc == 4) && strcmp(argv[1], "--verify-release") == 0) {
+        unsigned long parsed_group = 0UL;
+        if (argc == 4 && !parse_id(argv[3], (unsigned long)(gid_t)-1, &parsed_group)) {
+            fprintf(stderr, "invalid expected helper group\n");
+            return 2;
+        }
+        if (verify_release(argv[2], (gid_t)parsed_group, argc == 4) != 0) {
             fprintf(stderr, "release tree verification failed\n");
             return 1;
         }
@@ -250,7 +277,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc != 5 || !safe_name(argv[2]) || !safe_name(argv[3])) {
-        fprintf(stderr, "usage: pm3000-atomic-publish --verify-private-directory DIRECTORY | --set-private-regular-owner FILE UID GID | --verify-regular FILE | --verify-release DIRECTORY | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
+        fprintf(stderr, "usage: pm3000-atomic-publish --verify-private-directory DIRECTORY | --set-private-regular-owner FILE UID GID | --verify-regular FILE | --verify-release DIRECTORY [HELPER_GID] | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
         return 2;
     }
     if (strcmp(argv[4], "symlink") == 0) {

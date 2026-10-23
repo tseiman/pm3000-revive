@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-Stage 9 milestone 2B is the current published offline checkpoint at commit `0ee3fbc`, including Appliance Logging. Time Zone is the next bounded milestone 2B candidate in the working tree. The previously installed `0.1` pilot remains the live baseline; none of the write-capable code has been installed or executed on the appliance.
+The current public checkpoint is `modern-webui-v0.2-rest-control-rc11` at commit `d03835586036b4bbe5993edd31a2d94a781b3fe0`. The hardware-validated predecessor `local-gsp-reviewed-v4` is active on the appliance. Production release `0.3.0` is the next and only planned installation; it replaces the local-test naming and is built by GitHub Actions with the local GSP integration included. No outlet, PDU, settings, password, or other controller write has been executed.
 
 ## Implemented
 
@@ -10,6 +10,7 @@ Stage 9 milestone 2B is the current published offline checkpoint at commit `0ee3
 - Existing-PM3000 username/password login, server-side GSP sessions, 15-minute idle expiry, hardened cookie, CSRF, logout, and bounded session cleanup.
 - Server-derived, fixed-allowlist navigation and conservative rights gates.
 - External REST bearer authentication with `read`, `control`, and `admin` scopes and optional outlet allowlists.
+- Bearer controller access uses one short-lived local GSP-AAA session for the fixed `pm3000-rest` identity per backend operation. The single fixed-purpose setuid broker is installed as `root:daemon 4750`; no other setuid component is introduced. No stored controller password is required; every session is destroyed through the fixed-purpose broker cleanup path. A missing local service identity returns HTTP 503 `controller_service_user_unavailable` with an actionable JSON message.
 - Token list/create/enable/disable/revoke with digest-only persistence and one-time secret output. A private authorized browser session may remove every bearer token and later create a replacement; bearer-authenticated administration retains final-administrator protection. `/mnt/hdUser/pm3000-revive/rest/tokens.json` is preserved across upgrades and may validly contain no records.
 - Outlet inventory and `on`, `off`, and `cycle`. Public actions map to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` on `units.topology` / `topologyTable` after a fresh server-side row lookup.
 - PDU inventory plus PDU-wide `on`, `off`, and `cycle` on `units.powermanagement.pdu_management` / `pdu_devices_table`, also using a fresh server-side row lookup.
@@ -23,7 +24,7 @@ Stage 9 milestone 2B is the current published offline checkpoint at commit `0ee3
 - Revisioned settings writes return 204 only after the controller's typed post-save read-back exactly equals every submitted field. A stale revision returns 412. Transport failure after possible dispatch or any read-back mismatch returns `action_outcome_unknown`; the browser does not repeat the PUT and instead requires a fresh successful GET before another save.
 - Session-only read-only system and monitoring endpoints: `GET /api/v1/system/information` (appliance identity fields, serial number excluded), `GET /api/v1/system/usage/memory` (memory rows), `GET /api/v1/system/usage/flash` (filesystem rows), `GET /api/v1/monitoring/network/devices` (device rows), `GET /api/v1/monitoring/network/routes/ipv4` (IPv4 route rows), `GET /api/v1/monitoring/network/routes/ipv6` (IPv6 route rows), `GET /api/v1/monitoring/serial-ports` (serial port statistics rows). All seven reject bearer tokens with 401, use cookie session with navigation-path capability gates, return 503 on transport failure and 502 on malformed backend response, and have closed `additionalProperties: false` schemas.
 - Dependency-free browser UI for outlet and PDU inventory/actions, password change, REST-token administration, Help and Language, Data Buffering, Appliance Logging, Time Zone, and all seven read-only monitoring/system views. Revisioned forms start disabled, retain revisions only in page memory, use safe DOM/textContent construction, and reload after every save result. No innerHTML. No browser storage. Non-migrated pages remain available through the legacy UI.
-- Backup-first host installer using one non-multiplexed SSH stream and one OpenSSH-owned password prompt; manual rollback remains separate.
+- Backup-first host installer using one non-multiplexed SSH stream and one OpenSSH-owned password prompt; manual rollback remains separate. Before release extraction under `/mnt/hdUser`, the device installer requires the uncompressed TAR size plus 256 KiB of filesystem headroom and fails before staging when capacity is missing or cannot be parsed.
 
 ## Static write-contract analysis
 
@@ -33,16 +34,17 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current candidate repository suite: 221 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
+- Current repository suite: 239 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
 - OpenAPI v1.6.0 describes the conditional Time Zone resource and passes JSON parsing, local contract tests, and `swagger-cli validate`.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
-- Static PPC32 big-endian target build passes and is identified as a stripped, statically linked 32-bit MSB PowerPC ELF.
+- PPC32 big-endian target builds pass from the repository and shared toolchain alone: the REST adapter is stripped and static; source-only link interfaces produce a fixed-purpose GSP helper that is stripped, uses `/lib/ld.so.1`, and imports only firmware `libgsp_auth.so` plus `GLIBC_2.0` libc symbols. Build-only link stubs are never packaged or installed.
 - QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.
-- Independent review of the exact published Appliance Logging tree reported `BLOCKERS: NO` and no unresolved HIGH or MEDIUM findings. Exact-tree review of the Time Zone candidate remains required before publication.
+- Appliance validation of `local-gsp-reviewed-v4` passed: `/health` returned 200, ten authenticated `GET /api/v1/outlets` requests returned 200 with valid ten-outlet JSON, the helper was `root:daemon 4750`, and no helper process remained afterward. This verifies the PPC `SO_PEERCRED=21` channel, local GSP session creation, read-only AVTRANS access, and normal cleanup on hardware.
+- Two independent reviews of the complete staged production tree reported no security concerns or logic errors. Write-capable settings remain deliberately unvalidated on hardware; no production write was authorized or executed.
 
 ## Next milestone
 
-Stage 9 milestone 2B continues with Time Zone as the current offline-only fixed-setting candidate. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit. Stage 10 cutover and final product release have not started.
+Build, review, publish, and install production release `0.3.0` through the `Build modern WebUI release` GitHub Actions workflow. The workflow must build and audit `bin/pm3000-gsp-session-helper` inside the release TAR. After read-only acceptance, remove superseded `local-gsp-reviewed-*` release directories without touching the active custom Dropbear installation under `/mnt/hdUser/dropbear-test`. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit.
 
 ## Controlled device-validation boundary
 
@@ -50,4 +52,4 @@ No appliance action is automatic. A future device test requires an approved main
 
 ## Safety statement
 
-Offline development and tests have not contacted `/dev/avtrans_socket`, changed a setting, restarted the appliance, switched an outlet, changed a password, or written firmware. Vendor firmware, raw captures, credentials, sessions, private backups, and production token data remain outside Git and release artifacts.
+Approved read-only appliance validation contacted `/dev/avtrans_socket` through short-lived local GSP sessions. It did not change a setting, switch an outlet or PDU, change a password, reboot the appliance, or write firmware. Apache was reloaded by the approved installer. Vendor firmware, raw captures, credentials, sessions, private backups, and production token data remain outside Git and release artifacts.

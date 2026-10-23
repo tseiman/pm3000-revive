@@ -1,8 +1,87 @@
-# Stage 6 backup-first deployment
+# Production backup-first deployment
 
-This directory contains the offline-verified Stage 6 transaction. It does not
-contact a PM3000, reboot it, change settings, or expose an outlet operation.
-The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
+This directory contains the verified production release, installation, and rollback
+path. No script contacts a PM3000 unless the operator explicitly invokes a Stage 7
+SSH command. The modern UI is mounted at `/modern/`; the vendor UI at `/` is not
+replaced.
+
+## Production communication architecture
+
+The production release preserves the vendor controller path and adds one narrowly
+scoped privilege boundary for creating short-lived local GSP sessions. For detailed
+native runtime and failure semantics, see
+[`../docs/NATIVE-ADAPTER.md`](../docs/NATIVE-ADAPTER.md).
+
+```mermaid
+flowchart TB
+    subgraph CLIENT["Untrusted client boundary"]
+        browser["Browser"]
+        apiClient["External API client"]
+    end
+
+    subgraph APACHE["Apache 2.2 / real UID daemon"]
+        httpd["Apache HTTPS virtual host"]
+        adapter["pm3000-rest CGI"]
+        auth["Session + CSRF or bearer scope + outlet allowlist"]
+        browserStore["Browser session store<br/>/tmp/pm3000-modern-sessions"]
+        tokenStore["Bearer token store<br/>/mnt/hdUser/pm3000-revive/rest"]
+    end
+
+    subgraph BROKER["Setuid privilege boundary"]
+        helper["pm3000-gsp-session-helper<br/>real UID daemon / effective UID root<br/>owner root:daemon, mode 4750"]
+    end
+
+    subgraph FIRMWARE["Existing PM3000 firmware boundary"]
+        gspLib["libgsp_auth.so"]
+        gspAaa["GSP AAA session service<br/>fixed identity pm3000-rest"]
+        avtrans["uicontrold / AVTRANS"]
+        cacpd["GSP / CACPD services"]
+        power["Controller Power API and PDU backend"]
+    end
+
+    browser -->|"HTTPS + cookie + CSRF token"| httpd
+    apiClient -->|"HTTPS + Authorization: Bearer"| httpd
+    httpd -->|"CGI environment + stdin/stdout"| adapter
+    adapter --> auth
+    auth -.->|"private local files"| browserStore
+    auth -.->|"SHA-256 token digests and policy"| tokenStore
+
+    adapter -->|"fork + execve; empty environment"| helper
+    adapter <-->|"private AF_UNIX socketpair on fd 0/1; SID only"| helper
+    helper -->|"fixed GSP AAA C API calls"| gspLib
+    gspLib -->|"firmware-local session API"| gspAaa
+    helper -.->|"session destroy on cleanup"| gspAaa
+
+    adapter -->|"AVTRANS XML + in-memory SID via /dev/avtrans_socket"| avtrans
+    avtrans -->|"existing firmware IPC, including /dev/cacpd"| cacpd
+    cacpd -->|"fixed controller operation"| power
+    power -->|"firmware response"| cacpd
+    cacpd -->|"AVTRANS response"| avtrans
+    avtrans -->|"bounded XML response"| adapter
+    adapter -->|"JSON response; never SID or raw controller data"| httpd
+    httpd -->|"HTTPS"| browser
+    httpd -->|"HTTPS"| apiClient
+```
+
+Interface and trust-boundary rules:
+
+- Browser sessions and bearer credentials authorize the HTTP caller; they never
+  select the local controller identity. Every controller access independently uses
+  the compile-time identity `pm3000-rest`.
+- The adapter verifies authentication, CSRF where applicable, bearer scope, and
+  outlet allowlists before starting a controller session.
+- The only privileged executable is the fixed-purpose GSP session helper. It accepts
+  no arguments, no inherited environment, no configurable identity, and no controller
+  operation. It verifies that its real caller is `daemon` and that both IPC directions
+  belong to its parent process.
+- The SID exists only in helper/adapter process memory and on their private socketpair.
+  It is never written to a file, log, HTTP response, command line, or CGI environment.
+- Controller requests use `/dev/avtrans_socket`; the existing firmware continues from
+  `uicontrold` through GSP/CACPD to the Power API. The replacement does not bypass or
+  replace that vendor backend chain.
+- Closing the private channel is the normal session-cleanup signal. Cleanup also runs
+  on handled `SIGHUP`, `SIGINT`, and `SIGTERM`; no process can guarantee in-process
+  cleanup after `SIGKILL`, kernel failure, or loss of hardware.
 
 ## Files
 
@@ -11,7 +90,7 @@ The pilot is mounted at `/modern/`; the vendor UI at `/` is not replaced.
 - `deploy.sh`, `rollback.sh` — fixed-interface host entry points. They deliberately
   accept only a synthetic root in Stage 6; they are not generic SSH command proxies.
 - `device-install.sh`, `device-rollback.sh` — minimal POSIX `sh` privileged
-  publication helpers for the later manually approved device pilot.
+  publication helpers for the manually approved production installation.
 - `device-preflight.sh` — read-only Stage 7 inventory; writes its report only to
   standard output and never installs, reloads, restarts, or creates a device file.
 - `stage7-first-backup.sh` — macOS/Linux host command that streams a full device
@@ -37,10 +116,13 @@ atomic publication helper built with `make -C modern-WebUI/deploy target`.
 Host backup directories are forced to mode `0700`; backup files are `0600` and
 must remain outside Git.
 
-A future device pilot additionally requires BusyBox/POSIX `sh`, `tar`,
-`openssl` with `dgst -sha256`, `cat`, `wc`, `cut`, `cp`, `cmp`, `sed`, `id`, `readlink`, `ln`,
-`chmod`, `mkdir`, `mktemp`, `dirname`, `pwd`, `rm`, and `sync`, plus the
+The target device additionally requires BusyBox/POSIX `sh`, `tar`,
+`openssl` with `dgst -sha256`, `cat`, `wc`, `cut`, `cp`, `cmp`, `sed`, `df`, `tail`,
+`id`, `readlink`, `ln`, `chmod`, `chown`, `mkdir`, `mktemp`, `dirname`, `pwd`, `rm`, and `sync`, plus the
 packaged atomic helper and sufficient space under `/mnt/hdUser` and `/tmp`.
+Before extraction, the device installer requires the uncompressed release TAR size plus
+256 KiB of JFFS2 and metadata headroom to be available on the release filesystem. It
+fails before changing the active release when capacity cannot be determined or is too low.
 The following Apache commands come from repository evidence but remain
 unverified on the appliance:
 
@@ -67,24 +149,29 @@ modern-WebUI/deploy/stage7-install.sh \
 
 This is a write operation. Run it only during an approved maintenance window.
 
-## Build the exact allowlist candidate archive
+## Build the exact allowlist release archive
 
-For a complete PPC32 big-endian candidate package on Linux, including the native runtime,
-atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
+For a complete PPC32 big-endian release package on Linux, including the native runtime,
+fixed-purpose GSP session helper, atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
 `qemu-ppc` is installed, run from the repository root:
 
 ```sh
 modern-WebUI/deploy/build-release.sh 2026-10-21.1
 ```
 
-This uses the shared toolchain under `components/dropbear/output-buildroot/host`.
+This uses the shared toolchain under `components/dropbear/output-buildroot/host`
+and the source-only build interfaces under `modern-WebUI/native/abi-stubs/`.
+No extracted PM3000 firmware root filesystem is required, and the generated link
+stubs are not included in the release archive.
 If it is absent, the script prints the commands needed to create it. macOS hosts
 should use the `Build modern WebUI release` GitHub Actions workflow rather than
 trying to run the Linux Buildroot toolchain locally. Tags named
 `modern-webui-v<release-id>` publish `pm3000-release-<release-id>.tar` and its checksum;
 Dropbear remains independently versioned under `dropbear-v*`.
 
-These are reproducible milestone artifacts, not evidence of Stage 10 completion or live write validation.
+Tagged artifacts are reproducible production installation inputs. Publication proves
+the clean CI build and package audits; device installation and read-only acceptance
+remain separate, explicitly recorded operator gates.
 
 The lower-level package-only command is:
 
@@ -96,7 +183,8 @@ python3 modern-WebUI/deploy/deployment.py package \
 ```
 
 The builder reads only the three names in `web/release-files.txt`, the finished
-PPC REST binary, the finished PPC atomic-publication helper, and this
+PPC REST binary, the finished fixed-purpose GSP session helper, the finished PPC
+atomic-publication helper, and this
 directory's Apache configuration. It snapshots each source
 once, rejects non-regular/symlink sources and source mutation during a read, and
 writes deterministic `RELEASE_MANIFEST.json`, `RELEASE_SHA256SUMS`, and a whole
@@ -157,6 +245,8 @@ small static PPC helper that calls `renameat(2)` and `fsync(2)`, avoiding
 unverified BusyBox `mv` behavior for symlink-to-directory destinations. Its
 `--verify-release` operation rejects extra, missing, symlinked, hard-linked, wrongly owned, or
 wrong-mode roots, subdirectories, and payloads in both staged and pre-existing release directories.
+When passed the required helper GID, it also rejects a `pm3000-gsp-session-helper` that is not
+owned by that group; production install, reuse, and rollback paths pass the resolved `daemon` GID.
 The device scripts compose that inode/shape check with the canonical checksum list from
 the digest-approved package, so accepted native release bytes match the approved package.
 The release directory is
@@ -298,12 +388,12 @@ The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3
 manifest, its archive binding, and an exact match between the manifest's saved
 SSH target and the requested SSH target. It validates the release sidecar before
 transfer, then reads the package once with no-follow semantics, requires the
-exact ordered eight-member allowlist with regular non-link members, fixed modes,
+exact ordered nine-member allowlist with regular non-link members, fixed modes,
 and root archive ownership, and writes those same bytes to private host storage.
 The uploaded digest binds the remote bytes to that immutable snapshot. It uses legacy `scp -O`
 to copy the package into a
 private `/tmp/pm3000-stage7-compat-*` directory, checks the uploaded SHA-256 with
-OpenSSL, enforces the eight-member allowlist, normalizes only those fixed members
+OpenSSL, enforces the nine-member allowlist, normalizes only those fixed members
 to the installer contract's exact modes, executes the packaged helper's
 regular-file and release-tree checks, and calls only the REST CGI `/api/v1/health`
 route. Success ends with `compatibility.complete=yes` and `apply=no`; cleanup is

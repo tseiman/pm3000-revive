@@ -6,7 +6,7 @@ This directory provides a bounded C99 CGI runtime for the PM3000 REST v1 contrac
 browser -> Apache CGI -> pm3000-rest -> /dev/avtrans_socket -> uicontrold -> GSP/CACPD -> Power API
 ```
 
-Release candidate RC7 is installed on the appliance. Bearer-authenticated read-only outlet inventory succeeds live with HTTP 200. A Safari network capture after RC7 installation proved that Apache exports an empty `HTTP_AUTHORIZATION` CGI variable when the browser sends no Authorization header. The adapter incorrectly treated that present-but-empty value as a Bearer request, despite receiving a valid session cookie. Session-capable routes now treat an absent or empty value and inherited `Basic` or `Digest` headers as browser-session candidates while still requiring a valid private session cookie. Explicit Bearer and malformed non-empty Authorization headers retain their strict handling. The evidence and appliance validation gate are recorded in [`BACKEND-COMMUNICATION-STATUS.md`](BACKEND-COMMUNICATION-STATUS.md). No real outlet write has been issued through the replacement adapter.
+The hardware-validated predecessor `local-gsp-reviewed-v4` is currently installed on the appliance. Bearer-authenticated read-only outlet inventory succeeds live with HTTP 200 for all ten outlets; the local GSP helper is `root:daemon 4750`, and no helper process remains after the reads. An earlier Safari network capture from the historical RC7 deployment proved that Apache exports an empty `HTTP_AUTHORIZATION` CGI variable when the browser sends no Authorization header. Session-capable routes therefore treat an absent or empty value and inherited `Basic` or `Digest` headers as browser-session candidates while still requiring a valid private session cookie. Explicit Bearer and malformed non-empty Authorization headers retain their strict handling. The evidence and appliance validation gate are recorded in [`BACKEND-COMMUNICATION-STATUS.md`](BACKEND-COMMUNICATION-STATUS.md). No real outlet write has been issued through the replacement adapter.
 
 ## Implemented routes
 
@@ -48,8 +48,11 @@ Production builds do not accept environment overrides:
 - Token store: `/mnt/hdUser/pm3000-revive/rest/tokens.json`
 - Token lock: `/mnt/hdUser/pm3000-revive/rest/tokens.json.lock`
 - Avtrans socket: `/dev/avtrans_socket`
-- Controller credentials: `/etc/pm3000-rest/controller.credentials`
+- Local GSP session helper: `/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-gsp-session-helper`
+- Fixed local service identity: `pm3000-rest`
 - Browser sessions: `/tmp/pm3000-modern-sessions`
+
+No controller password file is read or required for bearer-authenticated REST access.
 
 `PM3000_TESTING` host builds accept path overrides only for isolated tests. The target Makefile never defines `PM3000_TESTING`.
 
@@ -74,13 +77,16 @@ The target uses:
 -static -mcpu=e300c3 -msoft-float
 ```
 
-The target is stripped with the matching Buildroot `powerpc-buildroot-linux-musl-strip`. The output is:
+The targets are stripped with the matching Buildroot `powerpc-buildroot-linux-musl-strip`. The outputs are:
 
 ```text
 modern-WebUI/native/build/pm3000-rest-ppc32
+modern-WebUI/native/build/pm3000-gsp-session-helper-ppc32
 ```
 
-The target is a stripped, statically linked ELF32 MSB PowerPC executable. The binary and production assets remain subject to the combined 400 KiB release budget.
+The REST adapter is a stripped, statically linked ELF32 MSB PowerPC executable. The fixed-purpose helper is a small dynamically linked ELF32 MSB PowerPC executable using the firmware `/lib/ld.so.1`, `libgsp_auth.so`, and `GLIBC_2.0` symbols. Its build uses the checked-in source-only interfaces under `native/abi-stubs/`; these generate link-time shared objects with the required SONAMEs, symbol names, and GLIBC version binding. The generated stubs are never packaged or installed and contain no vendor implementation. At runtime the helper resolves the same imports from the appliance's existing firmware libraries. This makes local and GitHub Actions builds reproducible without an extracted firmware root filesystem or redistributed firmware binaries.
+
+The helper intentionally uses the firmware's legacy PPC32 SysV PLT ABI: that ABI places `.got` and the lazy-binding `.plt` in an RWE load segment, as do the appliance's own `pmcli` and `libgsp_auth.so`; secure-PLT compatibility with the glibc 2.3.5 loader is not established. The helper stack remains non-executable, and its restricted caller, input, descriptor, and operation surface are the compensating controls. The complete nine-member production archive is subject to a 448 KiB regular-file budget, including the manifest and checksum list; the release producer enforces this limit before creating the TAR.
 
 ## Verification
 
@@ -123,6 +129,10 @@ Status: 200 OK
 
 The Avtrans client has no generic proxy or free-form command interface. Active routes emit only fixed login, navigation, topology, PDU inventory, password-change, typed setting, system/monitoring read, power-action, and logout requests. The bounded structural XML parser rejects comments, malformed/trailing documents, and explicit controller errors. Each projector validates its required paths, identities, forms, and unique fields while omitting harmless unsupported display data. The revisioned Help and Language and Data Buffering fixed-form projector additionally closes the complete document grammar, attributes, elements, text, controls, declarations, hierarchy, and child ordering. Projectors map only approved fields to REST v1 and never expose raw controller row IDs, hidden fields, or hidden PDU threshold data.
 
+Bearer-authenticated backend operations obtain a fresh local GSP-AAA session for the compile-time identity `pm3000-rest`. The selected deployment architecture for the next update is the narrowly scoped setuid broker: it is owned by `root:daemon` with mode `4750`; no general-purpose or additional setuid component is permitted. The helper accepts no arguments or environment-selected identity and performs no controller operation. It requires the real caller identity `daemon`, verifies both IPC descriptors with `SO_PEERCRED` against its parent, receives an empty environment, and closes every inherited descriptor except the private stdin/stdout socket channel before entering GSP-AAA. Linux socket-option numbers are architecture-specific: the PPC firmware ABI defines `SO_PEERCRED` as `21` (not the x86 value `17`), and the source regression test pins that target value. All required GSP session setters must succeed before the SID is released. The adapter bounds the startup handshake to 10 seconds and bounds helper reaping with TERM/KILL escalation. The helper returns the bounded SID only over that channel, remains alive for the request, and destroys the session when the adapter closes the channel or when the helper receives `SIGHUP`, `SIGINT`, or `SIGTERM`. A failed destroy or abnormal helper exit fails reads as `backend_unavailable`; after a dispatched power action it becomes `action_outcome_unknown`, which clients must not retry automatically. The SID is wiped from adapter memory and is never returned or logged. Browser username/password sessions remain separate and unchanged.
+
+If the local `pm3000-rest` account does not exist, every bearer route requiring controller access returns HTTP `503` with `code: controller_service_user_unavailable` and an actionable message to create that local account and grant its required controller permissions. Other helper or session failures return the generic `backend_unavailable` contract without internal details.
+
 Malformed, oversized, ambiguous, or duplicate required/identity data fails closed; harmless unsupported display fields may be omitted by non-fixed-form projectors. Outlet IDs and inventory revisions are project-owned SHA-256-derived opaque identifiers.
 
 ### Token store
@@ -159,12 +169,13 @@ Before installing a write-capable candidate, the installer must independently pr
 
 1. a safe persistent parent for `/mnt/hdUser/pm3000-revive/rest/`; the installer creates the private mode-`0700` directory when absent;
 2. optional existing canonical token store and lock files; the installer creates a canonical empty mode-`0600` store and private lock when absent;
-3. an owner-only credentials file at `/etc/pm3000-rest/controller.credentials`;
-4. an Apache mapping that preserves the existing vendor Web UI as a fallback;
-5. HTTPS-only access and the required CGI environment;
-6. a staged health check before exposing any additional route.
+3. the local PM3000 account `pm3000-rest` with the intended read/control rights;
+4. the release-owned session helper verified as root-owned, daemon-group-executable mode `4750`;
+5. an Apache mapping that preserves the existing vendor Web UI as a fallback;
+6. HTTPS-only access and the required CGI environment;
+7. a staged health check before exposing any additional route.
 
-The compatibility gate and installer fail before activation unless both private directories and all three write-capable runtime files (token store, token lock, and controller credentials) satisfy these ownership, link-count, regular-file, and mode requirements.
+The compatibility gate and installer fail before activation unless the private token directory, token store, token lock, release tree, and fixed-purpose session helper satisfy their ownership, link-count, regular-file, and mode requirements. A missing service account is reported at request time through the explicit `controller_service_user_unavailable` response because account creation and permission assignment remain operator-controlled.
 
 Do not deploy by overwriting vendor files in place.
 

@@ -34,8 +34,8 @@ output=$output_directory/pm3000-release-$release_id.tar
     exit 1
 }
 
-make -C "$MODERN/native" target
-make -C "$MODERN/deploy" target
+make -C "$MODERN/native" clean target
+make -C "$MODERN/deploy" clean target
 python3 "$MODERN/deploy/deployment.py" package \
     --source "$MODERN" \
     --release-id "$release_id" \

@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,7 +34,7 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 6 ]
+    [ "$_sum_count" -eq 7 ]
 }
 
 [ "$#" -eq 4 ] || {
@@ -88,6 +88,7 @@ RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
 bin/pm3000-atomic-publish
+bin/pm3000-gsp-session-helper
 bin/pm3000-rest
 web/app.js
 web/index.html
@@ -104,15 +105,18 @@ cp "$packaged_helper" "$atomic_helper"
 chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-    bin/pm3000-atomic-publish bin/pm3000-rest web/app.js web/index.html web/styles.css; do
+    bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest \
+    web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$package_tree/$member" || {
         echo "unsafe packaged release member: $member" >&2
         exit 1
     }
 done
 verify_release_sums "$package_tree" "$package_tree/RELEASE_SHA256SUMS"
+daemon_gid=$(id -g daemon)
+case "$daemon_gid" in ''|*[!0-9]*) echo "invalid Apache daemon group" >&2; exit 1;; esac
 
-"$atomic_helper" --verify-release "$release" || { echo "unsafe active release tree" >&2; exit 1; }
+"$atomic_helper" --verify-release "$release" "$daemon_gid" || { echo "unsafe active release tree" >&2; exit 1; }
 cmp "$package_tree/RELEASE_MANIFEST.json" "$release/RELEASE_MANIFEST.json" >/dev/null 2>&1 || { echo "active release manifest mismatch" >&2; exit 1; }
 cmp "$package_tree/RELEASE_SHA256SUMS" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1 || { echo "active release checksum list mismatch" >&2; exit 1; }
 verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"

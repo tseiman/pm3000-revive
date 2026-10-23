@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,8 +34,103 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 6 ]
+    [ "$_sum_count" -eq 7 ]
 }
+
+# BEGIN DISK PREFLIGHT TEST FUNCTIONS
+check_release_capacity()
+{
+    _capacity_archive=$1
+    _capacity_filesystem=$2
+    _capacity_scratch=$3
+    _capacity_wc_output=$_capacity_scratch/archive-size
+    _capacity_df_output=$_capacity_scratch/filesystem-capacity
+
+    if wc -c <"$_capacity_archive" >"$_capacity_wc_output"; then
+        :
+    else
+        echo "release archive size unavailable" >&2
+        return 1
+    fi
+    _capacity_wc_line=$(tail -n 1 "$_capacity_wc_output") || {
+        echo "release archive size unavailable" >&2
+        return 1
+    }
+    package_bytes=
+    _capacity_wc_extra=
+    read -r package_bytes _capacity_wc_extra <<EOF_WC_SIZE
+$_capacity_wc_line
+EOF_WC_SIZE
+    case "$package_bytes" in
+        ''|*[!0-9]*|??????????*)
+            echo "invalid release archive size" >&2
+            return 1
+            ;;
+    esac
+    [ -z "$_capacity_wc_extra" ] || {
+        echo "invalid release archive size" >&2
+        return 1
+    }
+    package_kib=$((package_bytes / 1024))
+    if [ $((package_bytes % 1024)) -ne 0 ]; then
+        package_kib=$((package_kib + 1))
+    fi
+    required_kib=$((package_kib + 256))
+
+    if df -k "$_capacity_filesystem" >"$_capacity_df_output"; then
+        :
+    else
+        echo "release filesystem capacity unavailable" >&2
+        return 1
+    fi
+    _capacity_df_line=$(tail -n 1 "$_capacity_df_output") || {
+        echo "release filesystem capacity unavailable" >&2
+        return 1
+    }
+    _capacity_df_filesystem=
+    _capacity_df_blocks=
+    _capacity_df_used=
+    available_kib=
+    _capacity_df_percent=
+    _capacity_df_mount=
+    _capacity_df_extra=
+    read -r _capacity_df_filesystem _capacity_df_blocks _capacity_df_used \
+        available_kib _capacity_df_percent _capacity_df_mount _capacity_df_extra <<EOF_DF_LINE
+$_capacity_df_line
+EOF_DF_LINE
+    case "$_capacity_df_blocks:$_capacity_df_used:$available_kib" in
+        *[!0-9:]*|:*|*::*|*:) echo "invalid release filesystem capacity" >&2; return 1;;
+    esac
+    case "$available_kib" in ??????????*) echo "invalid release filesystem capacity" >&2; return 1;; esac
+    [ -n "$_capacity_df_filesystem" ] && [ -n "$_capacity_df_percent" ] &&
+        [ -n "$_capacity_df_mount" ] && [ -z "$_capacity_df_extra" ] || {
+        echo "invalid release filesystem capacity" >&2
+        return 1
+    }
+    [ "$available_kib" -ge "$required_kib" ] || {
+        echo "insufficient release filesystem space: required_kib=$required_kib available_kib=$available_kib" >&2
+        return 1
+    }
+}
+
+extract_release_archive()
+{
+    _extract_archive=$1
+    _extract_root=$2
+    if ! (cd "$_extract_root" && tar xf "$_extract_archive"); then
+        echo "release archive extraction failed" >&2
+        return 1
+    fi
+    for extracted_member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
+        bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+        web/app.js web/index.html web/styles.css; do
+        [ -f "$_extract_root/$extracted_member" ] && [ ! -L "$_extract_root/$extracted_member" ] || {
+            echo "release archive extraction incomplete: $extracted_member" >&2
+            return 1
+        }
+    done
+}
+# END DISK PREFLIGHT TEST FUNCTIONS
 
 [ "$#" -eq 4 ] || {
     echo "usage: device-install.sh RELEASE.tar PACKAGE_SHA256 RELEASE_ID BACKUP_COMPLETE" >&2
@@ -47,6 +142,12 @@ release_id=$3
 backup_complete=$4
 [ "$(id -u)" = 0 ] || { echo "installer must run as root" >&2; exit 1; }
 command -v openssl >/dev/null 2>&1 || { echo "openssl missing" >&2; exit 1; }
+for required_command in df tail tar wc; do
+    command -v "$required_command" >/dev/null 2>&1 || {
+        echo "$required_command missing" >&2
+        exit 1
+    }
+done
 case "$release_id" in ''|*[!A-Za-z0-9._-]*|.|..) echo "unsafe release id" >&2; exit 2;; esac
 [ -f "$package" ] && [ ! -L "$package" ] || { echo "unsafe package" >&2; exit 1; }
 [ -f "$backup_complete" ] && [ ! -L "$backup_complete" ] || { echo "BACKUP_COMPLETE missing or unsafe" >&2; exit 1; }
@@ -67,7 +168,7 @@ tmp=$releases/.$release_id.stage6-tmp
 config_dir=/etc/apache2/conf.d
 config=$config_dir/pm3000-revive.conf
 work=/tmp/stage6-install-$$
-for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/pm3000-rest /etc/apache2 "$config_dir"; do
+for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
     [ ! -L "$parent" ] || { echo "unsafe parent symlink: $parent" >&2; exit 1; }
 done
 [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { echo "transaction temporary exists" >&2; exit 1; }
@@ -91,6 +192,7 @@ RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
 bin/pm3000-atomic-publish
+bin/pm3000-gsp-session-helper
 bin/pm3000-rest
 web/app.js
 web/index.html
@@ -151,10 +253,11 @@ trap 'exit 129' 1
 trap 'exit 130' 2
 trap 'exit 143' 15
 
+check_release_capacity "$package_snapshot" /mnt/hdUser "$work"
 mkdir -p "$releases"
 chmod 755 "$root" "$base" "$releases"
 mkdir -m 700 "$tmp"
-(cd "$tmp" && tar xf "$package_snapshot")
+extract_release_archive "$package_snapshot" "$tmp"
 packaged_helper=$tmp/bin/pm3000-atomic-publish
 [ -f "$packaged_helper" ] && [ ! -L "$packaged_helper" ] || { echo "unsafe packaged atomic helper" >&2; exit 1; }
 atomic_helper=$work/pm3000-atomic-publish
@@ -198,30 +301,25 @@ initialize_private_regular()
     verify_private_regular "$_private_path"
 }
 initialize_private_directory "$root/rest" || { echo "unsafe REST private directory" >&2; exit 1; }
-verify_private_directory /etc/pm3000-rest || { echo "unsafe or missing credentials directory" >&2; exit 1; }
 initialize_private_regular "$root/rest/tokens.json" '{"generation":1,"schemaVersion":1,"tokens":[]}' || {
     echo "unsafe token store" >&2; exit 1;
 }
 initialize_private_regular "$root/rest/tokens.json.lock" || {
     echo "unsafe token-store lock" >&2; exit 1;
 }
-verify_private_regular /etc/pm3000-rest/controller.credentials || {
-    echo "unsafe or missing controller credentials" >&2; exit 1;
-}
-for private_file in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" \
-    /etc/pm3000-rest/controller.credentials; do
+for private_file in "$root/rest/tokens.json" "$root/rest/tokens.json.lock"; do
     "$atomic_helper" --set-private-regular-owner "$private_file" "$daemon_uid" "$daemon_gid"
 done
-for private_directory in "$root/rest" /etc/pm3000-rest; do
+for private_directory in "$root/rest"; do
     "$atomic_helper" --set-private-directory-owner "$private_directory" "$daemon_uid" "$daemon_gid"
 done
 "$atomic_helper" --verify-private-directory-owner "$root/rest" "$daemon_uid"
-"$atomic_helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
-for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock" /etc/pm3000-rest/controller.credentials; do
+for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock"; do
     "$atomic_helper" --verify-private-regular-owner "$prerequisite" "$daemon_uid"
 done
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-    bin/pm3000-atomic-publish bin/pm3000-rest web/app.js web/index.html web/styles.css; do
+    bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+    web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$tmp/$member" || {
         echo "unsafe extracted release member: $member" >&2
         exit 1
@@ -237,9 +335,11 @@ chmod 600 "$approved_manifest" "$approved_sums"
 "$atomic_helper" --verify-regular "$approved_sums" || exit 1
 chmod 755 "$tmp" "$tmp/apache" "$tmp/bin" "$tmp/web"
 chmod 755 "$tmp/bin/pm3000-atomic-publish" "$tmp/bin/pm3000-rest"
+chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"
+chmod 4750 "$tmp/bin/pm3000-gsp-session-helper"
 chmod 600 "$tmp/RELEASE_MANIFEST.json" "$tmp/RELEASE_SHA256SUMS"
 chmod 644 "$tmp/web/index.html" "$tmp/web/styles.css" "$tmp/web/app.js" "$tmp/apache/pm3000-revive.conf"
-"$atomic_helper" --verify-release "$tmp" || { echo "unsafe staged release tree" >&2; exit 1; }
+"$atomic_helper" --verify-release "$tmp" "$daemon_gid" || { echo "unsafe staged release tree" >&2; exit 1; }
 if [ ! -e "$release" ]; then
     if "$atomic_helper" "$releases" ".$release_id.stage6-tmp" "$release_id" directory; then
         created_release=yes
@@ -249,7 +349,7 @@ if [ ! -e "$release" ]; then
         # parent-fsync failure. Classify that outcome only from the exact,
         # package-bound destination; never delete an ambiguous destination.
         if [ ! -e "$tmp" ] && [ ! -L "$tmp" ] && [ -d "$release" ] && [ ! -L "$release" ] &&
-            "$atomic_helper" --verify-release "$release" &&
+            "$atomic_helper" --verify-release "$release" "$daemon_gid" &&
             cmp "$approved_manifest" "$release/RELEASE_MANIFEST.json" >/dev/null 2>&1 &&
             cmp "$approved_sums" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1 &&
             verify_release_sums "$release" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1; then
@@ -262,7 +362,7 @@ if [ ! -e "$release" ]; then
     fi
 else
     [ -d "$release" ] && [ ! -L "$release" ] || { echo "unsafe existing release" >&2; exit 1; }
-    "$atomic_helper" --verify-release "$release" || { echo "unsafe existing release tree" >&2; exit 1; }
+    "$atomic_helper" --verify-release "$release" "$daemon_gid" || { echo "unsafe existing release tree" >&2; exit 1; }
     cmp "$tmp/RELEASE_MANIFEST.json" "$release/RELEASE_MANIFEST.json" >/dev/null 2>&1 || { echo "release id collision" >&2; exit 1; }
     cmp "$tmp/RELEASE_SHA256SUMS" "$release/RELEASE_SHA256SUMS" >/dev/null 2>&1 || { echo "release checksum-list collision" >&2; exit 1; }
     verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"

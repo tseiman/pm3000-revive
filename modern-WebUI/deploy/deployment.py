@@ -23,6 +23,9 @@ class DeploymentError(RuntimeError):
     pass
 
 
+MAX_RELEASE_REGULAR_BYTES = 448 * 1024
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -73,6 +76,7 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
 
     sources = {f"web/{name}": source / "web" / name for name in names}
     sources["bin/pm3000-rest"] = source / "native" / "build" / "pm3000-rest-ppc32"
+    sources["bin/pm3000-gsp-session-helper"] = source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
     sources["bin/pm3000-atomic-publish"] = source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
     sources["apache/pm3000-revive.conf"] = source / "deploy" / "pm3000-revive.conf"
     snapshots: dict[str, tuple[bytes, int]] = {}
@@ -97,7 +101,8 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
                           opened_after.st_mtime_ns, opened_after.st_ctime_ns)
         if identity_before != identity_after or len(data) != opened_before.st_size:
             raise DeploymentError(f"release source changed while being read: {path}")
-        mode = 0o755 if target.startswith("bin/") else 0o644
+        mode = (0o4750 if target == "bin/pm3000-gsp-session-helper"
+                else 0o755 if target.startswith("bin/") else 0o644)
         if target == "web/index.html":
             release_placeholder = b"__PM3000_RELEASE_ID__"
             revision_placeholder = b"__PM3000_GIT_REVISION__"
@@ -117,6 +122,13 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
         separators=(",", ":"),
     ).encode("utf-8") + b"\n"
     checksum_lines = "".join(f"{entry['sha256']}  {entry['path']}\n" for entry in entries).encode("ascii")
+    regular_bytes = len(manifest) + len(checksum_lines) + sum(
+        len(data) for data, _mode in snapshots.values()
+    )
+    if regular_bytes > MAX_RELEASE_REGULAR_BYTES:
+        raise DeploymentError(
+            f"release regular-file payload exceeds 448 KiB: {regular_bytes} bytes"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + ".tmp")
     with tarfile.open(temporary, "w", format=tarfile.PAX_FORMAT) as archive:
@@ -395,7 +407,8 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
                 or manifest["format"] != 1 or not isinstance(manifest["files"], list)):
             raise DeploymentError("invalid release manifest schema")
         required_payloads = {
-            "apache/pm3000-revive.conf", "bin/pm3000-atomic-publish", "bin/pm3000-rest",
+            "apache/pm3000-revive.conf", "bin/pm3000-atomic-publish",
+            "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
             "web/app.js", "web/index.html", "web/styles.css",
         }
         entries = manifest["files"]
@@ -406,7 +419,8 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
         if len(entry_names) != len(set(entry_names)) or set(entry_names) != required_payloads:
             raise DeploymentError("release manifest allowlist mismatch")
         for entry in entries:
-            expected_mode = 0o755 if entry["path"].startswith("bin/") else 0o644
+            expected_mode = (0o4750 if entry["path"] == "bin/pm3000-gsp-session-helper"
+                             else 0o755 if entry["path"].startswith("bin/") else 0o644)
             if (entry["mode"] != expected_mode or not isinstance(entry["size"], int)
                     or isinstance(entry["size"], bool) or entry["size"] < 0
                     or not isinstance(entry["sha256"], str) or len(entry["sha256"]) != 64

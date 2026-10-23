@@ -39,13 +39,10 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.environment["FAKE_TRANSPORT_LOG"] = str(self.log)
         device = self.root / "device"
         private_rest = device / "mnt/hdUser/pm3000-revive/rest"
-        private_credentials = device / "etc/pm3000-rest"
         private_rest.mkdir(parents=True, mode=0o700)
-        private_credentials.mkdir(parents=True, mode=0o700)
         for path, payload in (
             (private_rest / "tokens.json", b"{}\n"),
             (private_rest / "tokens.json.lock", b""),
-            (private_credentials / "controller.credentials", b"user\npassword\n"),
         ):
             path.write_bytes(payload)
             path.chmod(0o600)
@@ -102,6 +99,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
             ("RELEASE_SHA256SUMS", b"test\n", 0o600),
             ("apache/pm3000-revive.conf", b"test\n", 0o644),
             ("bin/pm3000-atomic-publish", helper, 0o755),
+            ("bin/pm3000-gsp-session-helper", b"helper\n", 0o4750),
             ("bin/pm3000-rest", rest, 0o755),
             ("web/app.js", b"test\n", 0o644),
             ("web/index.html", b"test\n", 0o644),
@@ -183,7 +181,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertNotIn("/etc/apache2", transport)
         self.assertIn("for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json", transport)
         self.assertIn('--verify-private-regular "$token_file"', transport)
-        self.assertIn("--verify-private-regular /etc/pm3000-rest/controller.credentials", transport)
+        self.assertNotIn("controller.credentials", transport)
         self.assertIn("--verify-private-directory-owner", transport)
         self.assertIn("--verify-private-regular-owner", transport)
         self.assert_no_remote_tree()

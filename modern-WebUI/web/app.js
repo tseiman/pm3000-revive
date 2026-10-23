@@ -232,7 +232,7 @@ function outletActionDisabled(outlet, action) {
 }
 
 function actionButton(outlet, action) {
-  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button action-${action}${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
   button.disabled = outletActionDisabled(outlet, action);
   button.addEventListener("click", async () => {
     if (!window.confirm(`${button.textContent} ${outlet.name || `outlet ${outlet.position}`}?`)) return;
@@ -275,7 +275,7 @@ async function loadOutlets() {
 }
 
 function pduActionButton(pdu, action) {
-  const button = document.createElement("button"); button.type = "button"; button.className = `small-button${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
+  const button = document.createElement("button"); button.type = "button"; button.className = `small-button action-${action}${action === "off" ? " danger" : ""}`; button.textContent = action === "cycle" ? "Cycle" : action === "on" ? "Switch on" : "Switch off";
   button.addEventListener("click", async () => {
     if (!window.confirm(`${button.textContent} ${pdu.name || `PDU ${pdu.position}`}?`)) return;
     button.disabled = true;

@@ -26,6 +26,146 @@ def load_helper():
     return module
 
 
+def device_install_function_harness():
+    installer = (DEPLOY / "device-install.sh").read_text(encoding="ascii")
+    begin = "# BEGIN DISK PREFLIGHT TEST FUNCTIONS\n"
+    end = "# END DISK PREFLIGHT TEST FUNCTIONS\n"
+    functions = installer.split(begin, 1)[1].split(end, 1)[0]
+    return "#!/bin/sh\nset -eu\n" + functions + r'''
+operation=$1
+shift
+case "$operation" in
+    preflight) check_release_capacity "$1" "$2" "$3";;
+    extract) extract_release_archive "$1" "$2";;
+    *) exit 2;;
+esac
+'''
+
+
+class DeviceInstallDiskPreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.archive = self.root / "release.tar"
+        self.archive.write_bytes(b"archive")
+        self.scratch = self.root / "scratch"
+        self.scratch.mkdir()
+        self.stage = self.root / "stage"
+        self.stage.mkdir()
+        self.harness = self.root / "harness.sh"
+        self.harness.write_text(device_install_function_harness(), encoding="ascii")
+        self.harness.chmod(0o755)
+        self._write_command("wc", '#!/bin/sh\nprintf "%b" "$FAKE_WC_OUTPUT"\nexit "${FAKE_WC_STATUS:-0}"\n')
+        self._write_command("df", '#!/bin/sh\nprintf "%b" "$FAKE_DF_OUTPUT"\nexit "${FAKE_DF_STATUS:-0}"\n')
+        self._write_command(
+            "tar",
+            '#!/bin/sh\n'
+            '[ "${FAKE_TAR_MODE:-complete}" != fail ] || exit 9\n'
+            'mkdir -p RELEASE_MANIFEST.json.d apache bin web\n'
+            'rm -rf RELEASE_MANIFEST.json.d\n'
+            'for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf '
+            'bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
+            'web/app.js web/index.html web/styles.css; do\n'
+            '  [ "${FAKE_TAR_MODE:-complete}:$member" = incomplete:web/styles.css ] || : >"$member"\n'
+            'done\n',
+        )
+
+    def _write_command(self, name, text):
+        command = self.bin / name
+        command.write_text(text, encoding="ascii")
+        command.chmod(0o755)
+
+    def run_harness(self, operation, *, wc_output="1024", df_output="fs 1000 100 900 10% /mnt/hdUser\n",
+                    wc_status=0, df_status=0, tar_mode="complete", filesystem="/mnt/hdUser"):
+        env = os.environ.copy()
+        env.update({
+            "PATH": str(self.bin) + os.pathsep + env["PATH"],
+            "FAKE_WC_OUTPUT": wc_output,
+            "FAKE_WC_STATUS": str(wc_status),
+            "FAKE_DF_OUTPUT": df_output,
+            "FAKE_DF_STATUS": str(df_status),
+            "FAKE_TAR_MODE": tar_mode,
+        })
+        arguments = ([str(self.archive), filesystem, str(self.scratch)]
+                     if operation == "preflight" else [str(self.archive), str(self.stage)])
+        return subprocess.run(
+            [str(self.harness), operation, *arguments], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    def test_low_space_fails_and_exact_boundary_passes(self):
+        persistent_release_root = self.root / "persistent" / "webui" / "releases"
+        staging = persistent_release_root / ".candidate.stage6-tmp"
+        low = self.run_harness(
+            "preflight", df_output="fs 1000 744 256 75% /mnt/hdUser\n",
+            filesystem=str(persistent_release_root),
+        )
+        self.assertNotEqual(low.returncode, 0)
+        self.assertIn("required_kib=257 available_kib=256", low.stderr)
+        self.assertFalse(persistent_release_root.exists())
+        self.assertFalse(staging.exists())
+        boundary = self.run_harness("preflight", df_output="fs 1000 743 257 74% /mnt/hdUser\n")
+        self.assertEqual(boundary.returncode, 0, boundary.stderr)
+
+    def test_malformed_and_empty_df_output_fail_closed(self):
+        for output in ("", "filesystem blocks used available capacity mounted\n", "fs 1000 100\n"):
+            with self.subTest(output=output):
+                result = self.run_harness("preflight", df_output=output)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid release filesystem capacity", result.stderr)
+
+    def test_nonzero_df_status_is_not_masked_by_last_line_parsing(self):
+        result = self.run_harness(
+            "preflight", df_status=7,
+            df_output="fs 1000 743 257 74% /mnt/hdUser\n",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release filesystem capacity unavailable", result.stderr)
+
+    def test_wc_whitespace_is_accepted_and_ceil_boundary_is_enforced(self):
+        below_ceiling = self.run_harness(
+            "preflight", wc_output="  \t1025 \t\n",
+            df_output="header\nfs 1000 743 257 74% /mnt/hdUser\n",
+        )
+        self.assertNotEqual(below_ceiling.returncode, 0)
+        self.assertIn("required_kib=258 available_kib=257", below_ceiling.stderr)
+        exact_ceiling = self.run_harness(
+            "preflight", wc_output="  \t1025 \t\n",
+            df_output="header\nfs 1000 742 258 74% /mnt/hdUser\n",
+        )
+        self.assertEqual(exact_ceiling.returncode, 0, exact_ceiling.stderr)
+
+    def test_nonzero_wc_status_fails_closed(self):
+        result = self.run_harness("preflight", wc_output="1024\n", wc_status=7)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release archive size unavailable", result.stderr)
+
+    def test_oversized_wc_value_is_rejected_before_shell_arithmetic(self):
+        result = self.run_harness("preflight", wc_output="1000000000\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid release archive size", result.stderr)
+
+    def test_oversized_available_value_is_rejected_before_shell_arithmetic(self):
+        result = self.run_harness(
+            "preflight", df_output="fs 1000000000 0 1000000000 0% /mnt/hdUser\n",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid release filesystem capacity", result.stderr)
+
+    def test_explicit_tar_failure_is_reported(self):
+        result = self.run_harness("extract", tar_mode="fail")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release archive extraction failed", result.stderr)
+
+    def test_tar_success_with_incomplete_tree_is_rejected(self):
+        result = self.run_harness("extract", tar_mode="incomplete")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release archive extraction incomplete: web/styles.css", result.stderr)
+
+
 class PackagingTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -48,6 +188,9 @@ class PackagingTests(unittest.TestCase):
         binary = self.source / "native" / "build" / "pm3000-rest-ppc32"
         binary.write_bytes(b"ELF-test")
         binary.chmod(0o755)
+        session_helper = self.source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
+        session_helper.write_bytes(b"ELF-session-helper-test")
+        session_helper.chmod(0o755)
         helper = self.source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
         helper.write_bytes(b"ELF-helper-test")
         helper.chmod(0o755)
@@ -70,6 +213,7 @@ class PackagingTests(unittest.TestCase):
                     "RELEASE_SHA256SUMS",
                     "apache/pm3000-revive.conf",
                     "bin/pm3000-atomic-publish",
+                    "bin/pm3000-gsp-session-helper",
                     "bin/pm3000-rest",
                     "web/app.js",
                     "web/index.html",
@@ -78,13 +222,31 @@ class PackagingTests(unittest.TestCase):
             )
             manifest = json.load(archive.extractfile("RELEASE_MANIFEST.json"))
             self.assertEqual(manifest["release_id"], "r1")
+            modes = {entry["path"]: entry["mode"] for entry in manifest["files"]}
+            self.assertEqual(0o4750, modes["bin/pm3000-gsp-session-helper"])
             index = archive.extractfile("web/index.html").read()
             self.assertIn(b"Build r1 (abcdef123456)", index)
             self.assertNotIn(b"__PM3000_", index)
+            regular_bytes = sum(member.size for member in archive.getmembers() if member.isfile())
+            self.assertLessEqual(regular_bytes, helper.MAX_RELEASE_REGULAR_BYTES)
             for entry in manifest["files"]:
                 payload = archive.extractfile(entry["path"]).read()
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), entry["sha256"])
                 self.assertEqual(len(payload), entry["size"])
+
+    def test_package_rejects_complete_allowlist_above_release_budget(self):
+        helper = load_helper()
+        output = self.work / "oversized-release.tar"
+        binary = self.source / "native" / "build" / "pm3000-rest-ppc32"
+        binary.write_bytes(b"X" * (448 * 1024))
+        with self.assertRaisesRegex(helper.DeploymentError, "448 KiB"):
+            helper.build_release(self.source, output, "r1", "abcdef123456")
+        self.assertFalse(output.exists())
+
+    def test_deployment_documentation_matches_nine_member_archive(self):
+        readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
+        self.assertEqual(2, readme.count("nine-member allowlist"))
+        self.assertNotIn("eight-member allowlist", readme)
 
 
 class DeploymentSimulationTests(unittest.TestCase):
@@ -130,6 +292,9 @@ class DeploymentSimulationTests(unittest.TestCase):
                 data += b" Build __PM3000_RELEASE_ID__ (__PM3000_GIT_REVISION__)"
             (source / "web" / name).write_bytes(data)
         (source / "native/build/pm3000-rest-ppc32").write_bytes(b"binary-" + release_id.encode())
+        (source / "native/build/pm3000-gsp-session-helper-ppc32").write_bytes(
+            b"session-helper-" + release_id.encode()
+        )
         (source / "deploy/build/pm3000-atomic-publish-ppc32").write_bytes(b"helper-" + release_id.encode())
         (source / "deploy/pm3000-revive.conf").write_bytes(b"new-config-" + release_id.encode() + b"\n")
         self.helper.build_release(source, self.package, release_id)
@@ -536,13 +701,18 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('root=/mnt/hdUser/pm3000-revive', installer)
         self.assertIn('base=$root/webui', installer)
         self.assertIn('chmod 755 "$root" "$base" "$releases"', installer)
-        self.assertIn("--verify-release \"$release\"", installer)
+        self.assertIn("--verify-release \"$release\" \"$daemon_gid\"", installer)
         self.assertIn('initialize_private_directory "$root/rest"', installer)
-        self.assertIn('verify_private_directory /etc/pm3000-rest', installer)
+        self.assertNotIn('verify_private_directory /etc/pm3000-rest', installer)
         self.assertIn('initialize_private_regular "$root/rest/tokens.json"', installer)
         self.assertIn('{"generation":1,"schemaVersion":1,"tokens":[]}', installer)
         self.assertIn('initialize_private_regular "$root/rest/tokens.json.lock"', installer)
-        self.assertIn('verify_private_regular /etc/pm3000-rest/controller.credentials', installer)
+        self.assertNotIn('controller.credentials', installer)
+        helper_precheck = installer.index('bin/pm3000-gsp-session-helper \\\n')
+        helper_chown = installer.index('chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"')
+        self.assertLess(helper_precheck, helper_chown)
+        self.assertIn('chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"', installer)
+        self.assertIn('chmod 4750 "$tmp/bin/pm3000-gsp-session-helper"', installer)
         self.assertIn('--verify-private-directory-owner "$1" "$daemon_uid"', installer)
         self.assertIn('--verify-private-regular-owner "$1" "$daemon_uid"', installer)
         self.assertNotIn('chown daemon:daemon "$root/rest"', installer)
@@ -558,7 +728,18 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('openssl dgst -sha256 "$1"', installer)
         self.assertIn('verify_release_sums "$tmp" "$tmp/RELEASE_SHA256SUMS"', installer)
         self.assertIn('tar tf "$package_snapshot"', installer)
-        self.assertIn('tar xf "$package_snapshot"', installer)
+        self.assertIn('tar xf "$_extract_archive"', installer)
+        self.assertIn('for required_command in df tail tar wc', installer)
+        capacity_check = installer.index('check_release_capacity "$package_snapshot" /mnt/hdUser "$work"')
+        release_tree_create = installer.index('mkdir -p "$releases"')
+        release_tree_chmod = installer.index('chmod 755 "$root" "$base" "$releases"')
+        staging_create = installer.index('mkdir -m 700 "$tmp"')
+        extraction = installer.index('extract_release_archive "$package_snapshot" "$tmp"')
+        private_initialization = installer.index('initialize_private_directory "$root/rest"')
+        self.assertLess(capacity_check, release_tree_create)
+        self.assertLess(capacity_check, release_tree_chmod)
+        self.assertLess(capacity_check, staging_create)
+        self.assertLess(extraction, private_initialization)
         self.assertIn('packaged_helper=$tmp/bin/pm3000-atomic-publish', installer)
         self.assertIn('atomic_helper=$work/pm3000-atomic-publish', installer)
         self.assertNotIn('sha256sum', installer)
@@ -574,7 +755,11 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('cmp "$package_tree/RELEASE_MANIFEST.json" "$release/RELEASE_MANIFEST.json"', rollback)
         self.assertIn('verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"', rollback)
         self.assertNotIn('sha256sum', rollback)
-        self.assertIn('--verify-release "$release"', rollback)
+        self.assertIn('--verify-release "$release" "$daemon_gid"', rollback)
+        self.assertIn('bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
+        self.assertIn('[ "$_sum_count" -eq 7 ]', rollback)
         self.assertIn('--verify-private-directory "$restore_dir"', rollback)
         apache = (DEPLOY / "pm3000-revive.conf").read_text()
         self.assertIn("ScriptAlias /api/v1 ", apache)
@@ -694,6 +879,7 @@ class ScriptStructureTests(unittest.TestCase):
                 "RELEASE_SHA256SUMS": 0o600,
                 "apache/pm3000-revive.conf": 0o644,
                 "bin/pm3000-atomic-publish": 0o755,
+                "bin/pm3000-gsp-session-helper": 0o4750,
                 "bin/pm3000-rest": 0o755,
                 "web/app.js": 0o644,
                 "web/index.html": 0o644,
@@ -704,13 +890,18 @@ class ScriptStructureTests(unittest.TestCase):
                 path.write_bytes(name.encode())
                 path.chmod(mode)
 
-            def verify():
+            def verify(expected_gid=None):
+                command = [str(helper), "--verify-release", str(release)]
+                if expected_gid is not None:
+                    command.append(str(expected_gid))
                 return subprocess.run(
-                    [str(helper), "--verify-release", str(release)],
+                    command,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 ).returncode
 
             self.assertEqual(verify(), 0)
+            self.assertEqual(verify(os.getegid()), 0)
+            self.assertNotEqual(verify(os.getegid() + 1), 0)
             for unsafe_mode in (0o777, 0o775, 0o757):
                 release.chmod(unsafe_mode)
                 self.assertNotEqual(verify(), 0)
@@ -762,10 +953,6 @@ class ScriptStructureTests(unittest.TestCase):
             (apache / "conf.d").mkdir(parents=True)
             config = apache / "conf.d/pm3000-revive.conf"
             config.write_bytes(b"old-config\n")
-            credentials = root / "pm3000-rest"
-            credentials.mkdir(mode=0o700)
-            (credentials / "controller.credentials").write_bytes(b"user\npassword\n")
-            (credentials / "controller.credentials").chmod(0o600)
             tmp_root = root / "tmp"
             package_tree = tmp_root / "input/tree"
             for directory in (package_tree / "apache", package_tree / "bin", package_tree / "web"):
@@ -787,6 +974,7 @@ class ScriptStructureTests(unittest.TestCase):
             payloads = {
                 "apache/pm3000-revive.conf": b"new-config\n",
                 "bin/pm3000-atomic-publish": helper.read_bytes(),
+                "bin/pm3000-gsp-session-helper": b"ELF-session-helper\n",
                 "bin/pm3000-rest": b"#!/bin/sh\nexit 0\n",
                 "web/app.js": b"app\n",
                 "web/index.html": b"index\n",
@@ -796,10 +984,13 @@ class ScriptStructureTests(unittest.TestCase):
                 path = package_tree / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
-                path.chmod(0o755 if name.startswith("bin/") else 0o644)
+                path.chmod(0o4750 if name == "bin/pm3000-gsp-session-helper"
+                           else 0o755 if name.startswith("bin/") else 0o644)
             entries = [
                 {"path": name, "sha256": hashlib.sha256(data).hexdigest(),
-                 "size": len(data), "mode": 0o755 if name.startswith("bin/") else 0o644}
+                 "size": len(data),
+                 "mode": (0o4750 if name == "bin/pm3000-gsp-session-helper"
+                          else 0o755 if name.startswith("bin/") else 0o644)}
                 for name, data in sorted(payloads.items())
             ]
             manifest = json.dumps(
@@ -820,7 +1011,8 @@ class ScriptStructureTests(unittest.TestCase):
             with tarfile.open(package, "w") as archive:
                 for name in ["RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS",
                              "apache/pm3000-revive.conf", "bin/pm3000-atomic-publish",
-                             "bin/pm3000-rest", "web/app.js", "web/index.html", "web/styles.css"]:
+                             "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
+                             "web/app.js", "web/index.html", "web/styles.css"]:
                     archive.add(package_tree / name, arcname=name, recursive=False,
                                 filter=root_owned_tarinfo)
             digest = hashlib.sha256(package.read_bytes()).hexdigest()
@@ -844,7 +1036,6 @@ class ScriptStructureTests(unittest.TestCase):
                 "bwrap", "--unshare-user", "--uid", "0", "--gid", "0",
                 "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/etc",
                 "--bind", str(mnt), "/mnt", "--bind", str(apache), "/etc/apache2",
-                "--bind", str(credentials), "/etc/pm3000-rest",
                 "--ro-bind", str(passwd), "/etc/passwd", "--ro-bind", str(group), "/etc/group",
                 "--bind", str(tmp_root), "/tmp", "--bind", str(usr_sbin), "/usr/sbin",
                 "--bind", str(init_d), "/etc/init.d",

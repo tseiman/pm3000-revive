@@ -117,6 +117,7 @@ expected_members = {
     "RELEASE_SHA256SUMS": 0o600,
     "apache/pm3000-revive.conf": 0o644,
     "bin/pm3000-atomic-publish": 0o755,
+    "bin/pm3000-gsp-session-helper": 0o4750,
     "bin/pm3000-rest": 0o755,
     "web/app.js": 0o644,
     "web/index.html": 0o644,
@@ -168,6 +169,7 @@ RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
 bin/pm3000-atomic-publish
+bin/pm3000-gsp-session-helper
 bin/pm3000-rest
 web/app.js
 web/index.html
@@ -184,6 +186,7 @@ chmod 600 "$work/release/RELEASE_MANIFEST.json" "$work/release/RELEASE_SHA256SUM
 chmod 644 "$work/release/apache/pm3000-revive.conf" \
     "$work/release/web/app.js" "$work/release/web/index.html" "$work/release/web/styles.css"
 chmod 755 "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
+chmod 4750 "$work/release/bin/pm3000-gsp-session-helper"
 helper=$work/release/bin/pm3000-atomic-publish
 rest=$work/release/bin/pm3000-rest
 "$helper" --verify-regular "$helper"
@@ -195,16 +198,12 @@ if [ -e /mnt/hdUser/pm3000-revive/rest ] || [ -L /mnt/hdUser/pm3000-revive/rest 
     "$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest 2>/dev/null ||
         "$helper" --verify-private-directory-owner /mnt/hdUser/pm3000-revive/rest "$daemon_uid"
 fi
-"$helper" --verify-private-directory /etc/pm3000-rest 2>/dev/null ||
-    "$helper" --verify-private-directory-owner /etc/pm3000-rest "$daemon_uid"
 for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-revive/rest/tokens.json.lock; do
     if [ -e "$token_file" ] || [ -L "$token_file" ]; then
         "$helper" --verify-private-regular "$token_file" 2>/dev/null ||
             "$helper" --verify-private-regular-owner "$token_file" "$daemon_uid"
     fi
 done
-"$helper" --verify-private-regular /etc/pm3000-rest/controller.credentials 2>/dev/null ||
-    "$helper" --verify-private-regular-owner /etc/pm3000-rest/controller.credentials "$daemon_uid"
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on "$rest")
 case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
     *) echo "REST health compatibility check failed" >&2; exit 1;;

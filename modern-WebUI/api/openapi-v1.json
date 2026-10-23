@@ -3075,7 +3075,7 @@
         }
       },
       "BackendUnavailable": {
-        "description": "The fixed read operation could not complete.",
+        "description": "The fixed controller operation could not complete. `backend_unavailable` hides internal transport/session details. `controller_service_user_unavailable` specifically means that the required local PM3000 account `pm3000-rest` is not configured and must be created with the required controller permissions.",
         "content": {
           "application/json": {
             "schema": {

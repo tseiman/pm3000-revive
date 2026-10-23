@@ -12,13 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 #define MAX_RESPONSE (1024U * 1024U)
-#define MAX_CREDENTIALS 512U
 #define MAX_REQUEST 8192U
 #define MAX_ESCAPED_SID (128U * 6U + 1U)
 #define MAX_ESCAPED_USERNAME (128U * 6U + 1U)
@@ -36,43 +34,6 @@ static void secure_zero(void *memory, size_t size) {
     while (size-- > 0U) *cursor++ = 0U;
 }
 
-
-static int read_credentials(const char *path, char username[129], char password[257],
-                            char *error, unsigned int error_size) {
-    int descriptor;
-    struct stat metadata;
-    unsigned char content[MAX_CREDENTIALS + 1U];
-    ssize_t amount;
-    char *first, *second;
-    descriptor = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
-    if (descriptor < 0 || fstat(descriptor, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
-        metadata.st_nlink != 1U || metadata.st_uid != getuid() ||
-        (metadata.st_mode & 0777U) != 0600U || metadata.st_size <= 0 || metadata.st_size > MAX_CREDENTIALS) {
-        if (descriptor >= 0) close(descriptor);
-        set_error(error, error_size, "service credentials rejected");
-        return -1;
-    }
-    amount = read(descriptor, content, sizeof(content) - 1U);
-    if (close(descriptor) != 0 || amount != metadata.st_size) {
-        set_error(error, error_size, "service credentials read failed");
-        return -1;
-    }
-    content[amount] = '\0';
-    first = strchr((char *)content, '\n');
-    if (first == NULL) { set_error(error, error_size, "service credentials rejected"); return -1; }
-    *first++ = '\0';
-    second = strchr(first, '\n');
-    if (second == NULL || second[1] != '\0') { set_error(error, error_size, "service credentials rejected"); return -1; }
-    *second = '\0';
-    if (content[0] == '\0' || first[0] == '\0' || strlen((char *)content) > 128U || strlen(first) > 256U ||
-        strpbrk((char *)content, "\r\t") != NULL || strpbrk(first, "\r\t") != NULL) {
-        set_error(error, error_size, "service credentials rejected"); return -1;
-    }
-    strcpy(username, (char *)content);
-    strcpy(password, first);
-    memset(content, 0, sizeof(content));
-    return 0;
-}
 
 static int xml_escape(const char *input, char *output, size_t capacity) {
     size_t used = 0;
@@ -96,6 +57,21 @@ static int xml_escape(const char *input, char *output, size_t capacity) {
         }
     }
     output[used] = '\0';
+    return 0;
+}
+
+static int send_all(int descriptor, const void *data, size_t length,
+                    int *request_started) {
+    const unsigned char *cursor = (const unsigned char *)data;
+    size_t sent = 0U;
+    while (sent < length) {
+        ssize_t amount = send(descriptor, cursor + sent, length - sent,
+                              MSG_NOSIGNAL);
+        if (amount < 0 && errno == EINTR) continue;
+        if (amount <= 0) return -1;
+        if (request_started != NULL) *request_started = 1;
+        sent += (size_t)amount;
+    }
     return 0;
 }
 
@@ -129,10 +105,9 @@ static int exchange_internal(const char *socket_path, const char *request,
     header[2] = 1U;
     memcpy(header + 3U, remote_address, strlen(remote_address));
     memcpy(header + 43U, "en", 2U);
-    if (send(descriptor, header, sizeof(header), MSG_NOSIGNAL) != (ssize_t)sizeof(header) ||
-        send(descriptor, request, request_length, MSG_NOSIGNAL) != (ssize_t)request_length ||
-        send(descriptor, "", 1U, MSG_NOSIGNAL) != 1) goto failure;
-    if (dispatched != NULL) *dispatched = 1;
+    if (send_all(descriptor, header, sizeof(header), NULL) != 0 ||
+        send_all(descriptor, request, request_length, dispatched) != 0 ||
+        send_all(descriptor, "", 1U, dispatched) != 0) goto failure;
     buffer = (unsigned char *)malloc(MAX_RESPONSE + 1U);
     if (buffer == NULL) goto failure;
     while (used < MAX_RESPONSE) {
@@ -170,149 +145,6 @@ static int exchange(const char *socket_path, const char *request,
 }
 
 
-static int fetch_page(const char *socket_path, const char *credentials_path,
-                      const char *page_path, unsigned char **response,
-                      size_t *response_length, char *error,
-                      unsigned int error_size) {
-    char username[129], password[257];
-    char escaped_user[MAX_ESCAPED_USERNAME], escaped_password[MAX_ESCAPED_PASSWORD];
-    char login[MAX_REQUEST], topology[MAX_REQUEST], logout[MAX_REQUEST], sid[129];
-    char escaped_sid[MAX_ESCAPED_SID], logout_error[256];
-    unsigned char *login_response = NULL, *logout_response = NULL;
-    size_t login_length = 0, logout_length = 0;
-    int result = -1;
-    error[0] = '\0'; *response = NULL; *response_length = 0;
-    if (read_credentials(credentials_path, username, password, error, error_size) != 0 ||
-        xml_escape(username, escaped_user, sizeof(escaped_user)) != 0 ||
-        xml_escape(password, escaped_password, sizeof(escaped_password)) != 0) goto cleanup;
-    if (snprintf(login, sizeof(login),
-        "<avtrans><sid/><action>login</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>%s</path></paths><payload><section structure=\"login\">"
-        "<parameter id=\"username\" structure=\"RWtext\"><value>%s</value></parameter>"
-        "<parameter id=\"password\" structure=\"password\"><value>%s</value></parameter>"
-        "</section></payload></avtrans>", page_path, escaped_user, escaped_password) >= (int)sizeof(login)) goto cleanup;
-    memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));
-    if (exchange(socket_path, login, &login_response, &login_length, error, error_size) != 0 ||
-        pm3000_xml_login_sid(login_response, login_length, sid) != 0 ||
-        xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0) {
-        set_error(error, error_size, "controller login rejected"); goto cleanup;
-    }
-    if (snprintf(topology, sizeof(topology),
-        "<avtrans><sid>%s</sid><action>get</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>%s</path></paths></avtrans>", escaped_sid, page_path) >= (int)sizeof(topology) ||
-        snprintf(logout, sizeof(logout),
-        "<avtrans><sid>%s</sid><action>logout</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>login</path></paths></avtrans>", escaped_sid) >= (int)sizeof(logout)) goto cleanup;
-    if (exchange(socket_path, topology, response, response_length, error, error_size) != 0) goto logout;
-    result = 0;
-logout:
-    logout_error[0] = '\0';
-    if (exchange(socket_path, logout, &logout_response, &logout_length,
-                 logout_error, sizeof(logout_error)) != 0 ||
-        !pm3000_xml_confirm(logout_response, logout_length, "login", "login")) {
-        /* Cleanup failure must neither discard a valid read nor mask its primary error. */
-        if (result == 0) {
-            fprintf(stderr, "pm3000-rest: controller logout cleanup failed: %s\n",
-                    logout_error[0] != '\0' ? logout_error : "response rejected");
-        }
-    }
-cleanup:
-    memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));
-    free(login_response); free(logout_response);
-    return result;
-}
-
-int pm3000_fetch_topology(const char *socket_path, const char *credentials_path,
-                          unsigned char **response, size_t *response_length,
-                          char *error, unsigned int error_size) {
-    return fetch_page(socket_path, credentials_path, "units.topology", response,
-                      response_length, error, error_size);
-}
-
-int pm3000_fetch_pdus(const char *socket_path, const char *credentials_path,
-                      unsigned char **response, size_t *response_length,
-                      char *error, unsigned int error_size) {
-    return fetch_page(socket_path, credentials_path,
-                      "units.powermanagement.pdu_management", response,
-                      response_length, error, error_size);
-}
-
-int pm3000_apply_outlet_action(const char *socket_path, const char *credentials_path,
-                               const char *outlet_id, const char *revision,
-                               const char *action, char *error,
-                               unsigned int error_size) {
-    char username[129], password[257];
-    char escaped_user[MAX_ESCAPED_USERNAME], escaped_password[MAX_ESCAPED_PASSWORD];
-    char login[MAX_REQUEST] = {0}, topology[MAX_REQUEST] = {0};
-    char request[MAX_REQUEST] = {0}, logout[MAX_REQUEST] = {0};
-    char sid[129], escaped_sid[MAX_ESCAPED_SID], identity[256], escaped_identity[1300];
-    unsigned char *login_response = NULL, *topology_response = NULL;
-    unsigned char *action_response = NULL, *logout_response = NULL;
-    size_t login_length = 0, topology_length = 0, action_length = 0, logout_length = 0;
-    int result = -1, resolution;
-    const char *controller_action;
-    error[0] = '\0';
-    if (strcmp(action, "on") == 0) controller_action = "targPowerOn";
-    else if (strcmp(action, "off") == 0) controller_action = "targPowerOff";
-    else if (strcmp(action, "cycle") == 0) controller_action = "targCycle";
-    else controller_action = NULL;
-    if (controller_action == NULL ||
-        read_credentials(credentials_path, username, password, error, error_size) != 0 ||
-        xml_escape(username, escaped_user, sizeof(escaped_user)) != 0 ||
-        xml_escape(password, escaped_password, sizeof(escaped_password)) != 0) goto cleanup_action;
-    if (snprintf(login, sizeof(login),
-        "<avtrans><sid/><action>login</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>units.topology</path></paths><payload><section structure=\"login\">"
-        "<parameter id=\"username\" structure=\"RWtext\"><value>%s</value></parameter>"
-        "<parameter id=\"password\" structure=\"password\"><value>%s</value></parameter>"
-        "</section></payload></avtrans>", escaped_user, escaped_password) >= (int)sizeof(login)) goto cleanup_action;
-    memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));
-    if (exchange(socket_path, login, &login_response, &login_length, error, error_size) != 0 ||
-        pm3000_xml_login_sid(login_response, login_length, sid) != 0 ||
-        xml_escape(sid, escaped_sid, sizeof(escaped_sid)) != 0) {
-        set_error(error, error_size, "controller login rejected"); goto cleanup_action;
-    }
-    if (snprintf(topology, sizeof(topology),
-        "<avtrans><sid>%s</sid><action>get</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>units.topology</path></paths></avtrans>", escaped_sid) >= (int)sizeof(topology) ||
-        snprintf(logout, sizeof(logout),
-        "<avtrans><sid>%s</sid><action>logout</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>login</path></paths></avtrans>", escaped_sid) >= (int)sizeof(logout)) goto logout_action;
-    if (exchange(socket_path, topology, &topology_response, &topology_length, error, error_size) != 0) goto logout_action;
-    resolution = pm3000_resolve_outlet_identity(topology_response, (unsigned long)topology_length,
-                                                 outlet_id, revision, identity, sizeof(identity),
-                                                 error, error_size);
-    if (resolution != 0) { result = resolution == 2 ? 2 : resolution == 1 ? 1 : -1; goto logout_action; }
-    if (xml_escape(identity, escaped_identity, sizeof(escaped_identity)) != 0 ||
-        snprintf(request, sizeof(request),
-        "<avtrans><sid>%s</sid><action>%s</action><agents><src>wmi</src><dest>controller</dest></agents>"
-        "<paths><path>units.topology</path></paths><payload><section structure=\"table\" id=\"topologyTable\">"
-        "<array id=\"%s\"></array></section></payload></avtrans>", escaped_sid, controller_action, escaped_identity) >= (int)sizeof(request)) goto logout_action;
-    {
-        int dispatched = 0;
-        if (exchange_internal(socket_path, request, &action_response, &action_length,
-                              &dispatched, error, error_size) != 0) {
-            result = dispatched ? 3 : -1;
-            goto logout_action;
-        }
-    }
-    if (pm3000_confirm_outlet_action(action_response, (unsigned long)action_length,
-                                     identity, action) != 0) {
-        set_error(error, error_size, "controller action outcome unknown");
-        result = 3;
-        goto logout_action;
-    }
-    result = 0;
-logout_action:
-    if (logout[0] == '<')
-        (void)exchange(socket_path, logout, &logout_response, &logout_length,
-                       error, error_size);
-cleanup_action:
-    memset(password, 0, sizeof(password)); memset(escaped_password, 0, sizeof(escaped_password));
-    free(login_response); free(topology_response); free(action_response); free(logout_response);
-    return result;
-}
-
 int pm3000_logout_session(const char *socket_path, const char *sid,
                           char *error, unsigned int error_size) {
     char escaped_sid[MAX_ESCAPED_SID], request[MAX_REQUEST];
@@ -328,6 +160,8 @@ int pm3000_logout_session(const char *socket_path, const char *sid,
     if (exchange(socket_path, request, &response, &response_length, error, error_size) == 0 &&
         pm3000_xml_confirm(response, response_length, "login", "login")) result = 0;
 done:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
     free(response);
     return result;
 }
@@ -374,8 +208,11 @@ int pm3000_login_session(const char *socket_path, const char *username,
     }
     result = 0;
 done:
-    memset(login, 0, sizeof(login));
-    memset(escaped_password, 0, sizeof(escaped_password));
+    secure_zero(escaped_user, sizeof(escaped_user));
+    secure_zero(escaped_password, sizeof(escaped_password));
+    secure_zero(login, sizeof(login));
+    secure_zero(navigation_request, sizeof(navigation_request));
+    secure_zero(escaped_sid, sizeof(escaped_sid));
     free(login_response);
     if (result != 0) {
         free(*navigation);
@@ -391,6 +228,7 @@ static int fetch_session_page(const char *socket_path, const char *sid,
                               size_t *response_length, char *error,
                               unsigned int error_size) {
     char escaped_sid[MAX_ESCAPED_SID], request[MAX_REQUEST];
+    int result = -1;
     error[0] = '\0';
     *response = NULL;
     *response_length = 0U;
@@ -398,8 +236,12 @@ static int fetch_session_page(const char *socket_path, const char *sid,
         snprintf(request, sizeof(request),
                  "<avtrans><sid>%s</sid><action>get</action><agents><src>wmi</src><dest>controller</dest></agents>"
                  "<paths><path>%s</path></paths></avtrans>", escaped_sid, page_path) >= (int)sizeof(request))
-        return -1;
-    return exchange(socket_path, request, response, response_length, error, error_size);
+        goto done_fetch;
+    result = exchange(socket_path, request, response, response_length, error, error_size);
+done_fetch:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
+    return result;
 }
 
 int pm3000_fetch_topology_session(const char *socket_path, const char *sid,
@@ -513,7 +355,7 @@ int pm3000_save_fixed_setting_session(const char *socket_path, const char *sid,
                                        size_t *response_length, char *error,
                                        unsigned int error_size) {
     char escaped_sid[MAX_ESCAPED_SID], request[MAX_REQUEST];
-    int dispatched = 0;
+    int dispatched = 0, result = -1;
     error[0] = '\0';
     *response = NULL;
     *response_length = 0U;
@@ -521,11 +363,17 @@ int pm3000_save_fixed_setting_session(const char *socket_path, const char *sid,
         snprintf(request, sizeof(request),
                  "<avtrans><sid>%s</sid><action>save</action><agents><src>wmi</src><dest>controller</dest></agents>"
                  "<paths><path>%s</path></paths><payload>%s</payload></avtrans>",
-                 escaped_sid, path, form_payload) >= (int)sizeof(request)) return -1;
+                 escaped_sid, path, form_payload) >= (int)sizeof(request)) goto done_fixed;
     if (exchange_internal(socket_path, request, response, response_length,
-                          &dispatched, error, error_size) != 0)
-        return dispatched ? 3 : -1;
-    return 0;
+                          &dispatched, error, error_size) != 0) {
+        result = dispatched ? 3 : -1;
+        goto done_fixed;
+    }
+    result = 0;
+done_fixed:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
+    return result;
 }
 
 int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
@@ -573,6 +421,10 @@ int pm3000_apply_outlet_action_session(const char *socket_path, const char *sid,
     }
     result = 0;
 done:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
+    secure_zero(identity, sizeof(identity));
+    secure_zero(escaped_identity, sizeof(escaped_identity));
     free(topology);
     free(response);
     return result;
@@ -613,31 +465,11 @@ int pm3000_apply_pdu_action_session(const char *socket_path, const char *sid,
     }
     result = 0;
 done_pdu:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
+    secure_zero(identity, sizeof(identity));
+    secure_zero(escaped_identity, sizeof(escaped_identity));
     free(pdus); free(response);
-    return result;
-}
-
-int pm3000_apply_pdu_action(const char *socket_path, const char *credentials_path,
-                            const char *pdu_id, const char *revision,
-                            const char *action, char *error,
-                            unsigned int error_size) {
-    char username[129], password[257], sid[129];
-    unsigned char *navigation = NULL;
-    size_t navigation_length = 0U;
-    int result = -1;
-    if (read_credentials(credentials_path, username, password, error, error_size) != 0) return -1;
-    if (pm3000_login_session(socket_path, username, password, sid, &navigation,
-                             &navigation_length, error, error_size) != 0) goto done_service_pdu;
-    result = pm3000_apply_pdu_action_session(socket_path, sid, pdu_id, revision,
-                                             action, error, error_size);
-    {
-        char logout_error[160] = {0};
-        if (pm3000_logout_session(socket_path, sid, logout_error, sizeof(logout_error)) != 0 && result == 0) {
-            set_error(error, error_size, "controller logout rejected"); result = 3;
-        }
-    }
-done_service_pdu:
-    memset(password, 0, sizeof(password)); free(navigation);
     return result;
 }
 
@@ -685,6 +517,7 @@ int pm3000_change_password_session(const char *socket_path, const char *sid,
     }
     result = 0;
 done_password:
+    secure_zero(escaped_sid, sizeof(escaped_sid));
     secure_zero(escaped_old, sizeof(escaped_old));
     secure_zero(escaped_new, sizeof(escaped_new));
     secure_zero(escaped_confirmation, sizeof(escaped_confirmation));
@@ -710,7 +543,7 @@ int pm3000_save_dsview_setting_session(const char *socket_path, const char *sid,
                  "<parameter id=\"allowDSView\" structure=\"checkbox\"><value>%s</value></parameter>"
                  "</section></payload></avtrans>", escaped_sid, path,
                  allow_dsview ? "true" : "false") >= (int)sizeof(request))
-        return -1;
+        goto done_dsview;
     if (exchange_internal(socket_path, request, &response, &response_length,
                           &dispatched, error, error_size) != 0) {
         result = dispatched ? 3 : -1;
@@ -728,7 +561,8 @@ int pm3000_save_dsview_setting_session(const char *socket_path, const char *sid,
     }
     result = 0;
 done_dsview:
-    memset(request, 0, sizeof(request));
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(request, sizeof(request));
     free(response);
     return result;
 }
@@ -757,7 +591,7 @@ int pm3000_save_nis_setting_session(const char *socket_path, const char *sid,
                  "<parameter id=\"address\" structure=\"text\"><value>%s</value></parameter>"
                  "</section></payload></avtrans>", escaped_sid, path,
                  escaped_domain, escaped_address) >= (int)sizeof(request))
-        return -1;
+        goto done_nis;
     if (exchange_internal(socket_path, request, &response, &response_length,
                           &dispatched, error, error_size) != 0) {
         result = dispatched ? 3 : -1;
@@ -777,7 +611,10 @@ int pm3000_save_nis_setting_session(const char *socket_path, const char *sid,
     }
     result = 0;
 done_nis:
-    memset(request, 0, sizeof(request));
+    secure_zero(escaped_sid, sizeof(escaped_sid));
+    secure_zero(escaped_domain, sizeof(escaped_domain));
+    secure_zero(escaped_address, sizeof(escaped_address));
+    secure_zero(request, sizeof(request));
     free(response);
     return result;
 }

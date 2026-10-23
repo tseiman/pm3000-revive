@@ -1,0 +1,17 @@
+GLIBC_2.0 {
+    global:
+        getpwnam;
+        getuid;
+        geteuid;
+        getppid;
+        getsockopt;
+        getdtablesize;
+        close;
+        read;
+        write;
+        memset;
+        strlen;
+        signal;
+    local:
+        *;
+};

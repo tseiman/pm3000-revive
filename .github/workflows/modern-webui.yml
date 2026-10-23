@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing modern-webui-v* tag to rebuild and populate; leave empty for a test build"
+        description: "Existing modern-webui-v* tag to rebuild and populate; leave empty for a CI-only artifact"
         required: false
         type: string
       release_id:
-        description: "Release ID for an untagged test build; ignored when release_tag is set"
+        description: "Release ID for an untagged CI artifact; ignored when release_tag is set"
         required: false
         type: string
   push:
@@ -19,7 +19,7 @@ permissions:
   contents: read
 
 jobs:
-  build-test-package:
+  build-release-package:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -56,7 +56,7 @@ jobs:
         id: version
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
-          TEST_RELEASE_ID: ${{ inputs.release_id }}
+          CI_RELEASE_ID: ${{ inputs.release_id }}
         run: |
           if [ -n "$RELEASE_TAG" ]; then
             case "$RELEASE_TAG" in
@@ -64,7 +64,7 @@ jobs:
               *) echo "Refusing unexpected release tag: $RELEASE_TAG" >&2; exit 1 ;;
             esac
           else
-            release_id=${TEST_RELEASE_ID:-test-${GITHUB_RUN_NUMBER}}
+            release_id=${CI_RELEASE_ID:-ci-${GITHUB_RUN_NUMBER}}
           fi
           case "$release_id" in
             ''|*[!A-Za-z0-9._-]*|.|..) echo "Unsafe release ID: $release_id" >&2; exit 1 ;;
@@ -73,6 +73,56 @@ jobs:
 
       - name: Build and verify modern PM3000 release
         run: modern-WebUI/deploy/build-release.sh "${{ steps.version.outputs.release_id }}" modern-WebUI/dist
+
+      - name: Verify packaged GSP helper ABI
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          releases=(modern-WebUI/dist/pm3000-release-*.tar)
+          [ "${#releases[@]}" -eq 1 ] || {
+            echo "Expected exactly one release TAR" >&2
+            exit 1
+          }
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          tar -xf "${releases[0]}" -C "$work" bin/pm3000-gsp-session-helper
+          helper=$work/bin/pm3000-gsp-session-helper
+          file "$helper" | grep -F 'ELF 32-bit MSB executable, PowerPC'
+          dynamic=$(readelf -d "$helper")
+          expected_needed=$(printf '%s\n' libc.so.6 libgsp_auth.so)
+          actual_needed=$(printf '%s\n' "$dynamic" | sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p' | LC_ALL=C sort)
+          [ "$actual_needed" = "$expected_needed" ] || {
+            echo "Unexpected GSP helper DT_NEEDED set:" >&2
+            printf '%s\n' "$actual_needed" >&2
+            exit 1
+          }
+          readelf -l "$helper" | grep -F 'Requesting program interpreter: /lib/ld.so.1'
+          expected_undefined=$(printf '%s\n' \
+            close@GLIBC_2.0 \
+            getdtablesize@GLIBC_2.0 \
+            geteuid@GLIBC_2.0 \
+            getppid@GLIBC_2.0 \
+            getpwnam@GLIBC_2.0 \
+            getsockopt@GLIBC_2.0 \
+            getuid@GLIBC_2.0 \
+            gsp_auth_session_create_username \
+            gsp_auth_session_destroy \
+            gsp_auth_session_get_sid \
+            gsp_auth_session_set_auth_type \
+            gsp_auth_session_set_cpid \
+            gsp_auth_session_set_mpid \
+            gsp_auth_session_set_type \
+            memset@GLIBC_2.0 \
+            read@GLIBC_2.0 \
+            signal@GLIBC_2.0 \
+            strlen@GLIBC_2.0 \
+            write@GLIBC_2.0)
+          actual_undefined=$(readelf --wide --dyn-syms "$helper" | awk '$7 == "UND" && $8 != "" { print $8 }' | LC_ALL=C sort -u)
+          [ "$actual_undefined" = "$expected_undefined" ] || {
+            echo "Unexpected GSP helper undefined-symbol set:" >&2
+            printf '%s\n' "$actual_undefined" >&2
+            exit 1
+          }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -85,7 +135,7 @@ jobs:
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/modern-webui-v') || inputs.release_tag != ''
-    needs: build-test-package
+    needs: build-release-package
     runs-on: ubuntu-24.04
     permissions:
       contents: write

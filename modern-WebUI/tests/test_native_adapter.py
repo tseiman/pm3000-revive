@@ -103,13 +103,18 @@ class NativeAdapterTests(unittest.TestCase):
             text=True,
         )
 
-    def run_adapter(self, *arguments: str, input_bytes: bytes | None = None) -> subprocess.CompletedProcess[bytes]:
+    def run_adapter(self, *arguments: str, input_bytes: bytes | None = None,
+                    extra_environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
+        environment = os.environ.copy()
+        if extra_environment:
+            environment.update(extra_environment)
         return subprocess.run(
             [str(BINARY), *arguments],
             input=input_bytes,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            env=environment,
         )
 
     def test_native_reader_rejects_noncanonical_record_anywhere(self) -> None:
@@ -255,6 +260,24 @@ class NativeAdapterTests(unittest.TestCase):
             "PM3000_CREDENTIALS": str(root / "must-not-open.credentials"),
             "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
         }
+
+    @staticmethod
+    def service_session_helper(root: Path, response: str,
+                               cleanup_marker: Path | None = None,
+                               exit_status: int = 0) -> Path:
+        helper = root / "service-session-helper"
+        cleanup = (f"printf cleaned >'{cleanup_marker.as_posix()}'\n"
+                   if cleanup_marker is not None else "")
+        helper.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' '{response}'\n"
+            "cat >/dev/null\n"
+            + cleanup
+            + f"exit {exit_status}\n",
+            encoding="ascii",
+        )
+        helper.chmod(0o700)
+        return helper
 
     @staticmethod
     def session_cookie(headers: bytes) -> tuple[str, str]:
@@ -1147,18 +1170,19 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertIn('<section structure="table" id="pdu_devices_table">', request)
             self.assertIn('<array id="[REDACTED]"></array>', request)
 
-    def test_pdu_bearer_action_requires_unrestricted_control_and_logs_out(self) -> None:
+    def test_pdu_bearer_action_requires_unrestricted_control_and_destroys_session(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
             socket_path = root / "pdu-service.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
             restricted = store.create_token(administrator.plaintext, label="Restricted", scope="control", outlets=[])
             unrestricted = store.create_token(administrator.plaintext, label="PDU Controller", scope="control")
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
+            cleanup_marker = root / "session-cleaned"
+            session_helper = self.service_session_helper(
+                root, "OK service-session-id", cleanup_marker
+            )
 
             denied = self.run_cgi(
                 "POST", "/api/v1/pdus/AAAAAAAAAAAAAAAAAAAAAA/actions",
@@ -1167,19 +1191,17 @@ class NativeAdapterTests(unittest.TestCase):
                 content_type="application/json",
                 extra_environment={
                     "PM3000_TOKEN_STORE": str(store_path),
-                    "PM3000_CREDENTIALS": str(credentials_path),
+                    "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
                     "PM3000_AVTRANS_SOCKET": str(socket_path),
                 },
             )
             self.assertIn(b"Status: 403", denied.stdout)
+            self.assertFalse(cleanup_marker.exists())
 
             pdu_id = self.run_adapter("--derive", "pdu", "[REDACTED]").stdout.decode().strip()
             revision = self.run_adapter("--revision", "[REDACTED]").stdout.decode().strip()
             confirmed_off = PDU_OBSERVED.read_bytes().replace(b'label="1/10">1/10</value>', b'label="0/10">0/10</value>', 1)
-            responses = [
-                LOGIN_RESPONSE.read_bytes(), NAVIGATION_RESPONSE.read_bytes(),
-                PDU_OBSERVED.read_bytes(), confirmed_off, LOGOUT_RESPONSE.read_bytes(),
-            ]
+            responses = [PDU_OBSERVED.read_bytes(), confirmed_off]
             with FakeAvtransController(socket_path, responses) as controller:
                 result = self.run_cgi(
                     "POST", f"/api/v1/pdus/{pdu_id}/actions",
@@ -1188,22 +1210,23 @@ class NativeAdapterTests(unittest.TestCase):
                     content_type="application/json",
                     extra_environment={
                         "PM3000_TOKEN_STORE": str(store_path),
-                        "PM3000_CREDENTIALS": str(credentials_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
                         "PM3000_AVTRANS_SOCKET": str(socket_path),
                     },
                 )
             self.assertIn(b"Status: 204", result.stdout)
-            self.assertEqual(5, len(controller.requests))
+            self.assertEqual(2, len(controller.requests))
             requests = [request for _, request in controller.requests]
-            self.assertIn(b"<action>off</action>", requests[3])
-            self.assertIn(b"<action>logout</action>", requests[4])
+            self.assertIn(b"<action>off</action>", requests[1])
+            self.assertNotIn(b"<action>login</action>", b"".join(requests))
+            self.assertNotIn(b"<action>logout</action>", b"".join(requests))
+            self.assertTrue(cleanup_marker.is_file())
             self.assertNotIn(unrestricted.plaintext.encode(), b"".join(requests))
 
     def test_outlet_action_uses_firmware_derived_topology_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
             socket_path = root / "avtrans.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
@@ -1213,16 +1236,8 @@ class NativeAdapterTests(unittest.TestCase):
             controller_token = store.create_token(
                 administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
             )
-            service_username = "'" * 128
-            service_password = "'" * 256
-            credentials_path.write_text(f"{service_username}\n{service_password}\n")
-            credentials_path.chmod(0o600)
-            responses = [
-                LOGIN_RESPONSE.read_bytes(),
-                OBSERVED.read_bytes(),
-                OBSERVED.read_bytes(),
-                LOGOUT_RESPONSE.read_bytes(),
-            ]
+            session_helper = self.service_session_helper(root, "OK service-session-id")
+            responses = [OBSERVED.read_bytes(), OBSERVED.read_bytes()]
             with FakeAvtransController(socket_path, responses) as controller:
                 result = self.run_cgi(
                     "POST", f"/api/v1/outlets/{outlet_id}/actions",
@@ -1231,32 +1246,31 @@ class NativeAdapterTests(unittest.TestCase):
                     content_type="application/json",
                     extra_environment={
                         "PM3000_TOKEN_STORE": str(store_path),
-                        "PM3000_CREDENTIALS": str(credentials_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                        "PM3000_CREDENTIALS": str(root / "must-not-open.credentials"),
                         "PM3000_AVTRANS_SOCKET": str(socket_path),
                     },
                 )
             self.assertIn(b"Status: 204", result.stdout)
-            self.assertEqual(4, len(controller.requests))
+            self.assertEqual(2, len(controller.requests))
             requests = [request.decode("utf-8") for _, request in controller.requests]
-            self.assertIn("<action>login</action>", requests[0])
-            self.assertIn("<value>" + "&apos;" * 128 + "</value>", requests[0])
-            self.assertIn("<value>" + "&apos;" * 256 + "</value>", requests[0])
-            self.assertIn("<action>get</action>", requests[1])
-            self.assertIn("<path>units.topology</path>", requests[1])
-            self.assertIn("<action>targPowerOn</action>", requests[2])
-            self.assertIn('<section structure="table" id="topologyTable">', requests[2])
-            self.assertIn("<array id=", requests[2])
-            self.assertNotIn("<action>on</action>", requests[2])
-            self.assertIn("<action>logout</action>", requests[3])
+            self.assertIn("<sid>service-session-id</sid>", requests[0])
+            self.assertIn("<action>get</action>", requests[0])
+            self.assertIn("<path>units.topology</path>", requests[0])
+            self.assertIn("<action>targPowerOn</action>", requests[1])
+            self.assertIn('<section structure="table" id="topologyTable">', requests[1])
+            self.assertIn("<array id=", requests[1])
+            self.assertNotIn("<action>on</action>", requests[1])
+            self.assertNotIn("<action>login</action>", "".join(requests))
+            self.assertNotIn("<action>logout</action>", "".join(requests))
+            self.assertFalse((root / "must-not-open.credentials").exists())
             self.assertNotIn(controller_token.plaintext, "".join(requests))
 
-    def test_service_credential_flow_escapes_maximum_expansion_controller_sids(self) -> None:
-        entities = {b"&": b"&amp;", b"<": b"&lt;", b'"': b"&quot;", b"'": b"&apos;"}
-        login_template = LOGIN_RESPONSE.read_bytes()
+    def test_service_session_rejects_unsafe_sids_before_avtrans(self) -> None:
+        unsafe_sids = ("bad&sid", "bad<sid", 'bad"sid', "bad sid", "A" * 129)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
             inventory = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
@@ -1264,37 +1278,29 @@ class NativeAdapterTests(unittest.TestCase):
             controller_token = store.create_token(
                 administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
             )
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
-            for index, (decoded, entity) in enumerate(entities.items()):
-                with self.subTest(decoded=decoded):
-                    socket_path = root / f"service-sid-{index}.sock"
-                    encoded_sid = entity * 128
-                    login_response = login_template.replace(b"[REDACTED-SID]", encoded_sid)
-                    with FakeAvtransController(socket_path, [
-                        login_response, OBSERVED.read_bytes(), OBSERVED.read_bytes(),
-                        LOGOUT_RESPONSE.read_bytes(),
-                    ]) as controller:
-                        result = self.run_cgi(
-                            "POST", f"/api/v1/outlets/{outlet_id}/actions",
-                            authorization=f"Bearer {controller_token.plaintext}",
-                            body=json.dumps({
-                                "action": "on",
-                                "inventoryRevision": inventory["inventoryRevision"],
-                            }).encode(),
-                            content_type="application/json",
-                            extra_environment={
-                                "PM3000_TOKEN_STORE": str(store_path),
-                                "PM3000_CREDENTIALS": str(credentials_path),
-                                "PM3000_AVTRANS_SOCKET": str(socket_path),
-                            },
-                        )
-                    self.assertIn(b"Status: 204", result.stdout)
-                    expected = b"<sid>" + encoded_sid + b"</sid>"
-                    self.assertEqual(4, len(controller.requests))
-                    for _header, request in controller.requests[1:]:
-                        self.assertIn(expected, request)
-                        self.assertNotIn(b"<sid>" + decoded * 128 + b"</sid>", request)
+            for index, unsafe_sid in enumerate(unsafe_sids):
+                with self.subTest(unsafe_sid=unsafe_sid):
+                    socket_path = root / f"unsafe-service-sid-{index}.sock"
+                    session_helper = self.service_session_helper(root, f"OK {unsafe_sid}")
+                    result = self.run_cgi(
+                        "POST", f"/api/v1/outlets/{outlet_id}/actions",
+                        authorization=f"Bearer {controller_token.plaintext}",
+                        body=json.dumps({
+                            "action": "on",
+                            "inventoryRevision": inventory["inventoryRevision"],
+                        }).encode(),
+                        content_type="application/json",
+                        extra_environment={
+                            "PM3000_TOKEN_STORE": str(store_path),
+                            "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                            "PM3000_AVTRANS_SOCKET": str(socket_path),
+                        },
+                    )
+                    _headers, error = self.cgi_json(result)
+                    self.assertIn(b"Status: 503", result.stdout)
+                    self.assertEqual("backend_unavailable", error["code"])
+                    self.assertFalse(socket_path.exists())
+                    self.assertNotIn(unsafe_sid.encode(), result.stdout + result.stderr)
 
     def test_outlet_action_rejects_controller_error_wrong_action_path_and_missing_payload(self) -> None:
         observed = OBSERVED.read_bytes()
@@ -1308,7 +1314,6 @@ class NativeAdapterTests(unittest.TestCase):
             with self.subTest(response=action_response[:80]), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 store_path = root / "rest" / "tokens.json"
-                credentials_path = root / "service.credentials"
                 socket_path = root / "avtrans.sock"
                 store = token_store.TokenStore(store_path)
                 administrator = store.bootstrap("Administrator")
@@ -1317,11 +1322,9 @@ class NativeAdapterTests(unittest.TestCase):
                 controller_token = store.create_token(
                     administrator.plaintext, label="Controller", scope="control", outlets=[outlet_id]
                 )
-                credentials_path.write_text("service-user\nservice-password\n")
-                credentials_path.chmod(0o600)
+                session_helper = self.service_session_helper(root, "OK service-session-id")
                 with FakeAvtransController(socket_path, [
-                    LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(),
-                    action_response, LOGOUT_RESPONSE.read_bytes(),
+                    OBSERVED.read_bytes(), action_response,
                 ]) as controller:
                     result = self.run_cgi(
                         "POST", f"/api/v1/outlets/{outlet_id}/actions",
@@ -1333,15 +1336,15 @@ class NativeAdapterTests(unittest.TestCase):
                         content_type="application/json",
                         extra_environment={
                             "PM3000_TOKEN_STORE": str(store_path),
-                            "PM3000_CREDENTIALS": str(credentials_path),
+                            "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
                             "PM3000_AVTRANS_SOCKET": str(socket_path),
                         },
                     )
                 _headers, response = self.cgi_json(result)
                 self.assertIn(b"Status: 503", result.stdout)
                 self.assertEqual("action_outcome_unknown", response["code"])
-                self.assertEqual(4, len(controller.requests))
-                self.assertIn(b"<action>targPowerOff</action>", controller.requests[2][1])
+                self.assertEqual(2, len(controller.requests))
+                self.assertIn(b"<action>targPowerOff</action>", controller.requests[1][1])
 
     def test_session_password_change_uses_closed_firmware_form_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2428,25 +2431,116 @@ class NativeAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path, socket_path = root / "service.credentials", root / "avtrans.sock"
+            socket_path = root / "avtrans.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
             reader = store.create_token(administrator.plaintext, label="Reader", scope="read")
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
-            environment = {"PM3000_TOKEN_STORE": str(store_path), "PM3000_CREDENTIALS": str(credentials_path), "PM3000_AVTRANS_SOCKET": str(socket_path)}
-            with FakeAvtransController(socket_path, [LOGIN_RESPONSE.read_bytes(), b"<broken>", LOGOUT_RESPONSE.read_bytes()]):
+            session_helper = self.service_session_helper(root, "OK service-session-id")
+            environment = {
+                "PM3000_TOKEN_STORE": str(store_path),
+                "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+            with FakeAvtransController(socket_path, [b"<broken>"]):
                 invalid = self.run_cgi("GET", "/api/v1/outlets", authorization=f"Bearer {reader.plaintext}", extra_environment=environment)
             _headers, error = self.cgi_json(invalid)
             self.assertEqual("backend_protocol_error", error["code"])
 
-    def test_production_binary_excludes_authorize_helper_and_uses_installed_credentials(self) -> None:
+    def test_production_binaries_exclude_test_auth_and_stored_controller_credentials(self) -> None:
         source = (NATIVE / "main.c").read_text(encoding="utf-8")
         self.assertNotIn("/mnt/hdUser/pm3000-revive/rest/service.credentials", source)
-        self.assertGreaterEqual(source.count("/etc/pm3000-rest/controller.credentials"), 4)
+        self.assertNotIn("/etc/pm3000-rest/controller.credentials", source)
         subprocess.run(["make", "-C", str(NATIVE), "target"], check=True)
         production = (NATIVE / "build" / "pm3000-rest-ppc32").read_bytes()
+        helper = (NATIVE / "build" / "pm3000-gsp-session-helper-ppc32").read_bytes()
         self.assertNotIn(b"--authorize", production)
+        self.assertNotIn(b"controller.credentials", production)
+        self.assertIn(b"pm3000-rest", helper)
+        self.assertIn(b"daemon", helper)
+        self.assertNotIn(b"/bin/sh", helper)
+        helper_source = (NATIVE / "gsp-session-helper.c").read_text(encoding="utf-8")
+        self.assertIn("SO_PEERCRED", helper_source)
+        self.assertIn("#define SO_PEERCRED 21", helper_source)
+        self.assertIn("peer.pid == parent_pid", helper_source)
+        self.assertIn("caller_uid != caller->pw_uid", helper_source)
+        self.assertIn("close_untrusted_descriptors();", helper_source)
+        self.assertIn("signal(SIGTERM, request_cleanup)", helper_source)
+        self.assertIn("signal(SIGHUP, request_cleanup)", helper_source)
+        self.assertIn("gsp_auth_session_destroy(&session)", helper_source)
+        self.assertIn("gsp_auth_session_set_auth_type(&session, \"local\") == -1", helper_source)
+        session_source = (NATIVE / "service_session.c").read_text(encoding="utf-8")
+        self.assertIn("execve(helper_path, arguments, environment)", session_source)
+        self.assertNotIn("getenv(", helper_source)
+        symbols = subprocess.run(
+            ["readelf", "-Ws", str(NATIVE / "build" / "pm3000-gsp-session-helper-ppc32")],
+            check=True, stdout=subprocess.PIPE, text=True,
+        ).stdout
+        versions = [line.split("@GLIBC_", 1)[1].split()[0].split("(", 1)[0]
+                    for line in symbols.splitlines() if "@GLIBC_" in line]
+        self.assertTrue(versions)
+        self.assertEqual({"2.0"}, set(versions))
+        self.assertNotIn(" UND _restgpr_", symbols)
+        self.assertNotIn(" UND _savegpr_", symbols)
+
+    def test_gsp_helper_build_uses_checked_in_link_stubs_and_ci_audits_release(self) -> None:
+        makefile = (NATIVE / "Makefile").read_text(encoding="utf-8")
+        workflow = (ROOT.parent / ".github" / "workflows" / "modern-webui.yml").read_text(encoding="utf-8")
+        self.assertNotIn("FIRMWARE_ROOT", makefile)
+        self.assertIn("ABI_STUB_SOURCE := abi-stubs", makefile)
+        self.assertIn("libgsp-auth-link.c", makefile)
+        self.assertIn("libc-glibc20-link.c", makefile)
+        self.assertIn("glibc-2.0.map", makefile)
+        for relative in (
+            "abi-stubs/libgsp-auth-link.c",
+            "abi-stubs/libc-glibc20-link.c",
+            "abi-stubs/glibc-2.0.map",
+            "abi-stubs/README.md",
+        ):
+            self.assertTrue((NATIVE / relative).is_file(), relative)
+        self.assertIn("Verify packaged GSP helper ABI", workflow)
+        self.assertIn("build-release-package:", workflow)
+        self.assertNotIn("build-test-package", workflow)
+        self.assertIn("ci-${GITHUB_RUN_NUMBER}", workflow)
+        self.assertNotIn("test-${GITHUB_RUN_NUMBER}", workflow)
+        self.assertIn("bin/pm3000-gsp-session-helper", workflow)
+        self.assertIn("libgsp_auth.so", workflow)
+        self.assertIn("libc.so.6", workflow)
+        self.assertIn("GLIBC_2.0", workflow)
+        self.assertIn("expected_needed=$(printf", workflow)
+        self.assertIn("libc.so.6 libgsp_auth.so", workflow)
+        self.assertIn("expected_undefined=", workflow)
+        self.assertIn('$7 == "UND" && $8 != ""', workflow)
+        for symbol in (
+            "gsp_auth_session_create_username",
+            "gsp_auth_session_destroy",
+            "getpwnam@GLIBC_2.0",
+            "write@GLIBC_2.0",
+        ):
+            self.assertIn(symbol, workflow)
+
+    def test_mutation_partial_send_and_terminator_failure_are_outcome_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "avtrans-send-fault"
+            subprocess.run(
+                [
+                    "cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic",
+                    "-I", str(NATIVE),
+                    str(ROOT / "tests" / "avtrans_send_fault_harness.c"),
+                    str(NATIVE / "avtrans.c"),
+                    str(NATIVE / "controller_xml.c"),
+                    str(NATIVE / "projector.c"),
+                    str(NATIVE / "identifiers.c"),
+                    str(NATIVE / "sha256.c"),
+                    "-Wl,--wrap=send", "-o", str(binary),
+                ],
+                check=True,
+            )
+            for mode in ("short", "terminator"):
+                completed = subprocess.run(
+                    [str(binary), mode], text=True, capture_output=True, check=False, timeout=10,
+                )
+                self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+                self.assertIn("result=3", completed.stdout)
 
     def test_controller_socket_does_not_require_post_2623_atomic_cloexec(self) -> None:
         source = (NATIVE / "avtrans.c").read_text(encoding="utf-8")
@@ -2566,11 +2660,146 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(outlets, record["outlets"])
             self.assertFalse(record["enabled"])
 
+    def test_missing_local_service_identity_returns_actionable_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            reader = store.create_token(
+                administrator.plaintext, label="Read inventory", scope="read"
+            )
+            controller = store.create_token(
+                administrator.plaintext, label="Control inventory", scope="control"
+            )
+            helper = self.service_session_helper(root, "ERR USER_MISSING")
+            socket_path = root / "must-not-open.sock"
+            environment = {
+                "PM3000_TOKEN_STORE": str(store_path),
+                "PM3000_SERVICE_SESSION_HELPER": str(helper),
+                "PM3000_AVTRANS_SOCKET": str(socket_path),
+            }
+            requests = (
+                ("GET", "/api/v1/outlets", reader.plaintext, None, None),
+                ("GET", "/api/v1/pdus", reader.plaintext, None, None),
+                (
+                    "POST",
+                    f"/api/v1/outlets/{'A' * 22}/actions",
+                    controller.plaintext,
+                    json.dumps({"action": "on", "inventoryRevision": "B" * 22}).encode(),
+                    "application/json",
+                ),
+                (
+                    "POST",
+                    f"/api/v1/pdus/{'A' * 22}/actions",
+                    controller.plaintext,
+                    json.dumps({"action": "on", "inventoryRevision": "B" * 22}).encode(),
+                    "application/json",
+                ),
+            )
+
+            for method, path, token, body_bytes, content_type in requests:
+                with self.subTest(path=path):
+                    result = self.run_cgi(
+                        method,
+                        path,
+                        authorization=f"Bearer {token}",
+                        body=body_bytes,
+                        content_type=content_type,
+                        extra_environment=environment,
+                    )
+                    headers, body = self.cgi_json(result)
+                    self.assertIn(b"Status: 503", headers)
+                    self.assertEqual("controller_service_user_unavailable", body["code"])
+                    self.assertEqual(
+                        "The local PM3000 service user 'pm3000-rest' is not configured. "
+                        "Create it and grant the required REST permissions.",
+                        body["message"],
+                    )
+            self.assertFalse(socket_path.exists())
+
+    def test_backend_failures_destroy_local_service_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            reader = store.create_token(
+                administrator.plaintext, label="Read inventory", scope="read"
+            )
+            controller = store.create_token(
+                administrator.plaintext, label="Control inventory", scope="control"
+            )
+            requests = (
+                ("GET", "/api/v1/outlets", reader.plaintext, b""),
+                ("GET", "/api/v1/pdus", reader.plaintext, b""),
+                (
+                    "POST", "/api/v1/outlets/AAAAAAAAAAAAAAAAAAAAAA/actions",
+                    controller.plaintext,
+                    json.dumps({"action": "on", "inventoryRevision": "B" * 22}).encode(),
+                ),
+                (
+                    "POST", "/api/v1/pdus/AAAAAAAAAAAAAAAAAAAAAA/actions",
+                    controller.plaintext,
+                    json.dumps({"action": "off", "inventoryRevision": "B" * 22}).encode(),
+                ),
+            )
+            for index, (method, path, token, body) in enumerate(requests):
+                with self.subTest(path=path):
+                    cleanup_marker = root / f"failure-cleaned-{index}"
+                    helper = self.service_session_helper(
+                        root, "OK service-session-id", cleanup_marker
+                    )
+                    result = self.run_cgi(
+                        method, path, authorization=f"Bearer {token}", body=body,
+                        content_type="application/json" if body else None,
+                        extra_environment={
+                            "PM3000_TOKEN_STORE": str(store_path),
+                            "PM3000_SERVICE_SESSION_HELPER": str(helper),
+                            "PM3000_AVTRANS_SOCKET": str(root / f"absent-{index}.sock"),
+                        },
+                    )
+                    _headers, error = self.cgi_json(result)
+                    self.assertIn(b"Status: 503", result.stdout)
+                    self.assertEqual("backend_unavailable", error["code"])
+                    self.assertTrue(cleanup_marker.is_file())
+                    self.assertNotIn(b"service-session-id", result.stdout + result.stderr)
+
+    def test_failed_service_session_cleanup_is_never_reported_as_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            socket_path = root / "avtrans.sock"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            reader = store.create_token(
+                administrator.plaintext, label="Read inventory", scope="read"
+            )
+            helper = self.service_session_helper(
+                root, "OK service-session-id", exit_status=1
+            )
+            with FakeAvtransController(socket_path, [OBSERVED.read_bytes()]):
+                result = self.run_cgi(
+                    "GET", "/api/v1/outlets",
+                    authorization=f"Bearer {reader.plaintext}",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(helper),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            headers, error = self.cgi_json(result)
+            self.assertIn(b"Status: 503", headers)
+            self.assertEqual("backend_unavailable", error["code"])
+            self.assertNotIn(b"service-session-id", result.stdout + result.stderr)
+            main_source = (NATIVE / "main.c").read_text(encoding="utf-8")
+            self.assertEqual(2, main_source.count("service session cleanup outcome unknown"))
+            self.assertGreaterEqual(main_source.count("result = 3;"), 2)
+
     def test_outlet_collection_uses_fixed_read_only_fake_controller_flow(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
             socket_path = root / "avtrans.sock"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
@@ -2582,16 +2811,12 @@ class NativeAdapterTests(unittest.TestCase):
                 scope="read",
                 outlets=[allowed_id],
             )
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
-            responses = [
-                LOGIN_RESPONSE.read_bytes(),
-                OBSERVED.read_bytes(),
-                LOGOUT_RESPONSE.read_bytes(),
-            ] * 2
+            helper = self.service_session_helper(root, "OK service-session-id")
+            responses = [OBSERVED.read_bytes()] * 2
             environment = {
                 "PM3000_TOKEN_STORE": str(store_path),
-                "PM3000_CREDENTIALS": str(credentials_path),
+                "PM3000_SERVICE_SESSION_HELPER": str(helper),
+                "PM3000_CREDENTIALS": str(root / "must-not-open.credentials"),
                 "PM3000_AVTRANS_SOCKET": str(socket_path),
                 "REMOTE_ADDR": "198.51.100.27",
             }
@@ -2619,26 +2844,60 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(0, detail.returncode, detail.stderr)
             _detail_headers, detail_body = detail.stdout.split(b"\r\n\r\n", 1)
             self.assertEqual(projected["outlets"][0], json.loads(detail_body))
-            self.assertEqual(6, len(controller.requests))
+            self.assertEqual(2, len(controller.requests))
             for header, _request in controller.requests:
                 self.assertEqual(59, len(header))
                 self.assertEqual(b"\0\0\1", header[:3])
                 self.assertTrue(header[3:43].startswith(b"198.51.100.27\0"))
                 self.assertTrue(header[43:59].startswith(b"en\0"))
             requests = [request.decode("utf-8") for _, request in controller.requests]
-            self.assertIn("<action>login</action>", requests[0])
-            self.assertIn("<action>get</action>", requests[1])
-            self.assertIn("<path>units.topology</path>", requests[1])
-            self.assertIn("<action>logout</action>", requests[2])
+            for request in requests:
+                self.assertIn("<sid>service-session-id</sid>", request)
+                self.assertIn("<action>get</action>", request)
+                self.assertIn("<path>units.topology</path>", request)
+            self.assertNotIn("<action>login</action>", "".join(requests))
+            self.assertNotIn("<action>logout</action>", "".join(requests))
             self.assertNotIn("targPower", "".join(requests))
             self.assertNotIn(reader.plaintext, "".join(requests))
-            self.assertNotIn("service-password", result.stdout.decode("utf-8"))
+            self.assertFalse((root / "must-not-open.credentials").exists())
 
-    def test_valid_bearer_reads_survive_logout_cleanup_failure(self) -> None:
+    def test_backend_diagnostic_reports_only_safe_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            success_socket = root / "success.sock"
+            success_helper = self.service_session_helper(root, "OK service-session-id")
+            with FakeAvtransController(success_socket, [OBSERVED.read_bytes()]):
+                success = self.run_adapter(
+                    "--diagnose-backend", str(success_socket),
+                    extra_environment={"PM3000_SERVICE_SESSION_HELPER": str(success_helper)},
+                )
+            self.assertEqual(0, success.returncode)
+            self.assertEqual(b"backend_phase=complete\n", success.stdout)
+            self.assertNotIn(b"service-session-id", success.stdout + success.stderr)
+
+            failed_helper = self.service_session_helper(root, "ERR SESSION_CREATE")
+            failed = self.run_adapter(
+                "--diagnose-backend", str(root / "unused.sock"),
+                extra_environment={"PM3000_SERVICE_SESSION_HELPER": str(failed_helper)},
+            )
+            self.assertEqual(3, failed.returncode)
+            self.assertEqual(b"backend_phase=session\n", failed.stdout)
+            self.assertNotIn(str(root).encode(), failed.stdout + failed.stderr)
+
+            missing_helper = self.service_session_helper(root, "ERR USER_MISSING")
+            missing = self.run_adapter(
+                "--diagnose-backend", str(root / "unused-too.sock"),
+                extra_environment={"PM3000_SERVICE_SESSION_HELPER": str(missing_helper)},
+            )
+            self.assertEqual(3, missing.returncode)
+            self.assertEqual(b"backend_phase=service_user\n", missing.stdout)
+            self.assertNotIn(str(root).encode(), missing.stdout + missing.stderr)
+
+    def test_valid_bearer_reads_destroy_local_service_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             store_path = root / "rest" / "tokens.json"
-            credentials_path = root / "service.credentials"
             store = token_store.TokenStore(store_path)
             administrator = store.bootstrap("Administrator")
             projection = json.loads(self.run_adapter("--project", str(OBSERVED)).stdout)
@@ -2646,18 +2905,23 @@ class NativeAdapterTests(unittest.TestCase):
             reader = store.create_token(
                 administrator.plaintext, label="Read outlets", scope="read", outlets=[outlet["id"]]
             )
-            credentials_path.write_text("service-user\nservice-password\n")
-            credentials_path.chmod(0o600)
             environment = {
                 "PM3000_TOKEN_STORE": str(store_path),
-                "PM3000_CREDENTIALS": str(credentials_path),
                 "REMOTE_ADDR": "198.51.100.27",
             }
             for index, path in enumerate(("/api/v1/outlets", f'/api/v1/outlets/{outlet["id"]}')):
                 route_socket = root / f"avtrans-{index}.sock"
-                route_environment = {**environment, "PM3000_AVTRANS_SOCKET": str(route_socket)}
+                cleanup_marker = root / f"session-cleaned-{index}"
+                session_helper = self.service_session_helper(
+                    root, "OK service-session-id", cleanup_marker
+                )
+                route_environment = {
+                    **environment,
+                    "PM3000_AVTRANS_SOCKET": str(route_socket),
+                    "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                }
                 with self.subTest(path=path), FakeAvtransController(
-                    route_socket, [LOGIN_RESPONSE.read_bytes(), OBSERVED.read_bytes(), b"not XML"]
+                    route_socket, [OBSERVED.read_bytes()]
                 ) as controller:
                     result = self.run_cgi(
                         "GET", path, authorization=f"Bearer {reader.plaintext}",
@@ -2672,11 +2936,12 @@ class NativeAdapterTests(unittest.TestCase):
                     self.assertEqual([outlet], payload["outlets"])
                 else:
                     self.assertEqual(outlet, payload)
-                self.assertEqual(3, len(controller.requests))
-                self.assertIn(b"<action>logout</action>", controller.requests[2][1])
-                self.assertIn(b"controller logout cleanup failed", result.stderr)
+                self.assertEqual(1, len(controller.requests))
+                self.assertTrue(cleanup_marker.is_file())
+                self.assertNotIn(b"<action>login</action>", controller.requests[0][1])
+                self.assertNotIn(b"<action>logout</action>", controller.requests[0][1])
                 self.assertNotIn(reader.plaintext.encode("ascii"), result.stderr)
-                self.assertNotIn(b"service-password", result.stderr)
+                self.assertNotIn(b"service-session-id", result.stderr)
 
     def test_health_is_local_https_only_cgi_response(self) -> None:
         result = self.run_cgi("GET", "/api/v1/health")

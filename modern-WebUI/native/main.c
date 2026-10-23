@@ -5,6 +5,7 @@
 #include "fixed_form.h"
 #include "identifiers.h"
 #include "projector.h"
+#include "service_session.h"
 #include "session.h"
 #include "token_admin.h"
 #include "token_auth.h"
@@ -57,6 +58,91 @@ static const char *configured_path(const char *name, const char *production) {
     (void)name;
 #endif
     return production;
+}
+
+static const char *service_helper_path(void) {
+    return configured_path(
+        "PM3000_SERVICE_SESSION_HELPER",
+        "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-gsp-session-helper");
+}
+
+static int service_fetch_topology(const char *socket_path,
+                                  unsigned char **response,
+                                  size_t *response_length,
+                                  char *error, unsigned int error_size) {
+    struct pm3000_service_session session;
+    int result = pm3000_service_session_open(service_helper_path(), &session,
+                                              error, error_size);
+    if (result != 0) return -1;
+    result = pm3000_fetch_topology_session(socket_path, session.sid, response,
+                                           response_length, error, error_size);
+    if (pm3000_service_session_close(&session) != 0 && result == 0) {
+        (void)snprintf(error, error_size, "%s", "service session cleanup failed");
+        result = -1;
+    }
+    return result;
+}
+
+static int service_fetch_pdus(const char *socket_path,
+                              unsigned char **response,
+                              size_t *response_length,
+                              char *error, unsigned int error_size) {
+    struct pm3000_service_session session;
+    int result = pm3000_service_session_open(service_helper_path(), &session,
+                                              error, error_size);
+    if (result != 0) return -1;
+    result = pm3000_fetch_pdus_session(socket_path, session.sid, response,
+                                       response_length, error, error_size);
+    if (pm3000_service_session_close(&session) != 0 && result == 0) {
+        (void)snprintf(error, error_size, "%s", "service session cleanup failed");
+        result = -1;
+    }
+    return result;
+}
+
+static int service_apply_outlet_action(const char *socket_path,
+                                       const char *outlet_id,
+                                       const char *revision,
+                                       const char *action,
+                                       char *error, unsigned int error_size) {
+    struct pm3000_service_session session;
+    int result = pm3000_service_session_open(service_helper_path(), &session,
+                                              error, error_size);
+    if (result != 0) return -1;
+    result = pm3000_apply_outlet_action_session(
+        socket_path, session.sid, outlet_id, revision, action, error, error_size);
+    if (pm3000_service_session_close(&session) != 0 && result == 0) {
+        (void)snprintf(error, error_size, "%s", "service session cleanup outcome unknown");
+        result = 3;
+    }
+    return result;
+}
+
+static int service_apply_pdu_action(const char *socket_path,
+                                    const char *pdu_id,
+                                    const char *revision,
+                                    const char *action,
+                                    char *error, unsigned int error_size) {
+    struct pm3000_service_session session;
+    int result = pm3000_service_session_open(service_helper_path(), &session,
+                                              error, error_size);
+    if (result != 0) return -1;
+    result = pm3000_apply_pdu_action_session(
+        socket_path, session.sid, pdu_id, revision, action, error, error_size);
+    if (pm3000_service_session_close(&session) != 0 && result == 0) {
+        (void)snprintf(error, error_size, "%s", "service session cleanup outcome unknown");
+        result = 3;
+    }
+    return result;
+}
+
+static int cgi_service_backend_error(const char *error, const char *fallback) {
+    if (strcmp(error, "service identity missing") == 0)
+        return cgi_error(
+            503U, "Service Unavailable", "controller_service_user_unavailable",
+            "The local PM3000 service user 'pm3000-rest' is not configured. "
+            "Create it and grant the required REST permissions.");
+    return cgi_error(503U, "Service Unavailable", "backend_unavailable", fallback);
 }
 
 static int opaque_outlet_id(const char *value, char output[23]) {
@@ -1610,9 +1696,9 @@ static int run_cgi(void) {
             if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
             if (!authorization.authorized || !authorization.unrestricted)
                 return cgi_error(403U, "Forbidden", "forbidden", "PDU inventory requires an unrestricted token.");
-            auth_result = pm3000_fetch_pdus(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-                                            configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
-                                            &response, &response_length, error, sizeof(error));
+            auth_result = service_fetch_pdus(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                &response, &response_length, error, sizeof(error));
         } else {
             if (load_request_session(configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"), 1, &gui_session) != 0)
                 return cgi_error(401U, "Unauthorized", "unauthorized", "Session or Bearer authentication required.");
@@ -1621,7 +1707,10 @@ static int run_cgi(void) {
             auth_result = pm3000_fetch_pdus_session(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
                                                     gui_session.sid, &response, &response_length, error, sizeof(error));
         }
-        if (auth_result != 0) { free(response); return cgi_error(503U, "Service Unavailable", "backend_unavailable", "PDU backend unavailable."); }
+        if (auth_result != 0) {
+            free(response);
+            return cgi_service_backend_error(error, "PDU backend unavailable.");
+        }
         if (pm3000_project_pdus_bytes(response, (unsigned long)response_length, NULL, error, sizeof(error)) != 0) {
             free(response); return cgi_error(502U, "Bad Gateway", "backend_protocol_error", "Backend response rejected.");
         }
@@ -1649,9 +1738,9 @@ static int run_cgi(void) {
             if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
             if (!authorization.authorized || !authorization.unrestricted)
                 return cgi_error(403U, "Forbidden", "forbidden", "PDU actions require an unrestricted control token.");
-            auth_result = pm3000_apply_pdu_action(configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-                                                  configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
-                                                  pdu_id, revision, action, error, sizeof(error));
+            auth_result = service_apply_pdu_action(
+                configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
+                pdu_id, revision, action, error, sizeof(error));
         } else {
             if (load_request_session(configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"), 1, &gui_session) != 0)
                 return cgi_error(401U, "Unauthorized", "unauthorized", "Session or Bearer authentication required.");
@@ -1666,7 +1755,8 @@ static int run_cgi(void) {
         if (auth_result == 2) return cgi_error(404U, "Not Found", "not_found", "PDU not found.");
         if (auth_result == 4) return cgi_error(403U, "Forbidden", "forbidden", "PDU control is not permitted.");
         if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The PDU action may have been dispatched; do not retry automatically.");
-        if (auth_result != 0) return cgi_error(503U, "Service Unavailable", "backend_unavailable", "PDU action was not confirmed.");
+        if (auth_result != 0)
+            return cgi_service_backend_error(error, "PDU action was not confirmed.");
         cgi_headers(204U, "No Content"); return ferror(stdout) ? 1 : 0;
     }
     if (method != NULL && path != NULL && strlen(path) == 46U &&
@@ -1690,9 +1780,8 @@ static int run_cgi(void) {
             if (auth_result < 0) return cgi_error(503U, "Service Unavailable", "token_store_unavailable", "Authentication store unavailable.");
             if (!authorization.authenticated) return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
             if (!authorization.authorized) return cgi_error(403U, "Forbidden", "forbidden", "Token does not authorize this outlet action.");
-            auth_result = pm3000_apply_outlet_action(
+            auth_result = service_apply_outlet_action(
                 configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-                configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
                 outlet_id, revision, action, error, sizeof(error));
         } else {
             if (load_request_session(
@@ -1711,7 +1800,8 @@ static int run_cgi(void) {
         if (auth_result == 1) return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
         if (auth_result == 2) return cgi_error(409U, "Conflict", "inventory_changed", "Refresh the outlet inventory and retry.");
         if (auth_result == 3) return cgi_error(503U, "Service Unavailable", "action_outcome_unknown", "The outlet action may have been dispatched; do not retry automatically.");
-        if (auth_result != 0) return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Outlet action was not confirmed.");
+        if (auth_result != 0)
+            return cgi_service_backend_error(error, "Outlet action was not confirmed.");
         cgi_headers(204U, "No Content");
         return ferror(stdout) ? 1 : 0;
     }
@@ -1758,15 +1848,17 @@ static int run_cgi(void) {
          pm3000_fetch_topology_session(
              configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
              gui_session.sid, &response, &response_length, error, sizeof(error)) :
-         pm3000_fetch_topology(
+         service_fetch_topology(
              configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket"),
-             configured_path("PM3000_CREDENTIALS", "/etc/pm3000-rest/controller.credentials"),
              &response, &response_length, error, sizeof(error))) != 0) {
         free(response);
         fprintf(stderr, "pm3000-rest: outlet topology fetch failed via %s: %s\n",
-                using_session ? "browser session" : "service credentials",
+                using_session ? "browser session" : "local service session",
                 error[0] != '\0' ? error : "unspecified backend error");
-        return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Read-only backend unavailable.");
+        if (!using_session)
+            return cgi_service_backend_error(error, "Read-only backend unavailable.");
+        return cgi_error(503U, "Service Unavailable", "backend_unavailable",
+                         "Read-only backend unavailable.");
     }
     if (detail_request) {
         int projection = pm3000_project_detail_bytes(
@@ -1801,6 +1893,31 @@ static int run_cgi(void) {
     return ferror(stdout) ? 1 : 0;
 }
 
+static int diagnose_backend(const char *socket_path) {
+    unsigned char *response = NULL;
+    size_t response_length = 0;
+    char error[160] = {0};
+    const char *phase = "backend";
+    int result;
+    if (getenv("REMOTE_ADDR") == NULL && setenv("REMOTE_ADDR", "127.0.0.1", 1) != 0) {
+        fputs("backend_phase=environment\n", stdout);
+        return 3;
+    }
+    result = service_fetch_topology(socket_path, &response,
+                                    &response_length, error, sizeof(error));
+    free(response);
+    if (result == 0) {
+        fputs("backend_phase=complete\n", stdout);
+        return 0;
+    }
+    if (strcmp(error, "service identity missing") == 0) phase = "service_user";
+    else if (strncmp(error, "service session", 15U) == 0) phase = "session";
+    else if (strcmp(error, "controller unavailable") == 0 ||
+             strcmp(error, "controller response rejected") == 0) phase = "topology";
+    printf("backend_phase=%s\n", phase);
+    return 3;
+}
+
 static int derive(const char *kind, const char *identity) {
     char output[PM3000_ID_LENGTH + 1U];
     if (pm3000_derive_id(kind, identity, output) != 0) return 2;
@@ -1819,6 +1936,8 @@ int main(int argc, char **argv) {
     (void)signal(SIGPIPE, SIG_IGN);
     if (argc == 1) return run_cgi();
 #ifdef PM3000_TESTING
+    if (argc == 3 && strcmp(argv[1], "--diagnose-backend") == 0)
+        return diagnose_backend(argv[2]);
     if ((argc == 5 || argc == 6) && strcmp(argv[1], "--authorize") == 0) {
         pm3000_authorization authorization;
         char error[160] = {0};
@@ -1830,6 +1949,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 #endif
+    if (argc == 2 && strcmp(argv[1], "--diagnose-backend") == 0)
+        return diagnose_backend("/dev/avtrans_socket");
     if (argc == 4 && strcmp(argv[1], "--detail") == 0) {
         char error[160] = {0};
         int result = pm3000_project_detail_file(argv[2], argv[3], stdout, error, sizeof(error));
@@ -1851,6 +1972,6 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
-    fputs("usage: pm3000-rest --derive outlet|pdu ID | --revision ID... | --project FILE\n", stderr);
+    fputs("usage: pm3000-rest --diagnose-backend | --derive outlet|pdu ID | --revision ID... | --project FILE\n", stderr);
     return 2;
 }

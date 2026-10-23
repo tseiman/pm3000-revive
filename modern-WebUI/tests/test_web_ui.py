@@ -26,7 +26,7 @@ class WebUiTests(unittest.TestCase):
         cls.fake = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.fake)
 
-    def test_production_assets_are_dependency_free_and_within_budget(self) -> None:
+    def test_production_web_assets_are_dependency_free_and_allowlisted(self) -> None:
         assets = [WEB / "index.html", WEB / "styles.css", WEB / "app.js"]
         manifest = {}
         for line in (WEB / "release-files.txt").read_text().splitlines():
@@ -37,7 +37,6 @@ class WebUiTests(unittest.TestCase):
             manifest,
         )
         self.assertEqual({path.name for path in assets}, set(manifest))
-        self.assertLess(sum(path.stat().st_size for path in assets), 400 * 1024)
         self.assertIn('href="styles.css"', self.html)
         self.assertIn('type="module" src="app.js"', self.html)
         self.assertNotRegex(self.html, r"https?://")
@@ -288,6 +287,11 @@ class WebUiTests(unittest.TestCase):
         self.assertIn('$("old-password").value = ""', self.javascript)
         self.assertIn('$("new-password").value = ""', self.javascript)
         self.assertIn('$("confirm-password").value = ""', self.javascript)
+
+    def test_enabled_power_action_buttons_use_semantic_colors(self) -> None:
+        self.assertIn('button.className = `small-button action-${action}${action === "off" ? " danger" : ""}`', self.javascript)
+        self.assertIn('.small-button.action-on:not(:disabled){color:#21b43b}', self.css)
+        self.assertIn('.small-button.action-cycle:not(:disabled){color:#ccab00}', self.css)
 
     def test_disabled_small_buttons_have_no_interactive_effects(self) -> None:
         self.assertIn('.small-button:not(:disabled):hover', self.css)
