@@ -30,6 +30,7 @@ The hardware-validated predecessor `local-gsp-reviewed-v4` is currently installe
 - `GET /api/v1/monitoring/serial-ports`
 - `GET /api/v1/outlets`
 - `GET /api/v1/outlets/{outletId}`
+- `POST /api/v1/outlets/actions`
 - `POST /api/v1/outlets/{outletId}/actions`
 - `GET /api/v1/pdus`
 - `POST /api/v1/pdus/{pduId}/actions`
@@ -155,7 +156,7 @@ A created bearer value appears only in its one-time `201` response. While the ex
 
 ### Power actions and password change
 
-Power routes validate HTTPS, session or bearer authorization, scope/right, outlet policy, route shape, closed JSON, and browser CSRF. The server refreshes the relevant inventory, resolves the opaque ID to one row, verifies the client revision, checks the advertised firmware control, and emits a fixed table payload. Topology actions map to `targPowerOn`, `targPowerOff`, and `targCycle`; PDU-wide actions use `on`, `off`, and `cycle`.
+Power routes validate HTTPS, session or bearer authorization, scope/right, outlet policy, route shape, closed JSON, and browser CSRF. The existing per-ID routes remain compatible. The additive `POST /api/v1/outlets/actions` route accepts an opaque outlet ID or an exact case-sensitive printable-ASCII name in the closed `outlet` request member. The server resolves the selector against fresh topology, rejects missing or ambiguous names, and applies bearer outlet allowlists only to the resolved canonical opaque ID. It then refreshes the relevant inventory again immediately before dispatch, resolves that ID to one row, checks the client inventory revision when supplied for an outlet action, verifies the advertised firmware control, and emits a fixed table payload. PDU-wide actions continue to require an inventory revision. Topology actions map to `targPowerOn`, `targPowerOff`, and `targCycle`; PDU-wide actions use `on`, `off`, and `cycle`.
 
 Password change is session-only, requires `units.change_password`, matching CSRF, and matching new-password confirmation. It emits only the fixed `save` form, accepts only the firmware-derived success-form hierarchy, and clears secret buffers with a non-optimizable wipe.
 

@@ -24,6 +24,7 @@ class RestV1ContractTests(unittest.TestCase):
             {
                 "/api/v1/health",
                 "/api/v1/outlets",
+                "/api/v1/outlets/actions",
                 "/api/v1/outlets/{outletId}",
                 "/api/v1/outlets/{outletId}/actions",
                 "/api/v1/pdus",
@@ -52,6 +53,7 @@ class RestV1ContractTests(unittest.TestCase):
         )
         self.assertEqual({"get"}, set(paths["/api/v1/health"]))
         self.assertEqual({"get"}, set(paths["/api/v1/outlets"]))
+        self.assertEqual({"post"}, set(paths["/api/v1/outlets/actions"]))
         self.assertEqual({"get", "parameters"}, set(paths["/api/v1/outlets/{outletId}"]))
         self.assertEqual({"post", "parameters"}, set(paths["/api/v1/outlets/{outletId}/actions"]))
         self.assertEqual({"get"}, set(paths["/api/v1/pdus"]))
@@ -401,12 +403,33 @@ class RestV1ContractTests(unittest.TestCase):
         )
         self.assertEqual("firmware-derived-fixed-dispatch", pdu["x-action-contract-status"])
         self.assertTrue(pdu["x-csrf-required-for-cookie-auth"])
+        self.assertEqual("#/components/schemas/PduActionRequest",
+                         pdu["requestBody"]["content"]["application/json"]["schema"]["$ref"])
+        self.assertEqual("#/components/responses/ActionUnavailable",
+                         pdu["responses"]["503"]["$ref"])
 
         schema = self.contract["components"]["schemas"]["OutletActionRequest"]
         self.assertFalse(schema["additionalProperties"])
-        self.assertEqual(["action", "inventoryRevision"], schema["required"])
+        self.assertEqual(["action"], schema["required"])
         self.assertEqual(["on", "off", "cycle"], schema["properties"]["action"]["enum"])
         self.assertEqual(2, schema["maxProperties"])
+        pdu_schema = self.contract["components"]["schemas"]["PduActionRequest"]
+        self.assertEqual(["action", "inventoryRevision"], pdu_schema["required"])
+        self.assertEqual(2, pdu_schema["minProperties"])
+
+        selector_operation = self.contract["paths"]["/api/v1/outlets/actions"]["post"]
+        self.assertEqual("control", selector_operation["x-required-scope"])
+        self.assertEqual("resolve-selector-then-require-id-membership",
+                         selector_operation["x-outlet-allowlist-behavior"])
+        self.assertEqual("#/components/responses/OutletSelectorConflict",
+                         selector_operation["responses"]["409"]["$ref"])
+        self.assertEqual("#/components/responses/ActionUnavailable",
+                         selector_operation["responses"]["503"]["$ref"])
+        selector = self.contract["components"]["schemas"]["OutletSelectorActionRequest"]
+        self.assertFalse(selector["additionalProperties"])
+        self.assertEqual(["outlet", "action"], selector["required"])
+        self.assertEqual(3, selector["maxProperties"])
+        self.assertIn("inventoryRevision", selector["properties"])
 
     def test_objects_and_errors_reject_unknown_fields(self) -> None:
         schemas = self.contract["components"]["schemas"]
@@ -415,6 +438,8 @@ class RestV1ContractTests(unittest.TestCase):
             "Outlet",
             "OutletCollection",
             "OutletActionRequest",
+            "OutletSelectorActionRequest",
+            "PduActionRequest",
             "Pdu",
             "PduCollection",
             "PasswordChangeRequest",
@@ -443,6 +468,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "unsupported_media_type",
                 "payload_too_large",
                 "inventory_changed",
+                "outlet_name_ambiguous",
                 "backend_unavailable",
                 "backend_protocol_error",
                 "action_outcome_unknown",
@@ -460,6 +486,7 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual([], self.contract["paths"]["/api/v1/health"]["get"]["security"])
         for path, method in (
             ("/api/v1/outlets", "get"),
+            ("/api/v1/outlets/actions", "post"),
             ("/api/v1/outlets/{outletId}", "get"),
             ("/api/v1/outlets/{outletId}/actions", "post"),
             ("/api/v1/pdus", "get"),

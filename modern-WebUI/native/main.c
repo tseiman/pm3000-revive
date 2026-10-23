@@ -100,6 +100,25 @@ static int service_fetch_pdus(const char *socket_path,
     return result;
 }
 
+static int service_resolve_outlet_selector(const char *socket_path,
+                                           const char *selector,
+                                           const char *revision,
+                                           char outlet_id[23],
+                                           char *error, unsigned int error_size) {
+    unsigned char *topology = NULL;
+    size_t topology_length = 0U;
+    char identity[256];
+    int result = service_fetch_topology(socket_path, &topology, &topology_length,
+                                        error, error_size);
+    if (result == 0)
+        result = pm3000_resolve_outlet_selector(
+            topology, (unsigned long)topology_length, selector, revision,
+            outlet_id, identity, sizeof(identity), error, error_size);
+    free(topology);
+    memset(identity, 0, sizeof(identity));
+    return result;
+}
+
 static int service_apply_outlet_action(const char *socket_path,
                                        const char *outlet_id,
                                        const char *revision,
@@ -155,6 +174,15 @@ static int opaque_outlet_id(const char *value, char output[23]) {
     }
     output[22] = '\0';
     return 1;
+}
+
+static int authorization_allows_outlet(const pm3000_authorization *authorization,
+                                       const char *outlet_id) {
+    unsigned int index;
+    if (authorization->unrestricted) return 1;
+    for (index = 0U; index < authorization->outlet_count; ++index)
+        if (strcmp(authorization->outlets[index], outlet_id) == 0) return 1;
+    return 0;
 }
 
 static int valid_token_path_id(const char *value) {
@@ -260,6 +288,8 @@ static int parse_action_request(const unsigned char *body, size_t length,
                                 char action[6], char revision[23]) {
     struct json_cursor cursor = {body, length, 0U};
     int first = 1, have_action = 0, have_revision = 0;
+    action[0] = '\0';
+    revision[0] = '\0';
     if (length == 0U || json_character(&cursor, '{') != 0) return -1;
     for (;;) {
         char key[32], value[32];
@@ -281,7 +311,50 @@ static int parse_action_request(const unsigned char *body, size_t length,
         } else return -1;
     }
     json_space(&cursor);
-    return cursor.offset == cursor.length && have_action && have_revision ? 0 : -1;
+    return cursor.offset == cursor.length && have_action ? 0 : -1;
+}
+
+static int parse_pdu_action_request(const unsigned char *body, size_t length,
+                                    char action[6], char revision[23]) {
+    if (parse_action_request(body, length, action, revision) != 0) return -1;
+    return revision[0] != '\0' ? 0 : -1;
+}
+
+static int parse_selector_action_request(const unsigned char *body, size_t length,
+                                         char selector[129], char action[6],
+                                         char revision[23]) {
+    struct json_cursor cursor = {body, length, 0U};
+    int first = 1, have_selector = 0, have_action = 0, have_revision = 0;
+    selector[0] = '\0'; action[0] = '\0'; revision[0] = '\0';
+    if (length == 0U || json_character(&cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[32], value[129];
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset; break;
+        }
+        if (!first && json_character(&cursor, ',') != 0) return -1;
+        first = 0; json_space(&cursor);
+        if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+            json_character(&cursor, ':') != 0) return -1;
+        json_space(&cursor);
+        if (json_ascii_string(&cursor, value, sizeof(value)) != 0) return -1;
+        if (strcmp(key, "outlet") == 0) {
+            if (have_selector || value[0] == '\0' || !printable_ascii(value)) return -1;
+            strcpy(selector, value); have_selector = 1;
+        } else if (strcmp(key, "action") == 0) {
+            if (have_action || (strcmp(value, "on") != 0 &&
+                strcmp(value, "off") != 0 && strcmp(value, "cycle") != 0)) return -1;
+            strcpy(action, value); have_action = 1;
+        } else if (strcmp(key, "inventoryRevision") == 0) {
+            char opaque[23];
+            if (have_revision || strlen(value) != 22U ||
+                !opaque_outlet_id(value, opaque)) return -1;
+            strcpy(revision, value); have_revision = 1;
+        } else return -1;
+    }
+    json_space(&cursor);
+    return cursor.offset == cursor.length && have_selector && have_action ? 0 : -1;
 }
 
 static int parse_boolean_setting_request(const unsigned char *body, size_t length,
@@ -1726,7 +1799,7 @@ static int run_cgi(void) {
         body_result = read_json_body(body, 1024U, &body_length);
         if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type", "Content-Type must be application/json without content encoding.");
         if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large", "The request body is too large.");
-        if (body_result != 0 || parse_action_request(body, body_length, action, revision) != 0)
+        if (body_result != 0 || parse_pdu_action_request(body, body_length, action, revision) != 0)
             return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
         header = getenv("HTTP_AUTHORIZATION");
         if (!browser_session_authorization(header)) {
@@ -1758,6 +1831,93 @@ static int run_cgi(void) {
         if (auth_result != 0)
             return cgi_service_backend_error(error, "PDU action was not confirmed.");
         cgi_headers(204U, "No Content"); return ferror(stdout) ? 1 : 0;
+    }
+    if (method != NULL && path != NULL && strcmp(path, "/api/v1/outlets/actions") == 0) {
+        char selector[129], outlet_id[23], action[6], revision[23];
+        unsigned char body[1025]; size_t body_length = 0U; int body_result, resolve_result;
+        const char *action_socket = configured_path("PM3000_AVTRANS_SOCKET", "/dev/avtrans_socket");
+        if (strcmp(method, "POST") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+        body_result = read_json_body(body, 1024U, &body_length);
+        if (body_result == 415)
+            return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                             "Content-Type must be application/json without content encoding.");
+        if (body_result == 413)
+            return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                             "The request body is too large.");
+        if (body_result != 0 || parse_selector_action_request(
+                body, body_length, selector, action, revision) != 0)
+            return cgi_error(400U, "Bad Request", "bad_request", "The request body is invalid.");
+        header = getenv("HTTP_AUTHORIZATION");
+        if (!browser_session_authorization(header)) {
+            if (strncmp(header, "Bearer ", 7U) != 0 || header[7] == '\0' ||
+                strchr(header + 7, ' ') != NULL)
+                return cgi_error(401U, "Unauthorized", "unauthorized",
+                                 "Bearer authentication required.");
+            auth_result = pm3000_authorize(
+                configured_path("PM3000_TOKEN_STORE", "/mnt/hdUser/pm3000-revive/rest/tokens.json"),
+                header + 7, "control", NULL, &authorization, error, sizeof(error));
+            if (auth_result < 0)
+                return cgi_error(503U, "Service Unavailable", "token_store_unavailable",
+                                 "Authentication store unavailable.");
+            if (!authorization.authenticated)
+                return cgi_error(401U, "Unauthorized", "unauthorized", "Token rejected.");
+            if (!authorization.authorized)
+                return cgi_error(403U, "Forbidden", "forbidden",
+                                 "Token does not authorize outlet control.");
+            resolve_result = service_resolve_outlet_selector(
+                action_socket, selector, revision, outlet_id, error, sizeof(error));
+            if (resolve_result == 0 && !authorization_allows_outlet(&authorization, outlet_id))
+                return cgi_error(403U, "Forbidden", "forbidden",
+                                 "Token does not authorize this outlet action.");
+            if (resolve_result == 0)
+                auth_result = service_apply_outlet_action(
+                    action_socket, outlet_id, revision, action, error, sizeof(error));
+        } else {
+            unsigned char *topology = NULL; size_t topology_length = 0U; char identity[256];
+            if (load_request_session(
+                    configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                    1, &gui_session) != 0)
+                return cgi_error(401U, "Unauthorized", "unauthorized",
+                                 "Session or Bearer authentication required.");
+            if (!gui_session.can_control_power)
+                return cgi_error(403U, "Forbidden", "forbidden", "Power control is not permitted.");
+            if (!pm3000_session_csrf_matches(&gui_session, getenv("HTTP_X_CSRF_TOKEN")))
+                return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+            resolve_result = pm3000_fetch_topology_session(
+                action_socket, gui_session.sid, &topology, &topology_length, error, sizeof(error));
+            if (resolve_result == 0)
+                resolve_result = pm3000_resolve_outlet_selector(
+                    topology, (unsigned long)topology_length, selector, revision,
+                    outlet_id, identity, sizeof(identity), error, sizeof(error));
+            free(topology); memset(identity, 0, sizeof(identity));
+            if (resolve_result == 0)
+                auth_result = pm3000_apply_outlet_action_session(
+                    action_socket, gui_session.sid, outlet_id, revision, action,
+                    error, sizeof(error));
+        }
+        if (resolve_result == 1)
+            return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
+        if (resolve_result == 2)
+            return cgi_error(409U, "Conflict", "inventory_changed",
+                             "Refresh the outlet inventory and retry.");
+        if (resolve_result == 5)
+            return cgi_error(409U, "Conflict", "outlet_name_ambiguous",
+                             "The outlet name is not unique; use the opaque outlet ID.");
+        if (resolve_result != 0)
+            return cgi_service_backend_error(error, "Outlet selector could not be resolved.");
+        if (auth_result == 1)
+            return cgi_error(404U, "Not Found", "not_found", "Outlet not found.");
+        if (auth_result == 2)
+            return cgi_error(409U, "Conflict", "inventory_changed",
+                             "Refresh the outlet inventory and retry.");
+        if (auth_result == 3)
+            return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                             "The outlet action may have been dispatched; do not retry automatically.");
+        if (auth_result != 0)
+            return cgi_service_backend_error(error, "Outlet action was not confirmed.");
+        cgi_headers(204U, "No Content");
+        return ferror(stdout) ? 1 : 0;
     }
     if (method != NULL && path != NULL && strlen(path) == 46U &&
         memcmp(path, "/api/v1/outlets/", 16U) == 0 && memcmp(path + 38U, "/actions", 8U) == 0) {

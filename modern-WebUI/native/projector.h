@@ -21,6 +21,11 @@ int pm3000_project_bytes_filtered(const unsigned char *xml, unsigned long length
                                   int unrestricted,
                                   const char *outlets, unsigned int outlet_count,
                                   char *error, unsigned int error_size);
+int pm3000_resolve_outlet_selector(const unsigned char *xml, unsigned long length,
+                                    const char *selector, const char *revision,
+                                    char outlet_id[23],
+                                    char *identity, size_t identity_size,
+                                    char *error, unsigned int error_size);
 int pm3000_resolve_outlet_identity(const unsigned char *xml, unsigned long length,
                                    const char *outlet_id, const char *revision,
                                    char *identity, size_t identity_size,

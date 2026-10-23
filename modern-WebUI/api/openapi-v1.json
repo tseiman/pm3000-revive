@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PM3000 Modern Web UI REST API",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "description": "Compact PM3000 API with PM3000-backed WebUI sessions, external bearer authentication, token administration, validated outlet/PDU inventory, fixed power actions, session-only password change, revision-protected Help and Language, Data Buffering, and conditional Appliance Logging and Time Zone settings, and read-only system information, memory/flash usage, network device monitoring, IPv4/IPv6 routing tables, and serial port statistics."
   },
   "servers": [
@@ -86,6 +86,48 @@
         },
         "x-required-scope": "read",
         "x-outlet-allowlist-behavior": "filter-collection"
+      }
+    },
+    "/api/v1/outlets/actions": {
+      "post": {
+        "operationId": "requestOutletActionBySelector",
+        "summary": "Dispatch an outlet power action selected by exact name or opaque ID",
+        "security": [
+          { "bearerAuth": [] },
+          { "cookieAuth": [] }
+        ],
+        "x-max-body-bytes": 1024,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/OutletSelectorActionRequest" }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Controller returned validated refreshed topology content.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/OutletSelectorConflict" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "503": { "$ref": "#/components/responses/ActionUnavailable" }
+        },
+        "x-required-scope": "control",
+        "x-outlet-allowlist-behavior": "resolve-selector-then-require-id-membership",
+        "x-backend-template": "path=units.topology;table=topologyTable;actions=on:targPowerOn,off:targPowerOff,cycle:targCycle;target=fresh-server-resolved-array-id",
+        "x-action-contract-status": "firmware-derived-fixed-dispatch",
+        "x-csrf-required-for-cookie-auth": true,
+        "x-selector-resolution": "fresh-topology;opaque-id-or-exact-case-sensitive-name;reject-ambiguous"
       }
     },
     "/api/v1/outlets/{outletId}": {
@@ -192,7 +234,7 @@
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "503": {
-            "$ref": "#/components/responses/BackendUnavailable"
+            "$ref": "#/components/responses/ActionUnavailable"
           }
         },
         "x-required-scope": "control",
@@ -592,7 +634,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/OutletActionRequest"
+                "$ref": "#/components/schemas/PduActionRequest"
               }
             }
           }
@@ -631,7 +673,7 @@
             "$ref": "#/components/responses/UnsupportedMediaType"
           },
           "503": {
-            "$ref": "#/components/responses/BackendUnavailable"
+            "$ref": "#/components/responses/ActionUnavailable"
           }
         }
       }
@@ -1647,11 +1689,10 @@
       "OutletActionRequest": {
         "type": "object",
         "additionalProperties": false,
-        "minProperties": 2,
+        "minProperties": 1,
         "maxProperties": 2,
         "required": [
-          "action",
-          "inventoryRevision"
+          "action"
         ],
         "properties": {
           "action": {
@@ -1661,6 +1702,45 @@
               "off",
               "cycle"
             ]
+          },
+          "inventoryRevision": {
+            "$ref": "#/components/schemas/InventoryRevision"
+          }
+        }
+      },
+      "OutletSelectorActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 3,
+        "required": ["outlet", "action"],
+        "properties": {
+          "outlet": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[ -~]+$",
+            "description": "Opaque outlet ID or exact case-sensitive printable-ASCII outlet name. Names must resolve uniquely."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["on", "off", "cycle"]
+          },
+          "inventoryRevision": {
+            "$ref": "#/components/schemas/InventoryRevision"
+          }
+        }
+      },
+      "PduActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 2,
+        "maxProperties": 2,
+        "required": ["action", "inventoryRevision"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["on", "off", "cycle"]
           },
           "inventoryRevision": {
             "$ref": "#/components/schemas/InventoryRevision"
@@ -1682,6 +1762,7 @@
           "unsupported_media_type",
           "payload_too_large",
           "inventory_changed",
+          "outlet_name_ambiguous",
           "backend_unavailable",
           "backend_protocol_error",
           "action_outcome_unknown",
@@ -3092,6 +3173,20 @@
           }
         }
       },
+      "ActionUnavailable": {
+        "description": "The controller action could not be confirmed. `backend_unavailable` and `controller_service_user_unavailable` mean dispatch did not complete. `action_outcome_unknown` means the action may have been dispatched and MUST NOT be retried automatically.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+        }
+      },
       "SettingWriteUnconfirmed": {
         "description": "The pre-write backend read was unavailable (`backend_unavailable`), or a dispatched write could not be confirmed by exact typed read-back (`action_outcome_unknown`). A possibly dispatched write is never retried automatically.",
         "content": {
@@ -3246,6 +3341,20 @@
           "X-Content-Type-Options": {
             "$ref": "#/components/headers/ContentTypeOptionsNoSniff"
           }
+        }
+      },
+      "OutletSelectorConflict": {
+        "description": "The optional inventory revision is stale, or the supplied outlet name matches more than one outlet. Refresh inventory or use the opaque outlet ID.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
         }
       }
     },

@@ -1145,6 +1145,18 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual(["on", "off", "cycle"], pdu["availableActions"])
             self.assertNotIn("thresholds", pdu)
 
+            missing_revision = self.run_cgi(
+                "POST", f"/api/v1/pdus/{pdu['id']}/actions", cookie=cookie,
+                body=b'{"action":"cycle"}', content_type="application/json",
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_AVTRANS_SOCKET": str(root / "must-not-open.sock"),
+                    "HTTP_X_CSRF_TOKEN": session["csrfToken"],
+                },
+            )
+            self.assertIn(b"Status: 400", missing_revision.stdout)
+            self.assertFalse((root / "must-not-open.sock").exists())
+
             socket_path = root / "pdu-action.sock"
             body = json.dumps({
                 "action": "cycle",
@@ -1242,7 +1254,7 @@ class NativeAdapterTests(unittest.TestCase):
                 result = self.run_cgi(
                     "POST", f"/api/v1/outlets/{outlet_id}/actions",
                     authorization=f"Bearer {controller_token.plaintext}",
-                    body=json.dumps({"action": "on", "inventoryRevision": revision}).encode(),
+                    body=json.dumps({"action": "on"}).encode(),
                     content_type="application/json",
                     extra_environment={
                         "PM3000_TOKEN_STORE": str(store_path),
@@ -1265,6 +1277,111 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertNotIn("<action>logout</action>", "".join(requests))
             self.assertFalse((root / "must-not-open.credentials").exists())
             self.assertNotIn(controller_token.plaintext, "".join(requests))
+
+    def test_outlet_action_accepts_unique_name_without_revision_and_preserves_id_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            socket_path = root / "avtrans.sock"
+            topology = OBSERVED.read_bytes()
+            first_outlet = topology.index(b'<array id="pdu.[REDACTED].1">')
+            name_value = topology.index(b">[REDACTED-NAME]</value>", first_outlet)
+            topology = (topology[:name_value] + b">Unique outlet alpha</value>" +
+                        topology[name_value + len(b">[REDACTED-NAME]</value>"):])
+            fixture = root / "topology.xml"
+            fixture.write_bytes(topology)
+            inventory = json.loads(self.run_adapter("--project", str(fixture)).stdout)
+            outlet = inventory["outlets"][0]
+            self.assertEqual("Unique outlet alpha", outlet["name"])
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            controller_token = store.create_token(
+                administrator.plaintext, label="Named controller", scope="control",
+                outlets=[outlet["id"]],
+            )
+            session_helper = self.service_session_helper(root, "OK service-session-id")
+            with FakeAvtransController(socket_path, [topology, topology, topology]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/outlets/actions",
+                    authorization=f"Bearer {controller_token.plaintext}",
+                    body=json.dumps({"outlet": outlet["name"], "action": "on"}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            self.assertIn(b"Status: 204", result.stdout)
+            self.assertEqual(3, len(controller.requests))
+            self.assertIn(b"<action>targPowerOn</action>", controller.requests[2][1])
+
+    def test_outlet_action_rejects_ambiguous_name_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            socket_path = root / "avtrans.sock"
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            controller_token = store.create_token(
+                administrator.plaintext, label="Unrestricted controller", scope="control"
+            )
+            session_helper = self.service_session_helper(root, "OK service-session-id")
+            with FakeAvtransController(socket_path, [OBSERVED.read_bytes()]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/outlets/actions",
+                    authorization=f"Bearer {controller_token.plaintext}",
+                    body=json.dumps({"outlet": "[REDACTED-NAME]", "action": "off"}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            _headers, error = self.cgi_json(result)
+            self.assertIn(b"Status: 409", result.stdout)
+            self.assertEqual("outlet_name_ambiguous", error["code"])
+            self.assertEqual(1, len(controller.requests))
+            self.assertNotIn(b"targPower", controller.requests[0][1])
+
+    def test_outlet_action_name_checks_canonical_id_allowlist_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            store_path = root / "rest" / "tokens.json"
+            socket_path = root / "avtrans.sock"
+            topology = OBSERVED.read_bytes()
+            first_outlet = topology.index(b'<array id="pdu.[REDACTED].1">')
+            name_value = topology.index(b">[REDACTED-NAME]</value>", first_outlet)
+            topology = (topology[:name_value] + b">Unique denied outlet</value>" +
+                        topology[name_value + len(b">[REDACTED-NAME]</value>"):])
+            fixture = root / "topology.xml"
+            fixture.write_bytes(topology)
+            inventory = json.loads(self.run_adapter("--project", str(fixture)).stdout)
+            store = token_store.TokenStore(store_path)
+            administrator = store.bootstrap("Administrator")
+            controller_token = store.create_token(
+                administrator.plaintext, label="Other outlet only", scope="control",
+                outlets=[inventory["outlets"][1]["id"]],
+            )
+            session_helper = self.service_session_helper(root, "OK service-session-id")
+            with FakeAvtransController(socket_path, [topology]) as controller:
+                result = self.run_cgi(
+                    "POST", "/api/v1/outlets/actions",
+                    authorization=f"Bearer {controller_token.plaintext}",
+                    body=json.dumps({"outlet": "Unique denied outlet", "action": "off"}).encode(),
+                    content_type="application/json",
+                    extra_environment={
+                        "PM3000_TOKEN_STORE": str(store_path),
+                        "PM3000_SERVICE_SESSION_HELPER": str(session_helper),
+                        "PM3000_AVTRANS_SOCKET": str(socket_path),
+                    },
+                )
+            _headers, error = self.cgi_json(result)
+            self.assertIn(b"Status: 403", result.stdout)
+            self.assertEqual("forbidden", error["code"])
+            self.assertEqual(1, len(controller.requests))
+            self.assertNotIn(b"targPower", controller.requests[0][1])
 
     def test_service_session_rejects_unsafe_sids_before_avtrans(self) -> None:
         unsafe_sids = ("bad&sid", "bad<sid", 'bad"sid', "bad sid", "A" * 129)

@@ -2,7 +2,7 @@
 
 ## Current checkpoint
 
-The current public checkpoint is `modern-webui-v0.2-rest-control-rc11` at commit `d03835586036b4bbe5993edd31a2d94a781b3fe0`. The hardware-validated predecessor `local-gsp-reviewed-v4` is active on the appliance. Production release `0.3.0` is the next and only planned installation; it replaces the local-test naming and is built by GitHub Actions with the local GSP integration included. No outlet, PDU, settings, password, or other controller write has been executed.
+The current published production checkpoint is `modern-webui-v0.3.0` at commit `75094b807d28963d2fa1a9053e92d81156202b1d`. The hardware-validated predecessor `local-gsp-reviewed-v4` remains active on the appliance. Release `0.3.0` was built and published by GitHub Actions with the local GSP integration included, but its device installation has not yet been confirmed. The current source tree contains later additive REST work that is not part of `0.3.0`. No outlet, PDU, settings, password, or other controller write has been executed.
 
 ## Implemented
 
@@ -12,9 +12,9 @@ The current public checkpoint is `modern-webui-v0.2-rest-control-rc11` at commit
 - External REST bearer authentication with `read`, `control`, and `admin` scopes and optional outlet allowlists.
 - Bearer controller access uses one short-lived local GSP-AAA session for the fixed `pm3000-rest` identity per backend operation. The single fixed-purpose setuid broker is installed as `root:daemon 4750`; no other setuid component is introduced. No stored controller password is required; every session is destroyed through the fixed-purpose broker cleanup path. A missing local service identity returns HTTP 503 `controller_service_user_unavailable` with an actionable JSON message.
 - Token list/create/enable/disable/revoke with digest-only persistence and one-time secret output. A private authorized browser session may remove every bearer token and later create a replacement; bearer-authenticated administration retains final-administrator protection. `/mnt/hdUser/pm3000-revive/rest/tokens.json` is preserved across upgrades and may validly contain no records.
-- Outlet inventory and `on`, `off`, and `cycle`. Public actions map to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` on `units.topology` / `topologyTable` after a fresh server-side row lookup.
+- Outlet inventory and `on`, `off`, and `cycle`. Public actions map to firmware controls `targPowerOn`, `targPowerOff`, and `targCycle` on `units.topology` / `topologyTable` after a fresh server-side row lookup. The post-`0.3.0` additive action route accepts either an opaque ID or an exact unique printable-ASCII outlet name, then applies authorization to the resolved canonical ID.
 - PDU inventory plus PDU-wide `on`, `off`, and `cycle` on `units.powermanagement.pdu_management` / `pdu_devices_table`, also using a fresh server-side row lookup.
-- Inventory-revision checks reject stale client mappings. Neither outlet nor PDU APIs accept raw controller row IDs.
+- Outlet actions accept an optional inventory revision; PDU-wide actions continue to require it. Supplied stale revisions are rejected. Neither outlet nor PDU APIs accept raw controller row IDs.
 - Power `on`/`off` writes return success only when a validated operation-specific inventory response reports the targeted outlet or PDU in the requested state. A `cycle` cannot be confirmed from a stable state and therefore returns `action_outcome_unknown` after dispatch. Password changes require the exact firmware-derived success-form hierarchy; settings writes require exact typed read-back of every submitted field. A transport failure, mismatch, or unexpected response after dispatch is never retried automatically.
 - Session-only password change with `units.change_password` authorization, CSRF, old password, matching new-password confirmation, secret zeroing, and expected response path `units.change_password.changedPassword`.
 - Session-only complete-replacement settings for DSView HTTPS allowance (`SecurityDSView` / `dsviewControl`) and NIS (`nis` / `nisserver`). Both use fixed paths, actions, form structure/order, PM3000 navigation rights, CSRF, closed JSON, fresh-read UI gating, and fail-closed response parsing. They do not infer PM3000 configuration rights from REST bearer scopes. DSView remains supported at this level but is not a priority for further expansion.
@@ -34,17 +34,17 @@ Firmware update, setup wizard, reboot, reset, shutdown, factory default, and con
 
 ## Current verification
 
-- Current repository suite: 239 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
-- OpenAPI v1.6.0 describes the conditional Time Zone resource and passes JSON parsing, local contract tests, and `swagger-cli validate`.
+- Current repository suite: 242 tests passing (`python3 -m unittest discover -s modern-WebUI/tests -p 'test_*.py' -v`).
+- OpenAPI v1.7.0 describes the supported routes, including the additive outlet-selector action route and optional action revisions, and passes JSON parsing and local contract tests.
 - Strict host C99 build with `-Wall -Wextra -Werror -pedantic` passes.
 - PPC32 big-endian target builds pass from the repository and shared toolchain alone: the REST adapter is stripped and static; source-only link interfaces produce a fixed-purpose GSP helper that is stripped, uses `/lib/ld.so.1`, and imports only firmware `libgsp_auth.so` plus `GLIBC_2.0` libc symbols. Build-only link stubs are never packaged or installed.
 - QEMU `-cpu e300c3` executes the production binary and returns the expected HTTPS-only health response.
 - Appliance validation of `local-gsp-reviewed-v4` passed: `/health` returned 200, ten authenticated `GET /api/v1/outlets` requests returned 200 with valid ten-outlet JSON, the helper was `root:daemon 4750`, and no helper process remained afterward. This verifies the PPC `SO_PEERCRED=21` channel, local GSP session creation, read-only AVTRANS access, and normal cleanup on hardware.
-- Two independent reviews of the complete staged production tree reported no security concerns or logic errors. Write-capable settings remain deliberately unvalidated on hardware; no production write was authorized or executed.
+- Two independent reviews of the published `0.3.0` production tree reported no security concerns or logic errors. The later additive outlet-selector changes require their own review before release. Write-capable settings and outlet actions remain deliberately unvalidated on hardware; no production write was authorized or executed.
 
 ## Next milestone
 
-Build, review, publish, and install production release `0.3.0` through the `Build modern WebUI release` GitHub Actions workflow. The workflow must build and audit `bin/pm3000-gsp-session-helper` inside the release TAR. After read-only acceptance, remove superseded `local-gsp-reviewed-*` release directories without touching the active custom Dropbear installation under `/mnt/hdUser/dropbear-test`. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit.
+Review the post-`0.3.0` additive outlet-selector API changes, choose a later release number, and publish them through the `Build modern WebUI release` GitHub Actions workflow. Separately, install the already published `0.3.0` only through the backup-first procedure. After read-only acceptance, remove superseded `local-gsp-reviewed-*` release directories without touching the active custom Dropbear installation under `/mnt/hdUser/dropbear-test`. Lockout-sensitive network, security, boot, and authentication changes remain blocked until recovery and console-access requirements are explicit.
 
 ## Controlled device-validation boundary
 
