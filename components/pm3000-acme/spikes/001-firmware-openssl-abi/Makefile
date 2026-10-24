@@ -7,7 +7,7 @@ READELF := $(CROSS)readelf
 BUILD := build
 STUBS := $(BUILD)/abi-stubs
 TARGET := $(BUILD)/pm3000-acme-openssl-probe-ppc32
-FIRMWARE_ROOT ?= /home/tseiman/agent-work/pm3000-firmware-analysis/rootfs
+FIRMWARE_ROOT ?= $(abspath $(REPO_ROOT)/../pm3000-firmware-analysis/rootfs)
 QEMU ?= qemu-ppc
 
 .PHONY: all clean verify verify-qemu

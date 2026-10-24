@@ -380,8 +380,8 @@ run from the repository root:
 ```bash
 modern-WebUI/deploy/stage7-device-compatibility.sh \
   root@pdu1 \
-  /path/to/pm3000-release-2026-10-21.1.tar \
-  ../backup/stage7-full-backup-20261020T221022Z-4266
+  modern-WebUI/dist/pm3000-release.tar \
+  backup/stage7-full-backup/
 ```
 
 The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3

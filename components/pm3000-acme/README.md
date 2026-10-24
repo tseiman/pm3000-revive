@@ -18,8 +18,8 @@ introduce a weaker ad-hoc uploader:
 ```sh
 modern-WebUI/deploy/stage7-install.sh \
   root@pdu1 \
-  "/Users/tseiman/Downloads/pm3000-release-0.2-rest-control-rc9.tar" \
-  "../backup/stage7-full-backup-20261020T221022Z-4266/"
+  "modern-WebUI/dist/pm3000-release.tar" \
+  "backup/stage7-full-backup/"
 ```
 
 The final ACME binary, REST routes, WebUI, and Apache configuration should be
