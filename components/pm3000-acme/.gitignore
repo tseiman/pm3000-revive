@@ -1,0 +1,5 @@
+build/
+tests/fixtures/*.pem
+tests/fixtures/tls/*.pem
+tests/fixtures/tls/*.srl
+tests/fixtures/tls/*.csr

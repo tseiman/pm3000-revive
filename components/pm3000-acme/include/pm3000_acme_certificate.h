@@ -1,0 +1,20 @@
+#ifndef PM3000_ACME_CERTIFICATE_H
+#define PM3000_ACME_CERTIFICATE_H
+
+#include "pm3000_acme_crypto.h"
+
+enum pm3000_acme_certificate_result {
+    PM3000_ACME_CERTIFICATE_OK = 0,
+    PM3000_ACME_CERTIFICATE_INVALID = -1,
+    PM3000_ACME_CERTIFICATE_IO = -2,
+    PM3000_ACME_CERTIFICATE_TRUST = -3,
+    PM3000_ACME_CERTIFICATE_KEY = -4,
+    PM3000_ACME_CERTIFICATE_NAME = -5
+};
+
+int pm3000_acme_certificate_validate(
+    const char *certificate_chain_path, const char *ca_file,
+    const struct pm3000_acme_key *private_key,
+    const char *const *dns_names, unsigned int dns_name_count);
+
+#endif
