@@ -62,6 +62,13 @@ int main(void)
         return 1;
     }
     unlink(path);
+    if (link(outside, path) != 0 ||
+        pm3000_acme_store_read(root, "link", output, sizeof(output),
+                               &length, 1) == PM3000_ACME_STORE_OK) {
+        fprintf(stderr, "store hardlink rejection failed\n");
+        return 1;
+    }
+    unlink(path);
     snprintf(path, sizeof(path), "%s/state", root);
     unlink(path);
     unlink(outside);

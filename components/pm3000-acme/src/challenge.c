@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "pm3000_acme_challenge.h"
+#include "stat_compat.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,14 +31,15 @@ static int base64url_text(const char *text, unsigned int maximum)
 static int open_webroot(const char *webroot)
 {
     int descriptor;
-    struct stat status;
+    struct pm3000_acme_stat status;
     if (webroot == (const char *)0 || webroot[0] != '/') {
         /* Relative paths are retained for isolated host tests only. */
         if (webroot == (const char *)0 || webroot[0] == '\0') return -1;
     }
     descriptor = open(webroot, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (descriptor < 0) return -1;
-    if (fstat(descriptor, &status) != 0 || !S_ISDIR(status.st_mode)) {
+    if (pm3000_acme_fstat(descriptor, &status) != 0 ||
+        !PM3000_ACME_S_ISDIR(status.mode)) {
         close(descriptor);
         return -1;
     }

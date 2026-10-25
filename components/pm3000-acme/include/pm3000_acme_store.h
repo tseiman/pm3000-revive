@@ -6,7 +6,8 @@ enum pm3000_acme_store_result {
     PM3000_ACME_STORE_INVALID = -1,
     PM3000_ACME_STORE_IO = -2,
     PM3000_ACME_STORE_LIMIT = -3,
-    PM3000_ACME_STORE_UNSAFE = -4
+    PM3000_ACME_STORE_UNSAFE = -4,
+    PM3000_ACME_STORE_COMMITTED_UNCERTAIN = -5
 };
 
 int pm3000_acme_store_write(const char *root, const char *name,

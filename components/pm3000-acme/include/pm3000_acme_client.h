@@ -11,6 +11,7 @@
 
 struct pm3000_acme_client_config {
     const char *directory_url;
+    const char *existing_account_url;
     const char *challenge_webroot;
     const char *const *dns_names;
     unsigned int dns_name_count;

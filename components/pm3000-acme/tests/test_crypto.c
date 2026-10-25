@@ -34,6 +34,17 @@ static int exercise_key(struct pm3000_acme_key *key)
     return 0;
 }
 
+static int write_bytes(const char *path, const unsigned char *data,
+                       unsigned int length)
+{
+    FILE *file = fopen(path, "wb");
+    int result;
+    if (file == NULL) return -1;
+    result = fwrite(data, 1U, length, file) == length ? 0 : -1;
+    if (fclose(file) != 0) result = -1;
+    return result;
+}
+
 int main(void)
 {
     struct pm3000_acme_key fixture = { 0 };
@@ -41,6 +52,8 @@ int main(void)
     struct pm3000_acme_key reloaded = { 0 };
     char jwk[PM3000_ACME_JWK_MAX];
     char thumbprint[PM3000_ACME_THUMBPRINT_MAX];
+    unsigned char pem[4096U];
+    unsigned int pem_length = 0U;
     int failed = 0;
 
     if (pm3000_acme_crypto_key_load("tests/fixtures/account-test-key.pem",
@@ -60,12 +73,19 @@ int main(void)
 
     if (pm3000_acme_crypto_key_generate_rsa2048(&generated) !=
             PM3000_ACME_CRYPTO_OK ||
-        pm3000_acme_crypto_key_write("build/generated-account-key.pem",
-                                    &generated) != PM3000_ACME_CRYPTO_OK ||
-        pm3000_acme_crypto_key_load("build/generated-account-key.pem",
-                                    &reloaded) != PM3000_ACME_CRYPTO_OK ||
-        exercise_key(&reloaded) != 0) {
-        fprintf(stderr, "generated RSA key contract failed\n");
+        pm3000_acme_crypto_key_pem(&generated, pem, sizeof(pem),
+                                   &pem_length) != PM3000_ACME_CRYPTO_OK ||
+        pem_length < 64U || pem_length >= sizeof(pem) ||
+        memcmp(pem, "-----BEGIN PRIVATE KEY-----", 27U) != 0) {
+        fprintf(stderr, "generated RSA key serialization failed\n");
+        failed = 1;
+    } else if (write_bytes("build/generated-account-key.pem", pem,
+                           pem_length) != 0 ||
+               pm3000_acme_crypto_key_load("build/generated-account-key.pem",
+                                           &reloaded) !=
+                   PM3000_ACME_CRYPTO_OK ||
+               exercise_key(&reloaded) != 0) {
+        fprintf(stderr, "serialized RSA key reload failed\n");
         failed = 1;
     }
 

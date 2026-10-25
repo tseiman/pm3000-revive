@@ -37,6 +37,25 @@ int pm3000_acme_crypto_key_load(const char *path,
     return PM3000_ACME_CRYPTO_OK;
 }
 
+int pm3000_acme_crypto_key_load_pem(const unsigned char *pem,
+                                    unsigned int pem_length,
+                                    struct pm3000_acme_key *key)
+{
+    BIO *bio;
+    EVP_PKEY *loaded;
+    if (pem == (const unsigned char *)0 || pem_length == 0U ||
+        pem_length > 4096U || key == (struct pm3000_acme_key *)0 ||
+        key->handle != (void *)0) return PM3000_ACME_CRYPTO_INVALID;
+    bio = BIO_new_mem_buf(pem, (int)pem_length);
+    if (bio == (BIO *)0) return PM3000_ACME_CRYPTO_OPENSSL;
+    loaded = PEM_read_bio_PrivateKey(bio, (EVP_PKEY **)0, (void *)0,
+                                     (void *)0);
+    BIO_free(bio);
+    if (loaded == (EVP_PKEY *)0) return PM3000_ACME_CRYPTO_OPENSSL;
+    key->handle = loaded;
+    return PM3000_ACME_CRYPTO_OK;
+}
+
 int pm3000_acme_crypto_key_generate_rsa2048(struct pm3000_acme_key *key)
 {
     EVP_PKEY *container = (EVP_PKEY *)0;
@@ -58,6 +77,41 @@ int pm3000_acme_crypto_key_generate_rsa2048(struct pm3000_acme_key *key)
     }
     BN_free(exponent);
     key->handle = container;
+    return PM3000_ACME_CRYPTO_OK;
+}
+
+int pm3000_acme_crypto_key_pem(const struct pm3000_acme_key *key,
+                               unsigned char *output,
+                               unsigned int output_capacity,
+                               unsigned int *output_length)
+{
+    BIO *bio;
+    long pending;
+    int read_length;
+    EVP_PKEY *handle = key_handle(key);
+    if (handle == (EVP_PKEY *)0 || output == (unsigned char *)0 ||
+        output_length == (unsigned int *)0 || output_capacity < 2U)
+        return PM3000_ACME_CRYPTO_INVALID;
+    *output_length = 0U;
+    bio = BIO_new(BIO_s_mem());
+    if (bio == (BIO *)0) return PM3000_ACME_CRYPTO_OPENSSL;
+    if (!PEM_write_bio_PrivateKey(bio, handle, (const void *)0,
+                                  (unsigned char *)0, 0, (void *)0,
+                                  (void *)0)) {
+        BIO_free(bio);
+        return PM3000_ACME_CRYPTO_OPENSSL;
+    }
+    pending = BIO_ctrl(bio, 10, 0L, (void *)0);
+    if (pending <= 0L || (unsigned long)pending >= output_capacity ||
+        pending > 2147483647L) {
+        BIO_free(bio);
+        return PM3000_ACME_CRYPTO_LIMIT;
+    }
+    read_length = BIO_read(bio, output, (int)pending);
+    if (!BIO_free(bio) || read_length != (int)pending)
+        return PM3000_ACME_CRYPTO_OPENSSL;
+    output[read_length] = '\0';
+    *output_length = (unsigned int)read_length;
     return PM3000_ACME_CRYPTO_OK;
 }
 

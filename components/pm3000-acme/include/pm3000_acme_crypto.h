@@ -20,10 +20,17 @@ struct pm3000_acme_key {
 };
 
 int pm3000_acme_crypto_key_load(const char *path,
-                                struct pm3000_acme_key *key);
+                                 struct pm3000_acme_key *key);
+int pm3000_acme_crypto_key_load_pem(const unsigned char *pem,
+                                    unsigned int pem_length,
+                                    struct pm3000_acme_key *key);
 int pm3000_acme_crypto_key_generate_rsa2048(struct pm3000_acme_key *key);
 int pm3000_acme_crypto_key_write(const char *path,
                                  const struct pm3000_acme_key *key);
+int pm3000_acme_crypto_key_pem(const struct pm3000_acme_key *key,
+                               unsigned char *output,
+                               unsigned int output_capacity,
+                               unsigned int *output_length);
 void pm3000_acme_crypto_key_free(struct pm3000_acme_key *key);
 int pm3000_acme_crypto_account_jwk(const struct pm3000_acme_key *key,
                                   char *output, unsigned int capacity);

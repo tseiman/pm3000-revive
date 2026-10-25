@@ -2,12 +2,18 @@ CC ?= cc
 CFLAGS ?= -std=c99 -O2 -Wall -Wextra -Werror -pedantic
 CPPFLAGS ?= -Iinclude
 
-.PHONY: test clean fixtures
+PRODUCT_SOURCES := src/main.c src/app.c src/config.c src/state.c src/store.c \
+	src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
+	src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
+	src/jws.c src/crypto.c src/base64url.c src/stat_compat.c \
+	src/syscall_compat.c
+
+.PHONY: test clean fixtures host-product ppc-product
 
 fixtures:
 	sh tests/generate-fixtures.sh
 
-test: fixtures build/test_url build/test_base64url build/test_json build/test_directory build/test_protocol build/test_crypto build/test_jws build/test_csr build/test_tls build/test_http build/test_challenge build/test_client build/test_network_client build/test_store build/test_certificate
+test: fixtures build/test_url build/test_base64url build/test_json build/test_directory build/test_protocol build/test_crypto build/test_jws build/test_csr build/test_tls build/test_http build/test_challenge build/test_client build/test_network_client build/test_store build/test_certificate build/test_config build/test_state build/test_publish build/test_app
 	./build/test_url
 	./build/test_base64url
 	./build/test_json
@@ -24,6 +30,10 @@ test: fixtures build/test_url build/test_base64url build/test_json build/test_di
 	python3 tests/run_network_client.py
 	./build/test_store
 	./build/test_certificate
+	./build/test_config
+	./build/test_state
+	./build/test_publish
+	./build/test_app
 
 build/test_url: tests/test_url.c src/url.c include/pm3000_acme_url.h
 	mkdir -p build
@@ -76,31 +86,31 @@ build/test_http: tests/test_http.c src/http.c src/url.c \
 	mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_http.c src/http.c src/url.c
 
-build/test_challenge: tests/test_challenge.c src/challenge.c \
+build/test_challenge: tests/test_challenge.c src/challenge.c src/stat_compat.c \
 		include/pm3000_acme_challenge.h
 	mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_challenge.c src/challenge.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_challenge.c src/challenge.c src/stat_compat.c
 
 build/test_client: tests/test_client.c src/client.c src/challenge.c src/protocol.c \
-		src/json.c src/url.c src/jws.c src/crypto.c src/base64url.c \
+		src/json.c src/url.c src/jws.c src/crypto.c src/base64url.c src/stat_compat.c \
 		include/pm3000_acme_client.h
 	mkdir -p build
 	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
 		tests/test_client.c src/client.c src/challenge.c src/protocol.c \
-		src/json.c src/url.c src/jws.c src/crypto.c src/base64url.c -lcrypto
+		src/json.c src/url.c src/jws.c src/crypto.c src/base64url.c src/stat_compat.c -lcrypto
 
 build/test_network_client: tests/test_network_client.c src/client.c src/transport.c \
 		src/tls.c src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
-		src/jws.c src/crypto.c src/base64url.c include/pm3000_acme_transport.h
+		src/jws.c src/crypto.c src/base64url.c src/stat_compat.c include/pm3000_acme_transport.h
 	mkdir -p build
 	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
 		tests/test_network_client.c src/client.c src/transport.c src/tls.c src/http.c \
 		src/challenge.c src/protocol.c src/json.c src/url.c src/jws.c \
-		src/crypto.c src/base64url.c -lssl -lcrypto
+		src/crypto.c src/base64url.c src/stat_compat.c -lssl -lcrypto
 
-build/test_store: tests/test_store.c src/store.c include/pm3000_acme_store.h
+build/test_store: tests/test_store.c src/store.c src/stat_compat.c include/pm3000_acme_store.h
 	mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_store.c src/store.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_store.c src/store.c src/stat_compat.c
 
 build/test_certificate: tests/test_certificate.c src/certificate.c src/tls.c \
 		src/crypto.c src/base64url.c src/url.c include/pm3000_acme_certificate.h
@@ -108,6 +118,48 @@ build/test_certificate: tests/test_certificate.c src/certificate.c src/tls.c \
 	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
 		tests/test_certificate.c src/certificate.c src/tls.c src/crypto.c \
 		src/base64url.c src/url.c -lssl -lcrypto
+
+build/test_config: tests/test_config.c src/config.c src/json.c src/url.c \
+		include/pm3000_acme_config.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_config.c src/config.c \
+		src/json.c src/url.c
+
+build/test_state: tests/test_state.c src/state.c src/store.c src/crypto.c \
+		src/base64url.c src/url.c src/stat_compat.c include/pm3000_acme_state.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
+		tests/test_state.c src/state.c src/store.c src/crypto.c \
+		src/base64url.c src/url.c src/stat_compat.c -lcrypto
+
+build/test_publish: tests/test_publish.c src/publish.c src/store.c \
+		src/certificate.c src/tls.c src/crypto.c src/base64url.c src/url.c src/stat_compat.c \
+		include/pm3000_acme_publish.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
+		tests/test_publish.c src/publish.c src/store.c src/certificate.c \
+		src/tls.c src/crypto.c src/base64url.c src/url.c src/stat_compat.c -lssl -lcrypto
+
+build/test_app: tests/test_app.c src/app.c src/config.c src/state.c src/store.c \
+		src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
+		src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
+		src/jws.c src/crypto.c src/base64url.c src/stat_compat.c include/pm3000_acme_app.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
+		tests/test_app.c src/app.c src/config.c src/state.c src/store.c \
+		src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
+		src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
+		src/jws.c src/crypto.c src/base64url.c src/stat_compat.c -lssl -lcrypto
+
+host-product: build/pm3000-acme-host
+
+ppc-product: test
+	./scripts/build-ppc-product.sh
+
+build/pm3000-acme-host: $(PRODUCT_SOURCES)
+	mkdir -p build
+	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
+		$(PRODUCT_SOURCES) -lssl -lcrypto
 
 clean:
 	rm -rf build

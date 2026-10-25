@@ -1,0 +1,6 @@
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = acme.example.test
+DNS.2 = localhost

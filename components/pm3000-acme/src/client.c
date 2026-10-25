@@ -293,20 +293,31 @@ int pm3000_acme_client_issue(
         !copy_text(state.nonce, sizeof(state.nonce), response.replay_nonce))
         return PM3000_ACME_CLIENT_PROTOCOL;
 
-    if (signed_post(&state, state.directory.new_account_text,
-                    &state.directory.new_account, (const char *)0,
-                    (const unsigned char *)
-                        "{\"termsOfServiceAgreed\":true}",
-                    29U, &response) != PM3000_ACME_CLIENT_OK ||
-        (response.status_code != 200U && response.status_code != 201U) ||
-        response.location[0] == '\0' ||
-        pm3000_acme_account_parse(workspace->response_body,
-                                  response.body_length) !=
-            PM3000_ACME_PROTOCOL_OK ||
-        !copy_text(state.kid, sizeof(state.kid), response.location) ||
-        !parse_same_origin_url(&state, state.kid, &order_url) ||
-        !copy_text(result->account_url, sizeof(result->account_url), state.kid))
-        return PM3000_ACME_CLIENT_PROTOCOL;
+    if (config->existing_account_url != (const char *)0 &&
+        config->existing_account_url[0] != '\0') {
+        if (!copy_text(state.kid, sizeof(state.kid),
+                       config->existing_account_url) ||
+            !parse_same_origin_url(&state, state.kid, &order_url) ||
+            !copy_text(result->account_url, sizeof(result->account_url),
+                       state.kid))
+            return PM3000_ACME_CLIENT_PROTOCOL;
+    } else {
+        if (signed_post(&state, state.directory.new_account_text,
+                        &state.directory.new_account, (const char *)0,
+                        (const unsigned char *)
+                            "{\"termsOfServiceAgreed\":true}",
+                        29U, &response) != PM3000_ACME_CLIENT_OK ||
+            (response.status_code != 200U && response.status_code != 201U) ||
+            response.location[0] == '\0' ||
+            pm3000_acme_account_parse(workspace->response_body,
+                                      response.body_length) !=
+                PM3000_ACME_PROTOCOL_OK ||
+            !copy_text(state.kid, sizeof(state.kid), response.location) ||
+            !parse_same_origin_url(&state, state.kid, &order_url) ||
+            !copy_text(result->account_url, sizeof(result->account_url),
+                       state.kid))
+            return PM3000_ACME_CLIENT_PROTOCOL;
+    }
 
     if (pm3000_acme_build_order_payload(
             config->dns_names, config->dns_name_count, workspace->payload,

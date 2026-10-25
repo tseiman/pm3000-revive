@@ -2,6 +2,7 @@
 #define PM3000_ACME_OPENSSL_COMPAT_H
 
 typedef struct bio_st BIO;
+typedef struct bio_method_st BIO_METHOD;
 typedef struct evp_pkey_st EVP_PKEY;
 typedef struct evp_md_st EVP_MD;
 typedef struct env_md_ctx_st EVP_MD_CTX;
@@ -20,6 +21,11 @@ typedef struct x509_store_ctx_st X509_STORE_CTX;
 typedef struct stack_st OPENSSL_STACK;
 
 BIO *BIO_new_file(const char *filename, const char *mode);
+BIO *BIO_new_mem_buf(const void *buffer, int length);
+BIO *BIO_new(const BIO_METHOD *method);
+const BIO_METHOD *BIO_s_mem(void);
+long BIO_ctrl(BIO *bio, int command, long argument, void *pointer);
+int BIO_read(BIO *bio, void *output, int length);
 int BIO_free(BIO *bio);
 EVP_PKEY *PEM_read_bio_PrivateKey(BIO *bio, EVP_PKEY **key,
                                   void *callback, void *argument);

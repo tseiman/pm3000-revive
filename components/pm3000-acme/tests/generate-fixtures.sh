@@ -29,3 +29,14 @@ if [ ! -s "$tls/server-key.pem" ] || [ ! -s "$tls/server.pem" ]; then
     rm -f "$request" "$tls/ca.srl"
     chmod 600 "$tls/server-key.pem"
 fi
+
+if [ ! -s "$tls/issued.pem" ]; then
+    request=$tls/issued.csr
+    openssl req -new -key "$tls/server-key.pem" \
+        -subj '/CN=acme.example.test' -out "$request" >/dev/null 2>&1
+    openssl x509 -req -days 30 -sha256 -in "$request" \
+        -CA "$tls/ca.pem" -CAkey "$tls/ca-key.pem" -CAcreateserial \
+        -extfile "$tls/issued.cnf" -extensions req_ext \
+        -out "$tls/issued.pem" >/dev/null 2>&1
+    rm -f "$request" "$tls/ca.srl"
+fi

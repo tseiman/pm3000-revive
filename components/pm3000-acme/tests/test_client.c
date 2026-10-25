@@ -13,6 +13,7 @@ struct mock_state {
     const char *webroot;
     unsigned int nonce;
     unsigned int bad_nonce_sent;
+    unsigned int account_requests;
     unsigned int challenge_triggered;
     unsigned int auth_requests;
     unsigned int challenge_requests;
@@ -81,10 +82,12 @@ static int mock_exchange(
         return set_response(state, response, body, capacity, 204U, NULL, "");
     if (request_body == NULL || request_body_length == 0U ||
         request_body[0] != '{') return -1;
-    if (strcmp(url->path, "/account") == 0)
+    if (strcmp(url->path, "/account") == 0) {
+        ++state->account_requests;
         return set_response(state, response, body, capacity, 201U,
                             "https://localhost/account/1",
                             "{\"status\":\"valid\"}");
+    }
     if (strcmp(url->path, "/new-order") == 0) {
         if (!state->bad_nonce_sent++)
             return set_response(state, response, body, capacity, 400U, NULL,
@@ -228,11 +231,13 @@ int main(void)
     state.always_pending = 1U;
     io.context = &state;
     config.poll_attempts = 1U;
+    config.existing_account_url = "https://localhost/account/1";
     timeout_status = pm3000_acme_client_issue(
         &config, &io, &workspace, &result);
     pm3000_acme_crypto_key_free(&certificate_key);
     pm3000_acme_crypto_key_free(&account_key);
     if (timeout_status != PM3000_ACME_CLIENT_TIMEOUT ||
+        state.account_requests != 0U ||
         lstat(challenge_path, &(struct stat){0}) == 0) {
         fprintf(stderr, "client timeout cleanup failed status=%d\n",
                 timeout_status);

@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "pm3000_acme_store.h"
+#include "stat_compat.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -28,13 +29,14 @@ static int safe_name(const char *name)
 
 static int open_root(const char *root)
 {
-    struct stat info;
+    struct pm3000_acme_stat info;
     int fd;
     if (root == (const char *)0 || root[0] == '\0') return -1;
     fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (fd < 0) return -1;
-    if (fstat(fd, &info) != 0 || !S_ISDIR(info.st_mode) ||
-        (info.st_mode & 077U) != 0U || info.st_uid != geteuid()) {
+    if (pm3000_acme_fstat(fd, &info) != 0 ||
+        !PM3000_ACME_S_ISDIR(info.mode) || (info.mode & 077U) != 0U ||
+        info.uid != (unsigned long)geteuid()) {
         close(fd);
         return -1;
     }
@@ -80,7 +82,7 @@ int pm3000_acme_store_write(const char *root, const char *name,
         if (file_fd >= 0) break;
         if (errno != EEXIST) goto done;
     }
-    if (file_fd < 0 || fchmod(file_fd, (mode_t)mode) != 0 ||
+    if (file_fd < 0 || fchmod(file_fd, mode) != 0 ||
         !write_all(file_fd, data, data_length) || fsync(file_fd) != 0)
         goto done;
     if (close(file_fd) != 0) {
@@ -88,10 +90,10 @@ int pm3000_acme_store_write(const char *root, const char *name,
         goto done;
     }
     file_fd = -1;
-    if (renameat(root_fd, temporary, root_fd, name) != 0 ||
-        fsync(root_fd) != 0) goto done;
+    if (renameat(root_fd, temporary, root_fd, name) != 0) goto done;
     temporary[0] = '\0';
-    result = PM3000_ACME_STORE_OK;
+    result = fsync(root_fd) == 0 ? PM3000_ACME_STORE_OK :
+             PM3000_ACME_STORE_COMMITTED_UNCERTAIN;
 done:
     if (file_fd >= 0) close(file_fd);
     if (temporary[0] != '\0') unlinkat(root_fd, temporary, 0);
@@ -107,7 +109,7 @@ int pm3000_acme_store_read(const char *root, const char *name,
 {
     int root_fd;
     int file_fd = -1;
-    struct stat info;
+    struct pm3000_acme_stat info;
     unsigned int offset = 0U;
     int result = PM3000_ACME_STORE_IO;
     if (output_length != (unsigned int *)0) *output_length = 0U;
@@ -118,17 +120,18 @@ int pm3000_acme_store_read(const char *root, const char *name,
     if (root_fd < 0) return PM3000_ACME_STORE_UNSAFE;
     file_fd = openat(root_fd, name, O_RDONLY | O_NOFOLLOW);
     if (file_fd < 0) goto done;
-    if (fstat(file_fd, &info) != 0 || !S_ISREG(info.st_mode) ||
-        info.st_uid != geteuid() || info.st_size < 0 ||
-        (unsigned long)info.st_size > STORE_FILE_MAX ||
-        (unsigned long)info.st_size >= output_capacity ||
-        (require_private_mode && (info.st_mode & 077U) != 0U)) {
+    if (pm3000_acme_fstat(file_fd, &info) != 0 ||
+        !PM3000_ACME_S_ISREG(info.mode) || info.nlink != 1U ||
+        info.uid != (unsigned long)geteuid() || info.size < 0 ||
+        (unsigned long)info.size > STORE_FILE_MAX ||
+        (unsigned long)info.size >= output_capacity ||
+        (require_private_mode && (info.mode & 077U) != 0U)) {
         result = PM3000_ACME_STORE_UNSAFE;
         goto done;
     }
-    while (offset < (unsigned int)info.st_size) {
+    while (offset < (unsigned int)info.size) {
         ssize_t amount = read(file_fd, output + offset,
-                              (unsigned int)info.st_size - offset);
+                              (unsigned int)info.size - offset);
         if (amount < 0 && errno == EINTR) continue;
         if (amount <= 0) goto done;
         offset += (unsigned int)amount;
