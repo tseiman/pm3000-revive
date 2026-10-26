@@ -35,12 +35,16 @@ done
 libgcc=$($cc -print-libgcc-file-name)
 "$ld" -m elf32ppclinux --gc-sections --allow-shlib-undefined \
     --dynamic-linker /lib/ld.so.1 -o "$out" \
-    "$obj_dir"/*.o \
+    "$obj_dir"/*.o "$libgcc" \
     "$firmware_root/usr/lib/libssl.so.1.0.0" \
     "$firmware_root/usr/lib/libcrypto.so.1.0.0" \
-    "$firmware_root/lib/libc-2.3.5.so" "$libgcc"
+    "$firmware_root/lib/libc-2.3.5.so"
 "$strip" --strip-unneeded "$out"
 "$component_dir/scripts/verify-ppc-product.sh" "$out"
+if [ "${PM3000_ACME_LINK_ONLY:-0}" = 1 ]; then
+    echo "ppc.product.runtime_gate=link-stubs-only"
+    exit 0
+fi
 command -v qemu-ppc >/dev/null 2>&1 || {
     echo "qemu-ppc missing; PPC runtime gate cannot run" >&2
     exit 1

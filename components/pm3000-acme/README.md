@@ -12,8 +12,8 @@ ABI was validated with the probe under
 
 ## Release and installation lineage
 
-Production integration must follow the existing Modern WebUI Stage 7 path, not
-introduce a weaker ad-hoc uploader:
+Production integration follows the existing Modern WebUI Stage 7 path and does
+not introduce a weaker ad-hoc uploader:
 
 ```sh
 modern-WebUI/deploy/stage7-install.sh \
@@ -22,11 +22,14 @@ modern-WebUI/deploy/stage7-install.sh \
   "backup/stage7-full-backup/"
 ```
 
-The final ACME binary, REST routes, WebUI, and Apache configuration should be
-members of one Modern WebUI release transaction so they activate and roll back
-as one coherent version. Persistent ACME state and account/certificate keys
-must remain outside release directories under `/mnt/hdUser/pm3000-revive/acme`.
-Issuance or renewal must not be an implicit installation side effect.
+The ACME binary and Apache configuration are members of the same ten-member
+Modern WebUI release transaction, so they activate and roll back as one coherent
+version. REST routes and WebUI controls remain later integration steps. Persistent
+ACME state and account/certificate keys remain outside release directories under
+`/mnt/hdUser/pm3000-revive/acme`. The Apache-readable, non-secret HTTP-01
+webroot is a separate sibling at `/mnt/hdUser/pm3000-revive/acme-http-01`; it
+must be root-owned and mode `0755`, while published token files are mode `0644`.
+Installation never triggers issuance or renewal.
 
 Before adding any release member, update and test every closed allowlist and
 shape verifier, including:

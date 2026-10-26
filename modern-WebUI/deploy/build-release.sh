@@ -36,6 +36,7 @@ output=$output_directory/pm3000-release-$release_id.tar
 
 make -C "$MODERN/native" clean target
 make -C "$MODERN/deploy" clean target
+make -C "$REPOSITORY/components/pm3000-acme" ppc-release-product
 python3 "$MODERN/deploy/deployment.py" package \
     --source "$MODERN" \
     --release-id "$release_id" \

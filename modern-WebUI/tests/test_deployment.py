@@ -67,7 +67,7 @@ class DeviceInstallDiskPreflightTests(unittest.TestCase):
             'mkdir -p RELEASE_MANIFEST.json.d apache bin web\n'
             'rm -rf RELEASE_MANIFEST.json.d\n'
             'for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf '
-            'bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
+            'bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
             'web/app.js web/index.html web/styles.css; do\n'
             '  [ "${FAKE_TAR_MODE:-complete}:$member" = incomplete:web/styles.css ] || : >"$member"\n'
             'done\n',
@@ -194,6 +194,10 @@ class PackagingTests(unittest.TestCase):
         helper = self.source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
         helper.write_bytes(b"ELF-helper-test")
         helper.chmod(0o755)
+        acme = self.source.parent / "components" / "pm3000-acme" / "build" / "pm3000-acme"
+        acme.parent.mkdir(parents=True)
+        acme.write_bytes(b"ELF-acme-test")
+        acme.chmod(0o755)
         (self.source / "deploy" / "pm3000-revive.conf").write_text(
             "Alias /modern/ /mnt/hdUser/pm3000-revive/webui/current/web/\n",
             encoding="utf-8",
@@ -212,6 +216,7 @@ class PackagingTests(unittest.TestCase):
                     "RELEASE_MANIFEST.json",
                     "RELEASE_SHA256SUMS",
                     "apache/pm3000-revive.conf",
+                    "bin/pm3000-acme",
                     "bin/pm3000-atomic-publish",
                     "bin/pm3000-gsp-session-helper",
                     "bin/pm3000-rest",
@@ -223,6 +228,7 @@ class PackagingTests(unittest.TestCase):
             manifest = json.load(archive.extractfile("RELEASE_MANIFEST.json"))
             self.assertEqual(manifest["release_id"], "r1")
             modes = {entry["path"]: entry["mode"] for entry in manifest["files"]}
+            self.assertEqual(0o755, modes["bin/pm3000-acme"])
             self.assertEqual(0o4750, modes["bin/pm3000-gsp-session-helper"])
             index = archive.extractfile("web/index.html").read()
             self.assertIn(b"Build r1 (abcdef123456)", index)
@@ -238,15 +244,15 @@ class PackagingTests(unittest.TestCase):
         helper = load_helper()
         output = self.work / "oversized-release.tar"
         binary = self.source / "native" / "build" / "pm3000-rest-ppc32"
-        binary.write_bytes(b"X" * (448 * 1024))
-        with self.assertRaisesRegex(helper.DeploymentError, "448 KiB"):
+        binary.write_bytes(b"X" * (544 * 1024))
+        with self.assertRaisesRegex(helper.DeploymentError, "544 KiB"):
             helper.build_release(self.source, output, "r1", "abcdef123456")
         self.assertFalse(output.exists())
 
-    def test_deployment_documentation_matches_nine_member_archive(self):
+    def test_deployment_documentation_matches_ten_member_archive(self):
         readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
-        self.assertEqual(2, readme.count("nine-member allowlist"))
-        self.assertNotIn("eight-member allowlist", readme)
+        self.assertEqual(2, readme.count("ten-member allowlist"))
+        self.assertNotIn("nine-member allowlist", readme)
 
 
 class DeploymentSimulationTests(unittest.TestCase):
@@ -296,6 +302,9 @@ class DeploymentSimulationTests(unittest.TestCase):
             b"session-helper-" + release_id.encode()
         )
         (source / "deploy/build/pm3000-atomic-publish-ppc32").write_bytes(b"helper-" + release_id.encode())
+        acme = source.parent / "components/pm3000-acme/build/pm3000-acme"
+        acme.parent.mkdir(parents=True, exist_ok=True)
+        acme.write_bytes(b"acme-" + release_id.encode())
         (source / "deploy/pm3000-revive.conf").write_bytes(b"new-config-" + release_id.encode() + b"\n")
         self.helper.build_release(source, self.package, release_id)
 
@@ -694,6 +703,11 @@ class ScriptStructureTests(unittest.TestCase):
 
         installer = (DEPLOY / "device-install.sh").read_text()
         rollback = (DEPLOY / "device-rollback.sh").read_text()
+        release_builder = (DEPLOY / "build-release.sh").read_text()
+        self.assertIn(
+            'make -C "$REPOSITORY/components/pm3000-acme" ppc-release-product',
+            release_builder,
+        )
         atomic_source = (DEPLOY / "atomic-publish.c").read_text()
         self.assertNotIn("tar tf \"$package\" |", installer)
         self.assertNotIn("mv -f", installer)
@@ -756,12 +770,31 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"', rollback)
         self.assertNotIn('sha256sum', rollback)
         self.assertIn('--verify-release "$release" "$daemon_gid"', rollback)
-        self.assertIn('bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
-        self.assertIn('[ "$_sum_count" -eq 7 ]', rollback)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme\nbin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
+        self.assertIn('[ "$_sum_count" -eq 8 ]', rollback)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', installer)
+        self.assertIn('[ "$_sum_count" -eq 8 ]', installer)
+        self.assertIn('chmod 755 "$tmp/bin/pm3000-acme"', installer)
         self.assertIn('--verify-private-directory "$restore_dir"', rollback)
         apache = (DEPLOY / "pm3000-revive.conf").read_text()
+        challenge_root = "/mnt/hdUser/pm3000-revive/acme-http-01"
+        challenge_alias = (
+            'Alias /.well-known/acme-challenge/ '
+            f'"{challenge_root}/"'
+        )
+        self.assertIn(challenge_alias, apache)
+        self.assertLess(apache.index(challenge_alias), apache.index("ScriptAlias /api/v1 "))
+        self.assertIn(f'<Directory "{challenge_root}">', apache)
+        self.assertIn("Options -Indexes -ExecCGI", apache)
+        self.assertNotIn("/acme/http-01", apache)
+        self.assertNotIn("<Location /.well-known/acme-challenge/>", apache)
+        acme_main = (
+            ROOT / "components" / "pm3000-acme" / "src" / "main.c"
+        ).read_text()
+        self.assertIn(f'    "{challenge_root}"', acme_main)
+        self.assertNotIn("/acme/http-01", acme_main)
         self.assertIn("ScriptAlias /api/v1 ", apache)
         self.assertIn("AcceptPathInfo On", apache)
         self.assertIn("DirectoryIndex index.html", apache)
@@ -878,6 +911,7 @@ class ScriptStructureTests(unittest.TestCase):
                 "RELEASE_MANIFEST.json": 0o600,
                 "RELEASE_SHA256SUMS": 0o600,
                 "apache/pm3000-revive.conf": 0o644,
+                "bin/pm3000-acme": 0o755,
                 "bin/pm3000-atomic-publish": 0o755,
                 "bin/pm3000-gsp-session-helper": 0o4750,
                 "bin/pm3000-rest": 0o755,
@@ -973,6 +1007,7 @@ class ScriptStructureTests(unittest.TestCase):
             )
             payloads = {
                 "apache/pm3000-revive.conf": b"new-config\n",
+                "bin/pm3000-acme": b"#!/bin/sh\nexit 2\n",
                 "bin/pm3000-atomic-publish": helper.read_bytes(),
                 "bin/pm3000-gsp-session-helper": b"ELF-session-helper\n",
                 "bin/pm3000-rest": b"#!/bin/sh\nexit 0\n",
@@ -1010,7 +1045,8 @@ class ScriptStructureTests(unittest.TestCase):
 
             with tarfile.open(package, "w") as archive:
                 for name in ["RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS",
-                             "apache/pm3000-revive.conf", "bin/pm3000-atomic-publish",
+                             "apache/pm3000-revive.conf", "bin/pm3000-acme",
+                             "bin/pm3000-atomic-publish",
                              "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
                              "web/app.js", "web/index.html", "web/styles.css"]:
                     archive.add(package_tree / name, arcname=name, recursive=False,

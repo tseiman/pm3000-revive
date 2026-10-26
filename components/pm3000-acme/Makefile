@@ -8,7 +8,7 @@ PRODUCT_SOURCES := src/main.c src/app.c src/config.c src/state.c src/store.c \
 	src/jws.c src/crypto.c src/base64url.c src/stat_compat.c \
 	src/syscall_compat.c
 
-.PHONY: test clean fixtures host-product ppc-product
+.PHONY: test clean fixtures host-product ppc-product ppc-release-product
 
 fixtures:
 	sh tests/generate-fixtures.sh
@@ -34,6 +34,7 @@ test: fixtures build/test_url build/test_base64url build/test_json build/test_di
 	./build/test_state
 	./build/test_publish
 	./build/test_app
+	python3 tests/test_link_stubs.py
 
 build/test_url: tests/test_url.c src/url.c include/pm3000_acme_url.h
 	mkdir -p build
@@ -155,6 +156,9 @@ host-product: build/pm3000-acme-host
 
 ppc-product: test
 	./scripts/build-ppc-product.sh
+
+ppc-release-product: test
+	./scripts/build-ppc-release-product.sh
 
 build/pm3000-acme-host: $(PRODUCT_SOURCES)
 	mkdir -p build

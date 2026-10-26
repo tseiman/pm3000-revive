@@ -152,7 +152,7 @@ This is a write operation. Run it only during an approved maintenance window.
 ## Build the exact allowlist release archive
 
 For a complete PPC32 big-endian release package on Linux, including the native runtime,
-fixed-purpose GSP session helper, atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
+fixed-purpose GSP session helper, ACME client, atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
 `qemu-ppc` is installed, run from the repository root:
 
 ```sh
@@ -160,9 +160,12 @@ modern-WebUI/deploy/build-release.sh 2026-10-21.1
 ```
 
 This uses the shared toolchain under `components/dropbear/output-buildroot/host`
-and the source-only build interfaces under `modern-WebUI/native/abi-stubs/`.
-No extracted PM3000 firmware root filesystem is required, and the generated link
-stubs are not included in the release archive.
+and the source-only build interfaces under `modern-WebUI/native/abi-stubs/` and
+`components/pm3000-acme/abi-stubs/`. No extracted PM3000 firmware root filesystem
+is required for the release build, and the generated link stubs are not included
+in the release archive. The stricter ACME `ppc-product` gate additionally links
+and runs against an extracted firmware root and is used for qualified local/device
+acceptance rather than public CI.
 If it is absent, the script prints the commands needed to create it. macOS hosts
 should use the `Build modern WebUI release` GitHub Actions workflow rather than
 trying to run the Linux Buildroot toolchain locally. Tags named
@@ -184,7 +187,7 @@ python3 modern-WebUI/deploy/deployment.py package \
 
 The builder reads only the three names in `web/release-files.txt`, the finished
 PPC REST binary, the finished fixed-purpose GSP session helper, the finished PPC
-atomic-publication helper, and this
+ACME client, the finished PPC atomic-publication helper, and this
 directory's Apache configuration. It snapshots each source
 once, rejects non-regular/symlink sources and source mutation during a read, and
 writes deterministic `RELEASE_MANIFEST.json`, `RELEASE_SHA256SUMS`, and a whole
@@ -388,15 +391,20 @@ The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3
 manifest, its archive binding, and an exact match between the manifest's saved
 SSH target and the requested SSH target. It validates the release sidecar before
 transfer, then reads the package once with no-follow semantics, requires the
-exact ordered nine-member allowlist with regular non-link members, fixed modes,
+exact ordered ten-member allowlist with regular non-link members, fixed modes,
 and root archive ownership, and writes those same bytes to private host storage.
 The uploaded digest binds the remote bytes to that immutable snapshot. It uses legacy `scp -O`
 to copy the package into a
 private `/tmp/pm3000-stage7-compat-*` directory, checks the uploaded SHA-256 with
-OpenSSL, enforces the nine-member allowlist, normalizes only those fixed members
+OpenSSL, enforces the ten-member allowlist, normalizes only those fixed members
 to the installer contract's exact modes, executes the packaged helper's
-regular-file and release-tree checks, and calls only the REST CGI `/api/v1/health`
-route. Success ends with `compatibility.complete=yes` and `apply=no`; cleanup is
+regular-file and release-tree checks, runs the exact packaged ACME binary with
+`LD_BIND_NOW=1` through its non-mutating invalid-argument path and requires exit
+status 2, and calls only the REST CGI `/api/v1/health` route. The private ACME
+state root is `/mnt/hdUser/pm3000-revive/acme` (`0700`); the Apache-readable,
+non-secret challenge webroot is the separate sibling
+`/mnt/hdUser/pm3000-revive/acme-http-01` (`0755`). Success ends with
+`compatibility.complete=yes` and `apply=no`; cleanup is
 trapped on success and failure. It does not write below `/etc` or `/mnt`, contact
 Avtrans, reload Apache, or install the release.
 

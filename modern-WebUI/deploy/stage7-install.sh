@@ -170,6 +170,7 @@ cat >"$work/expected-members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
+bin/pm3000-acme
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -187,15 +188,18 @@ chmod 755 "$work/release" "$work/release/apache" "$work/release/bin" "$work/rele
 chmod 600 "$work/release/RELEASE_MANIFEST.json" "$work/release/RELEASE_SHA256SUMS"
 chmod 644 "$work/release/apache/pm3000-revive.conf" \
     "$work/release/web/app.js" "$work/release/web/index.html" "$work/release/web/styles.css"
-chmod 755 "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
+chmod 755 "$work/release/bin/pm3000-acme" \
+    "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
 daemon_uid=$(id -u daemon)
 case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
 daemon_gid=$(id -g daemon)
 case "$daemon_gid" in ''|*[!0-9]*) echo "invalid Apache daemon group" >&2; exit 1;; esac
 helper=$work/release/bin/pm3000-atomic-publish
+acme=$work/release/bin/pm3000-acme
 rest=$work/release/bin/pm3000-rest
 session_helper=$work/release/bin/pm3000-gsp-session-helper
 "$helper" --verify-regular "$helper"
+"$helper" --verify-regular "$acme"
 "$helper" --verify-regular "$rest"
 "$helper" --verify-regular "$session_helper"
 chown 0:"$daemon_gid" "$session_helper"
@@ -214,6 +218,13 @@ for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-
     fi
 done
 log "Running read-only PPC/CGI compatibility health check"
+set +e
+LD_BIND_NOW=1 "$acme" renew --invalid >/dev/null 2>&1
+acme_status=$?
+set -e
+[ "$acme_status" -eq 2 ] || {
+    echo "ACME runtime compatibility check failed" >&2; exit 1;
+}
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on "$rest")
 case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
     *) echo "REST health compatibility check failed" >&2; exit 1;;
@@ -221,6 +232,7 @@ esac
 printf '%s\n' "device_machine=$(uname -m)"
 printf '%s\n' "release_sha256=$actual"
 printf '%s\n' "atomic_helper.compatible=yes"
+printf '%s\n' "acme_runtime.compatible=yes"
 printf '%s\n' "rest_health.compatible=yes"
 printf '%s\n' "compatibility.complete=yes"
 printf '%s\n' "apply=no"

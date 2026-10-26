@@ -23,7 +23,7 @@ class DeploymentError(RuntimeError):
     pass
 
 
-MAX_RELEASE_REGULAR_BYTES = 448 * 1024
+MAX_RELEASE_REGULAR_BYTES = 544 * 1024
 
 
 def _sha256(data: bytes) -> str:
@@ -75,6 +75,7 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
         raise DeploymentError("web release allowlist contains a duplicate")
 
     sources = {f"web/{name}": source / "web" / name for name in names}
+    sources["bin/pm3000-acme"] = source.parent / "components" / "pm3000-acme" / "build" / "pm3000-acme"
     sources["bin/pm3000-rest"] = source / "native" / "build" / "pm3000-rest-ppc32"
     sources["bin/pm3000-gsp-session-helper"] = source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
     sources["bin/pm3000-atomic-publish"] = source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
@@ -127,7 +128,8 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
     )
     if regular_bytes > MAX_RELEASE_REGULAR_BYTES:
         raise DeploymentError(
-            f"release regular-file payload exceeds 448 KiB: {regular_bytes} bytes"
+            f"release regular-file payload exceeds {MAX_RELEASE_REGULAR_BYTES // 1024} KiB: "
+            f"{regular_bytes} bytes"
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.name + ".tmp")
@@ -407,7 +409,8 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
                 or manifest["format"] != 1 or not isinstance(manifest["files"], list)):
             raise DeploymentError("invalid release manifest schema")
         required_payloads = {
-            "apache/pm3000-revive.conf", "bin/pm3000-atomic-publish",
+            "apache/pm3000-revive.conf", "bin/pm3000-acme",
+            "bin/pm3000-atomic-publish",
             "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
             "web/app.js", "web/index.html", "web/styles.css",
         }

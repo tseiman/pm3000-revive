@@ -2,7 +2,7 @@
 
 #define PM3000_ACME_STATE_ROOT "/mnt/hdUser/pm3000-revive/acme"
 #define PM3000_ACME_CHALLENGE_ROOT \
-    "/mnt/hdUser/pm3000-revive/acme/http-01"
+    "/mnt/hdUser/pm3000-revive/acme-http-01"
 
 int main(int argc, char **argv)
 {

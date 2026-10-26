@@ -27,6 +27,8 @@ class Stage7InstallContractTests(unittest.TestCase):
         self.assertIn("BACKUP_COMPLETE", source)
         self.assertIn("device-install.sh", source)
         self.assertIn("compatibility.complete=yes", source)
+        self.assertIn('LD_BIND_NOW=1 "$acme" renew --invalid', source)
+        self.assertIn('[ "$acme_status" -eq 2 ]', source)
         self.assertIn("install.complete=yes", source)
         ssh_invocations = re.findall(r"\|\s*ssh(?:\s|$)", source)
         self.assertEqual(1, len(ssh_invocations), ssh_invocations)

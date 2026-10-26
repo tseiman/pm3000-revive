@@ -26,7 +26,7 @@ The values were obtained through authenticated read-only Avtrans page requests. 
 
 ## Design consequences
 
-- The modern runtime target remains at or below 400 KiB.
+- The production release currently uses about 500 KiB of regular payload and is capped at 544 KiB; each install still performs a live capacity check with 256 KiB additional transactional headroom.
 - Persistent releases and token configuration must fit within the currently tight `/mnt/hdUser` budget if that location is retained.
 - `/var` may be suitable for temporary backup/package staging, but never for the only backup copy.
 - The complete pre-install backup is transferred to and verified on the administration host before installation.

@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/pm3000-revive.conf|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,7 +34,7 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 7 ]
+    [ "$_sum_count" -eq 8 ]
 }
 
 # BEGIN DISK PREFLIGHT TEST FUNCTIONS
@@ -122,7 +122,7 @@ extract_release_archive()
         return 1
     fi
     for extracted_member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-        bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+        bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
         web/app.js web/index.html web/styles.css; do
         [ -f "$_extract_root/$extracted_member" ] && [ ! -L "$_extract_root/$extracted_member" ] || {
             echo "release archive extraction incomplete: $extracted_member" >&2
@@ -191,6 +191,7 @@ cat >"$expected_members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
+bin/pm3000-acme
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -318,7 +319,7 @@ for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock"; do
     "$atomic_helper" --verify-private-regular-owner "$prerequisite" "$daemon_uid"
 done
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-    bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+    bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
     web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$tmp/$member" || {
         echo "unsafe extracted release member: $member" >&2
@@ -334,7 +335,7 @@ chmod 600 "$approved_manifest" "$approved_sums"
 "$atomic_helper" --verify-regular "$approved_manifest" || exit 1
 "$atomic_helper" --verify-regular "$approved_sums" || exit 1
 chmod 755 "$tmp" "$tmp/apache" "$tmp/bin" "$tmp/web"
-chmod 755 "$tmp/bin/pm3000-atomic-publish" "$tmp/bin/pm3000-rest"
+chmod 755 "$tmp/bin/pm3000-acme" "$tmp/bin/pm3000-atomic-publish" "$tmp/bin/pm3000-rest"
 chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"
 chmod 4750 "$tmp/bin/pm3000-gsp-session-helper"
 chmod 600 "$tmp/RELEASE_MANIFEST.json" "$tmp/RELEASE_SHA256SUMS"

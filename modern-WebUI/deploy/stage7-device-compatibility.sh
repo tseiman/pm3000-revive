@@ -116,6 +116,7 @@ expected_members = {
     "RELEASE_MANIFEST.json": 0o600,
     "RELEASE_SHA256SUMS": 0o600,
     "apache/pm3000-revive.conf": 0o644,
+    "bin/pm3000-acme": 0o755,
     "bin/pm3000-atomic-publish": 0o755,
     "bin/pm3000-gsp-session-helper": 0o4750,
     "bin/pm3000-rest": 0o755,
@@ -168,6 +169,7 @@ cat >"$work/expected-members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
 apache/pm3000-revive.conf
+bin/pm3000-acme
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -185,11 +187,14 @@ chmod 755 "$work/release" "$work/release/apache" "$work/release/bin" "$work/rele
 chmod 600 "$work/release/RELEASE_MANIFEST.json" "$work/release/RELEASE_SHA256SUMS"
 chmod 644 "$work/release/apache/pm3000-revive.conf" \
     "$work/release/web/app.js" "$work/release/web/index.html" "$work/release/web/styles.css"
-chmod 755 "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
+chmod 755 "$work/release/bin/pm3000-acme" \
+    "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
 chmod 4750 "$work/release/bin/pm3000-gsp-session-helper"
 helper=$work/release/bin/pm3000-atomic-publish
+acme=$work/release/bin/pm3000-acme
 rest=$work/release/bin/pm3000-rest
 "$helper" --verify-regular "$helper"
+"$helper" --verify-regular "$acme"
 "$helper" --verify-regular "$rest"
 "$helper" --verify-release "$work/release"
 daemon_uid=$(id -u daemon)
@@ -204,6 +209,13 @@ for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-
             "$helper" --verify-private-regular-owner "$token_file" "$daemon_uid"
     fi
 done
+set +e
+LD_BIND_NOW=1 "$acme" renew --invalid >/dev/null 2>&1
+acme_status=$?
+set -e
+[ "$acme_status" -eq 2 ] || {
+    echo "ACME runtime compatibility check failed" >&2; exit 1;
+}
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on "$rest")
 case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
     *) echo "REST health compatibility check failed" >&2; exit 1;;
@@ -211,6 +223,7 @@ esac
 printf '%s\n' "device_machine=$(uname -m)"
 printf '%s\n' "release_sha256=$actual"
 printf '%s\n' "atomic_helper.compatible=yes"
+printf '%s\n' "acme_runtime.compatible=yes"
 printf '%s\n' "rest_health.compatible=yes"
 printf '%s\n' "compatibility.complete=yes"
 REMOTE

@@ -93,9 +93,10 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
     static const char *const apache_files[] = {"pm3000-revive.conf"};
     static const mode_t apache_modes[] = {0644};
     static const char *const bin_files[] = {
-        "pm3000-atomic-publish", "pm3000-gsp-session-helper", "pm3000-rest"
+        "pm3000-acme", "pm3000-atomic-publish",
+        "pm3000-gsp-session-helper", "pm3000-rest"
     };
-    static const mode_t bin_modes[] = {0755, 04750, 0755};
+    static const mode_t bin_modes[] = {0755, 0755, 04750, 0755};
     static const char *const web_files[] = {"app.js", "index.html", "styles.css"};
     static const mode_t web_modes[] = {0644, 0644, 0644};
     int root_fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -109,7 +110,7 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
             && verify_regular_at(root_fd, "RELEASE_MANIFEST.json", 0600) == 0
             && verify_regular_at(root_fd, "RELEASE_SHA256SUMS", 0600) == 0
             && verify_subdirectory(root_fd, "apache", apache_files, apache_modes, 1) == 0
-            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 3) == 0
+            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 4) == 0
             && verify_subdirectory(root_fd, "web", web_files, web_modes, 3) == 0) {
         bin_fd = openat(root_fd, "bin", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
         if (bin_fd >= 0 && (!verify_helper_group ||

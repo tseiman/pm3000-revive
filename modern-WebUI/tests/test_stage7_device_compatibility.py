@@ -94,10 +94,18 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
             b"printf 'Status: 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n'\n"
             b"printf '{\"apiVersion\":\"v1\",\"status\":\"live\"}\\n'\n"
         )
+        acme = (
+            b"#!/bin/sh\n"
+            b"[ \"${LD_BIND_NOW:-}\" = 1 ] || exit 90\n"
+            b"[ \"$#\" -eq 2 ] && [ \"$1\" = renew ] && [ \"$2\" = --invalid ] || exit 91\n"
+            b"printf 'acme-runtime-gate=yes\\n' >>\"$FAKE_TRANSPORT_LOG\"\n"
+            b"exit \"${FAKE_ACME_STATUS:-2}\"\n"
+        )
         members = [
             ("RELEASE_MANIFEST.json", b"{}\n", 0o600),
             ("RELEASE_SHA256SUMS", b"test\n", 0o600),
             ("apache/pm3000-revive.conf", b"test\n", 0o644),
+            ("bin/pm3000-acme", acme, 0o755),
             ("bin/pm3000-atomic-publish", helper, 0o755),
             ("bin/pm3000-gsp-session-helper", b"helper\n", 0o4750),
             ("bin/pm3000-rest", rest, 0o755),
@@ -178,12 +186,22 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertIn('scp ["-O"', transport)
         self.assertIn("--verify-release", transport)
         self.assertIn("PATH_INFO=/health", transport)
+        self.assertIn("acme-runtime-gate=yes", transport)
+        self.assertIn('LD_BIND_NOW=1 "$acme" renew --invalid', transport)
         self.assertNotIn("/etc/apache2", transport)
         self.assertIn("for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json", transport)
         self.assertIn('--verify-private-regular "$token_file"', transport)
         self.assertNotIn("controller.credentials", transport)
         self.assertIn("--verify-private-directory-owner", transport)
         self.assertIn("--verify-private-regular-owner", transport)
+        self.assert_no_remote_tree()
+
+    def test_unexpected_acme_runtime_status_is_rejected_and_cleaned_up(self):
+        environment = self.environment.copy()
+        environment["FAKE_ACME_STATUS"] = "0"
+        result = self.run_compatibility(environment=environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ACME runtime compatibility check failed", result.stderr)
         self.assert_no_remote_tree()
 
     def test_rejects_backup_from_other_target_before_transport(self):
