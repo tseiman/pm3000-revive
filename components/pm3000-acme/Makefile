@@ -131,7 +131,7 @@ build/test_state: tests/test_state.c src/state.c src/store.c src/crypto.c \
 	mkdir -p build
 	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
 		tests/test_state.c src/state.c src/store.c src/crypto.c \
-		src/base64url.c src/url.c src/stat_compat.c -lcrypto
+		src/base64url.c src/url.c src/stat_compat.c -Wl,--wrap=fsync -lcrypto
 
 build/test_publish: tests/test_publish.c src/publish.c src/store.c \
 		src/certificate.c src/tls.c src/crypto.c src/base64url.c src/url.c src/stat_compat.c \

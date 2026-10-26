@@ -16,5 +16,9 @@ int pm3000_acme_certificate_validate(
     const char *certificate_chain_path, const char *ca_file,
     const struct pm3000_acme_key *private_key,
     const char *const *dns_names, unsigned int dns_name_count);
+int pm3000_acme_certificate_validate_bytes(
+    const unsigned char *certificate_chain, unsigned int certificate_length,
+    const char *ca_file, const struct pm3000_acme_key *private_key,
+    const char *const *dns_names, unsigned int dns_name_count);
 
 #endif

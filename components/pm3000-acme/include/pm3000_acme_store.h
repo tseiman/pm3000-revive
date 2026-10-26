@@ -14,10 +14,19 @@ int pm3000_acme_store_write(const char *root, const char *name,
                             const unsigned char *data,
                             unsigned int data_length,
                             unsigned int mode);
+int pm3000_acme_store_write_at(int root_fd, const char *name,
+                               const unsigned char *data,
+                               unsigned int data_length,
+                               unsigned int mode);
 int pm3000_acme_store_read(const char *root, const char *name,
                            unsigned char *output,
                            unsigned int output_capacity,
                            unsigned int *output_length,
                            int require_private_mode);
+int pm3000_acme_store_read_at(int root_fd, const char *name,
+                              unsigned char *output,
+                              unsigned int output_capacity,
+                              unsigned int *output_length,
+                              int require_private_mode);
 
 #endif

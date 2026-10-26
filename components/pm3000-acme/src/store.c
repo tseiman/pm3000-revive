@@ -27,16 +27,21 @@ static int safe_name(const char *name)
     return 1;
 }
 
-static int open_root(const char *root)
+static int valid_root_fd(int root_fd)
 {
     struct pm3000_acme_stat info;
+    return root_fd >= 0 && pm3000_acme_fstat(root_fd, &info) == 0 &&
+           PM3000_ACME_S_ISDIR(info.mode) && (info.mode & 077U) == 0U &&
+           info.uid == (unsigned long)geteuid();
+}
+
+static int open_root(const char *root)
+{
     int fd;
     if (root == (const char *)0 || root[0] == '\0') return -1;
     fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (fd < 0) return -1;
-    if (pm3000_acme_fstat(fd, &info) != 0 ||
-        !PM3000_ACME_S_ISDIR(info.mode) || (info.mode & 077U) != 0U ||
-        info.uid != (unsigned long)geteuid()) {
+    if (!valid_root_fd(fd)) {
         close(fd);
         return -1;
     }
@@ -55,12 +60,11 @@ static int write_all(int fd, const unsigned char *data, unsigned int length)
     return 1;
 }
 
-int pm3000_acme_store_write(const char *root, const char *name,
-                            const unsigned char *data,
-                            unsigned int data_length,
-                            unsigned int mode)
+int pm3000_acme_store_write_at(int root_fd, const char *name,
+                               const unsigned char *data,
+                               unsigned int data_length,
+                               unsigned int mode)
 {
-    int root_fd;
     int file_fd = -1;
     int result = PM3000_ACME_STORE_IO;
     char temporary[96];
@@ -69,8 +73,7 @@ int pm3000_acme_store_write(const char *root, const char *name,
                              data_length != 0U) ||
         data_length > STORE_FILE_MAX || (mode != 0600U && mode != 0644U))
         return PM3000_ACME_STORE_INVALID;
-    root_fd = open_root(root);
-    if (root_fd < 0) return PM3000_ACME_STORE_UNSAFE;
+    if (!valid_root_fd(root_fd)) return PM3000_ACME_STORE_UNSAFE;
     temporary[0] = '\0';
     for (attempt = 0U; attempt < 16U; ++attempt) {
         int count = snprintf(temporary, sizeof(temporary),
@@ -97,17 +100,28 @@ int pm3000_acme_store_write(const char *root, const char *name,
 done:
     if (file_fd >= 0) close(file_fd);
     if (temporary[0] != '\0') unlinkat(root_fd, temporary, 0);
+    return result;
+}
+
+int pm3000_acme_store_write(const char *root, const char *name,
+                            const unsigned char *data,
+                            unsigned int data_length,
+                            unsigned int mode)
+{
+    int root_fd = open_root(root);
+    int result;
+    if (root_fd < 0) return PM3000_ACME_STORE_UNSAFE;
+    result = pm3000_acme_store_write_at(root_fd, name, data, data_length, mode);
     close(root_fd);
     return result;
 }
 
-int pm3000_acme_store_read(const char *root, const char *name,
-                           unsigned char *output,
-                           unsigned int output_capacity,
-                           unsigned int *output_length,
-                           int require_private_mode)
+int pm3000_acme_store_read_at(int root_fd, const char *name,
+                              unsigned char *output,
+                              unsigned int output_capacity,
+                              unsigned int *output_length,
+                              int require_private_mode)
 {
-    int root_fd;
     int file_fd = -1;
     struct pm3000_acme_stat info;
     unsigned int offset = 0U;
@@ -116,8 +130,7 @@ int pm3000_acme_store_read(const char *root, const char *name,
     if (!safe_name(name) || output == (unsigned char *)0 ||
         output_capacity == 0U || output_length == (unsigned int *)0)
         return PM3000_ACME_STORE_INVALID;
-    root_fd = open_root(root);
-    if (root_fd < 0) return PM3000_ACME_STORE_UNSAFE;
+    if (!valid_root_fd(root_fd)) return PM3000_ACME_STORE_UNSAFE;
     file_fd = openat(root_fd, name, O_RDONLY | O_NOFOLLOW);
     if (file_fd < 0) goto done;
     if (pm3000_acme_fstat(file_fd, &info) != 0 ||
@@ -125,7 +138,7 @@ int pm3000_acme_store_read(const char *root, const char *name,
         info.uid != (unsigned long)geteuid() || info.size < 0 ||
         (unsigned long)info.size > STORE_FILE_MAX ||
         (unsigned long)info.size >= output_capacity ||
-        (require_private_mode && (info.mode & 077U) != 0U)) {
+        (require_private_mode && (info.mode & 0777U) != 0600U)) {
         result = PM3000_ACME_STORE_UNSAFE;
         goto done;
     }
@@ -141,6 +154,20 @@ int pm3000_acme_store_read(const char *root, const char *name,
     result = PM3000_ACME_STORE_OK;
 done:
     if (file_fd >= 0) close(file_fd);
+    return result;
+}
+
+int pm3000_acme_store_read(const char *root, const char *name,
+                           unsigned char *output,
+                           unsigned int output_capacity,
+                           unsigned int *output_length,
+                           int require_private_mode)
+{
+    int root_fd = open_root(root);
+    int result;
+    if (root_fd < 0) return PM3000_ACME_STORE_UNSAFE;
+    result = pm3000_acme_store_read_at(root_fd, name, output, output_capacity,
+                                       output_length, require_private_mode);
     close(root_fd);
     return result;
 }

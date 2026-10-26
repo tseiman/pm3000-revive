@@ -12,7 +12,7 @@ enum pm3000_acme_publish_result {
 };
 
 int pm3000_acme_publish_certificate(
-    const char *state_root, const unsigned char *certificate_pem,
+    int state_root_fd, const unsigned char *certificate_pem,
     unsigned int certificate_length, const char *ca_file,
     const struct pm3000_acme_key *certificate_key,
     const char *const *dns_names, unsigned int dns_name_count);

@@ -28,37 +28,29 @@ static int pem_base64(unsigned char value)
            value == '=';
 }
 
-static int strict_pem_count(const char *path, unsigned int *count)
+static int strict_pem_count(const unsigned char *data, unsigned int length,
+                            unsigned int *count)
 {
     static const char begin[] = "-----BEGIN CERTIFICATE-----";
     static const char end[] = "-----END CERTIFICATE-----";
-    FILE *file;
-    size_t length;
-    size_t index = 0U;
+    unsigned int index = 0U;
     unsigned int blocks = 0U;
-    int read_failed;
-    int close_failed;
-    file = fopen(path, "rb");
-    if (file == (FILE *)0) return 0;
-    length = fread(certificate_file, 1U, CERTIFICATE_FILE_MAX + 1U, file);
-    read_failed = ferror(file) || !feof(file);
-    close_failed = fclose(file) != 0;
-    if (read_failed || close_failed || length == 0U ||
+    if (data == (const unsigned char *)0 || length == 0U ||
         length > CERTIFICATE_FILE_MAX) return 0;
     while (index < length) {
         unsigned int payload = 0U;
-        while (index < length && pem_space(certificate_file[index])) ++index;
+        while (index < length && pem_space(data[index])) ++index;
         if (index == length) break;
         if (length - index < sizeof(begin) - 1U ||
-            memcmp(certificate_file + index, begin, sizeof(begin) - 1U) != 0)
+            memcmp(data + index, begin, sizeof(begin) - 1U) != 0)
             return 0;
         index += sizeof(begin) - 1U;
         while (index < length) {
             if (length - index >= sizeof(end) - 1U &&
-                memcmp(certificate_file + index, end,
+                memcmp(data + index, end,
                        sizeof(end) - 1U) == 0) break;
-            if (pem_base64(certificate_file[index])) ++payload;
-            else if (!pem_space(certificate_file[index])) return 0;
+            if (pem_base64(data[index])) ++payload;
+            else if (!pem_space(data[index])) return 0;
             ++index;
         }
         if (payload < 4U || length - index < sizeof(end) - 1U) return 0;
@@ -127,8 +119,9 @@ rejected:
     return 0;
 }
 
-int pm3000_acme_certificate_validate(
-    const char *certificate_chain_path, const char *ca_file,
+int pm3000_acme_certificate_validate_bytes(
+    const unsigned char *certificate_chain, unsigned int certificate_length,
+    const char *ca_file,
     const struct pm3000_acme_key *private_key,
     const char *const *dns_names, unsigned int dns_name_count)
 {
@@ -141,15 +134,16 @@ int pm3000_acme_certificate_validate(
     unsigned int chain_count = 0U;
     unsigned int expected_count = 0U;
     int result = PM3000_ACME_CERTIFICATE_INVALID;
-    if (certificate_chain_path == (const char *)0 ||
+    if (certificate_chain == (const unsigned char *)0 ||
         ca_file == (const char *)0 ||
         private_key == (const struct pm3000_acme_key *)0 ||
         private_key->handle == (void *)0 ||
         dns_names == (const char *const *)0 || dns_name_count == 0U ||
         dns_name_count > CERTIFICATE_NAMES_MAX ||
-        !strict_pem_count(certificate_chain_path, &expected_count))
+        !strict_pem_count(certificate_chain, certificate_length,
+                          &expected_count))
         return PM3000_ACME_CERTIFICATE_INVALID;
-    bio = BIO_new_file(certificate_chain_path, "r");
+    bio = BIO_new_mem_buf((void *)certificate_chain, (int)certificate_length);
     if (bio == (BIO *)0) return PM3000_ACME_CERTIFICATE_IO;
     leaf = PEM_read_bio_X509(bio, (X509 **)0, (void *)0, (void *)0);
     if (leaf == (X509 *)0) goto done;
@@ -193,4 +187,28 @@ done:
     if (leaf != (X509 *)0) X509_free(leaf);
     if (bio != (BIO *)0) BIO_free(bio);
     return result;
+}
+
+int pm3000_acme_certificate_validate(
+    const char *certificate_chain_path, const char *ca_file,
+    const struct pm3000_acme_key *private_key,
+    const char *const *dns_names, unsigned int dns_name_count)
+{
+    FILE *file;
+    size_t length;
+    int read_failed;
+    int close_failed;
+    if (certificate_chain_path == (const char *)0)
+        return PM3000_ACME_CERTIFICATE_INVALID;
+    file = fopen(certificate_chain_path, "rb");
+    if (file == (FILE *)0) return PM3000_ACME_CERTIFICATE_IO;
+    length = fread(certificate_file, 1U, CERTIFICATE_FILE_MAX + 1U, file);
+    read_failed = ferror(file) || !feof(file);
+    close_failed = fclose(file) != 0;
+    if (read_failed || close_failed || length == 0U ||
+        length > CERTIFICATE_FILE_MAX)
+        return PM3000_ACME_CERTIFICATE_INVALID;
+    return pm3000_acme_certificate_validate_bytes(
+        certificate_file, (unsigned int)length, ca_file, private_key,
+        dns_names, dns_name_count);
 }

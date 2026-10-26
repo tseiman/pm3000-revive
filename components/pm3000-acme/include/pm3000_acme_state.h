@@ -23,9 +23,14 @@ struct pm3000_acme_state {
 
 int pm3000_acme_state_prepare(const char *root,
                               struct pm3000_acme_state *state);
+int pm3000_acme_state_open(const char *root,
+                           struct pm3000_acme_state *state);
+int pm3000_acme_state_prepare_locked(struct pm3000_acme_state *state);
 void pm3000_acme_state_close(struct pm3000_acme_state *state);
-int pm3000_acme_state_store_account_url(const char *root, const char *url);
-int pm3000_acme_state_load_account_url(const char *root, char *output,
+int pm3000_acme_state_store_account_url(
+    const struct pm3000_acme_state *state, const char *url);
+int pm3000_acme_state_load_account_url(
+    const struct pm3000_acme_state *state, char *output,
                                        unsigned int output_capacity);
 
 #endif

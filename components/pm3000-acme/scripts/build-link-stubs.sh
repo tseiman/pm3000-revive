@@ -61,9 +61,13 @@ write_assembly "$crypto_symbols" "$work/libcrypto.S"
     printf 'GLIBC_2.0 {\n    global:\n'
     while IFS= read -r symbol; do [ -n "$symbol" ] && printf '        %s;\n' "$symbol"; done <"$libc20_symbols"
     printf '        stderr;\n'
-    printf '};\nGLIBC_2.1 {\n    global:\n'
-    while IFS= read -r symbol; do [ -n "$symbol" ] && printf '        %s;\n' "$symbol"; done <"$libc21_symbols"
-    printf '    local: *;\n} GLIBC_2.0;\n'
+    if [ -s "$libc21_symbols" ]; then
+        printf '};\nGLIBC_2.1 {\n    global:\n'
+        while IFS= read -r symbol; do [ -n "$symbol" ] && printf '        %s;\n' "$symbol"; done <"$libc21_symbols"
+        printf '    local: *;\n} GLIBC_2.0;\n'
+    else
+        printf '    local: *;\n};\n'
+    fi
 } >"$work/libc.map"
 
 "$cc" -shared -nostdlib -fPIC -mcpu=e300c3 -msoft-float \

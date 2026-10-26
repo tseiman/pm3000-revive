@@ -49,6 +49,13 @@ int main(void)
         fprintf(stderr, "store atomic replacement failed\n");
         return 1;
     }
+    if (chmod(path, 0700) != 0 ||
+        pm3000_acme_store_read(root, "state", output, sizeof(output),
+                               &length, 1) != PM3000_ACME_STORE_UNSAFE ||
+        chmod(path, 0600) != 0) {
+        fprintf(stderr, "store accepted noncanonical private mode\n");
+        return 1;
+    }
     fd = open(outside, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0 || write(fd, "safe", 4U) != 4 || close(fd) != 0) return 2;
     snprintf(path, sizeof(path), "%s/link", root);
