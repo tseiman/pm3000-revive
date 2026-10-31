@@ -7,6 +7,7 @@ import json
 import fcntl
 import os
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -285,6 +286,39 @@ class NativeAdapterTests(unittest.TestCase):
         value = line.decode().split(";", 1)[0].split("=", 1)[1]
         return f"pm3000_session={value}", value
 
+    @staticmethod
+    def acme_admin_helper(root: Path, replies: list[tuple[int, int, bytes]]) -> tuple[Path, Path]:
+        """Create a stateful fake PMA1 helper and return it plus its request log."""
+        helper = root / "fake-acme-admin.py"
+        state = root / "fake-acme-admin.state"
+        log = root / "fake-acme-admin.log"
+        encoded = [(code, child, payload.hex()) for code, child, payload in replies]
+        helper.write_text(
+            "#!/usr/bin/env python3\n"
+            "import fcntl,json,struct,sys\n"
+            f"state={str(state)!r}; log={str(log)!r}; replies={encoded!r}\n"
+            "request=sys.stdin.buffer.read()\n"
+            "with open(state,'a+',encoding='ascii') as handle:\n"
+            " fcntl.flock(handle,fcntl.LOCK_EX); handle.seek(0); text=handle.read(); index=int(text or '0')\n"
+            " handle.seek(0); handle.truncate(); handle.write(str(index+1)); handle.flush()\n"
+            "with open(log,'ab') as handle: handle.write(struct.pack('>I',len(request))+request)\n"
+            "code,child,payload=replies[index]; payload=bytes.fromhex(payload)\n"
+            "sys.stdout.buffer.write(b'PMA1'+bytes((code,child,0,0))+struct.pack('>I',len(payload))+payload)\n",
+            encoding="ascii",
+        )
+        helper.chmod(0o700)
+        return helper, log
+
+    @staticmethod
+    def acme_requests(log: Path) -> list[bytes]:
+        data = log.read_bytes()
+        requests: list[bytes] = []
+        while data:
+            length = struct.unpack(">I", data[:4])[0]
+            requests.append(data[4:4 + length])
+            data = data[4 + length:]
+        return requests
+
     def login_session(
         self,
         root: Path,
@@ -325,11 +359,12 @@ class NativeAdapterTests(unittest.TestCase):
             self.assertEqual({"identity", "csrfToken", "navigation"}, set(response))
             self.assertEqual({"username": "operator"}, response["identity"])
             self.assertEqual(
-                {"paths", "canManageTokens", "canControlPower"},
+                {"paths", "canManageTokens", "canControlPower", "canManageAcme"},
                 set(response["navigation"]),
             )
             self.assertTrue(response["navigation"]["canManageTokens"])
             self.assertTrue(response["navigation"]["canControlPower"])
+            self.assertTrue(response["navigation"]["canManageAcme"])
             self.assertIn("units.topology", response["navigation"]["paths"])
             response_body = result.stdout.split(b"\r\n\r\n", 1)[1]
             self.assertNotIn(b"pm3000_session", response_body)
@@ -348,6 +383,371 @@ class NativeAdapterTests(unittest.TestCase):
             persisted = files[0].read_bytes()
             self.assertNotIn(b"p&<secret", persisted)
             self.assertNotIn(cookie.encode(), persisted)
+
+    def test_acme_capability_requires_controller_confirmed_appliance_admin_write_right(self) -> None:
+        original = NAVIGATION_RESPONSE.read_bytes()
+        candidates = (
+            original.replace(
+                b'accessPath="configuration.security.profile"',
+                b'accessPath="configuration.security.denied"',
+                1,
+            ),
+            original.replace(
+                b'accessPath="configuration.security.profile" accessRights="w"',
+                b'accessPath="configuration.security.profile" accessRights="r"',
+                1,
+            ),
+        )
+        for navigation in candidates:
+            with self.subTest(navigation=navigation), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                _cookie, response, _controller, result = self.login_session(
+                    root, navigation=navigation
+                )
+                self.assertIn(b"Status: 201", result.stdout)
+                self.assertFalse(response["navigation"]["canManageAcme"])
+
+    def test_acme_get_uses_coherent_broker_snapshot_and_projects_closed_setting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            revision = '"' + "a" * 64 + '"'
+            config = (b'{"enabled":true,"directory_url":"https://acme.example/directory",'
+                      b'"ca_file":"/etc/ssl/certs/ca.pem","dns_names":["pdu.example"]}\n')
+            status = b'{"state":"succeeded"}\n'
+            helper, log = self.acme_admin_helper(root, [
+                (0, 0, revision.encode() + b"\n"), (0, 0, config),
+                (0, 0, revision.encode() + b"\n"), (0, 0, status),
+            ])
+            result = self.run_cgi(
+                "GET", "/api/v1/settings/acme", cookie=cookie,
+                extra_environment={
+                    "PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_ACME_ADMIN_HELPER": str(helper),
+                },
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertIn(f"ETag: {revision}".encode(), headers)
+            self.assertEqual({
+                "enabled": True, "directoryUrl": "https://acme.example/directory",
+                "caFile": "/etc/ssl/certs/ca.pem", "dnsNames": ["pdu.example"],
+                "revision": revision, "renewal": {"state": "succeeded"},
+            }, payload)
+            self.assertEqual([5, 1, 5, 4], [request[4] for request in self.acme_requests(log)])
+
+    def test_acme_empty_state_projects_editable_bootstrap_without_invented_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            helper, log = self.acme_admin_helper(root, [
+                (3, 6, b""), (0, 0, b'{"ca_installed":false}\n'),
+            ])
+            result = self.run_cgi(
+                "GET", "/api/v1/settings/acme", cookie=cookie,
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper)},
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertNotIn(b"ETag:", headers)
+            self.assertEqual({
+                "configured": False, "caInstalled": False,
+                "renewal": {"state": "never_run"},
+            }, payload)
+            self.assertNotIn("directoryUrl", payload)
+            self.assertNotIn("dnsNames", payload)
+            self.assertEqual([5, 9], [request[4] for request in self.acme_requests(log)])
+
+    def test_acme_get_projects_closed_failure_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            revision = b'"' + b"a" * 64 + b'"\n'
+            config = b'{"enabled":true,"directory_url":"https://acme.example/directory","ca_file":"/etc/ssl/certs/ca.pem","dns_names":["pdu.example"]}\n'
+            diagnostic = b'{"state":"failed","phase":"directory","reason":"tls"}\n'
+            helper, _log = self.acme_admin_helper(root, [
+                (0, 0, revision), (0, 0, config), (0, 0, revision),
+                (0, 0, diagnostic),
+            ])
+            result = self.run_cgi(
+                "GET", "/api/v1/settings/acme", cookie=cookie,
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper)},
+            )
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual(
+                {"state": "failed", "phase": "directory", "reason": "tls"},
+                payload["renewal"],
+            )
+
+    def test_acme_first_run_ca_then_config_creation_are_strongly_conditional(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions")}
+            pem = b"-----BEGIN CERTIFICATE-----\nraw-bytes\n-----END CERTIFICATE-----\n"
+
+            ca_helper, ca_log = self.acme_admin_helper(root, [
+                (0, 0, b""), (0, 0, b'{"ca_installed":true}\n'),
+            ])
+            ca_result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/ca", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=pem,
+                content_type="application/x-pem-file",
+                extra_environment={**environment,
+                                   "PM3000_ACME_ADMIN_HELPER": str(ca_helper),
+                                   "HTTP_IF_NONE_MATCH": "*"},
+            )
+            self.assertIn(b"Status: 204", ca_result.stdout)
+            ca_requests = self.acme_requests(ca_log)
+            self.assertEqual([8, 9], [request[4] for request in ca_requests])
+            self.assertEqual(pem, ca_requests[0][12:])
+
+            body = (b'{"enabled":false,"directoryUrl":"https://operator.example/directory",'
+                    b'"dnsNames":["pdu.operator.example"]}')
+            managed = (b'{"enabled":false,"directory_url":"https://operator.example/directory",'
+                       b'"ca_file":"/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem",'
+                       b'"dns_names":["pdu.operator.example"]}\n')
+            config_helper_dir = root / "config-helper"
+            config_helper_dir.mkdir()
+            config_helper, config_log = self.acme_admin_helper(config_helper_dir, [
+                (0, 0, b""), (0, 0, managed),
+            ])
+            config_result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=body,
+                content_type="application/json",
+                extra_environment={**environment,
+                                   "PM3000_ACME_ADMIN_HELPER": str(config_helper),
+                                   "HTTP_IF_NONE_MATCH": "*"},
+            )
+            self.assertIn(b"Status: 204", config_result.stdout)
+            config_requests = self.acme_requests(config_log)
+            self.assertEqual([7, 1], [request[4] for request in config_requests])
+            self.assertEqual(managed, config_requests[0][12:])
+
+    def test_acme_first_run_rejects_weak_or_mixed_creation_preconditions_before_broker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            marker = root / "must-not-run"
+            base = {"PM3000_SESSION_DIR": str(root / "sessions"),
+                    "PM3000_ACME_ADMIN_HELPER": str(marker)}
+            body = b'{"enabled":false,"directoryUrl":"https://operator.example/directory","dnsNames":["pdu.operator.example"]}'
+            for extra in (
+                {"HTTP_IF_NONE_MATCH": 'W/"x"'},
+                {"HTTP_IF_NONE_MATCH": "*", "HTTP_IF_MATCH": '"' + "a" * 64 + '"'},
+            ):
+                with self.subTest(extra=extra):
+                    result = self.run_cgi(
+                        "PUT", "/api/v1/settings/acme", cookie=cookie,
+                        csrf=str(session["csrfToken"]), body=body,
+                        content_type="application/json", extra_environment={**base, **extra},
+                    )
+                    self.assertIn(b"Status: 400", result.stdout)
+            self.assertFalse(marker.exists())
+
+    def test_acme_get_retries_one_incoherent_snapshot_and_rejects_bearer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, _session, _controller, _result = self.login_session(root)
+            a = ('"' + "a" * 64 + '"').encode() + b"\n"
+            b = ('"' + "b" * 64 + '"').encode() + b"\n"
+            config = (b'{"enabled":false,"directory_url":"https://acme.example/directory",'
+                      b'"ca_file":"/ca.pem","dns_names":["pdu.example"]}\n')
+            helper, log = self.acme_admin_helper(root, [
+                (0, 0, a), (0, 0, config), (0, 0, b),
+                (0, 0, b), (0, 0, config), (0, 0, b),
+                (0, 0, b'{"state":"never_run"}\n'),
+            ])
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"),
+                           "PM3000_ACME_ADMIN_HELPER": str(helper)}
+            rejected = self.run_cgi("GET", "/api/v1/settings/acme", cookie=cookie,
+                                    authorization="Bearer denied", extra_environment=environment)
+            self.assertIn(b"Status: 401", rejected.stdout)
+            self.assertFalse(log.exists())
+            result = self.run_cgi("GET", "/api/v1/settings/acme", cookie=cookie,
+                                  extra_environment=environment)
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual('"' + "b" * 64 + '"', payload["revision"])
+            self.assertEqual([5, 1, 5, 5, 1, 5, 4],
+                             [request[4] for request in self.acme_requests(log)])
+
+    def test_acme_put_preserves_ca_serializes_complete_config_and_confirms_readback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            revision = '"' + "a" * 64 + '"'
+            current = (b'{"enabled":false,"directory_url":"https://old.example/directory",'
+                       b'"ca_file":"/local/ca.pem","dns_names":["old.example"]}\n')
+            confirmed = (b'{"enabled":true,"directory_url":"https://new.example/directory",'
+                         b'"ca_file":"/local/ca.pem","dns_names":["pdu.example","alt.example"]}\n')
+            helper, log = self.acme_admin_helper(root, [(0, 0, current), (0, 0, b""), (0, 0, confirmed)])
+            body = b'{"dnsNames":["PDU.EXAMPLE","alt.example"],"enabled":true,"directoryUrl":"https://new.example/directory"}'
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=body, content_type="application/json",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper),
+                                   "HTTP_IF_MATCH": revision},
+            )
+            self.assertIn(b"Status: 204", result.stdout)
+            requests = self.acme_requests(log)
+            self.assertEqual([1, 2, 1], [request[4] for request in requests])
+            self.assertEqual(revision.encode(), requests[1][12:78])
+            self.assertEqual(confirmed, requests[1][78:])
+
+    def test_acme_ca_upload_passes_raw_bytes_and_confirms_managed_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            revision = '"' + "c" * 64 + '"'
+            installed = (b'{"enabled":true,"directory_url":"https://acme.example/directory",'
+                         b'"ca_file":"/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem",'
+                         b'"dns_names":["pdu.example"]}\n')
+            helper, log = self.acme_admin_helper(root, [
+                (0, 0, b""), (0, 0, revision.encode() + b"\n"), (0, 0, installed),
+            ])
+            pem = b"-----BEGIN CERTIFICATE-----\nraw-bytes\n-----END CERTIFICATE-----\n"
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/ca", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=pem,
+                content_type="application/x-pem-file",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper),
+                                   "HTTP_IF_MATCH": revision},
+            )
+            self.assertIn(b"Status: 204", result.stdout)
+            requests = self.acme_requests(log)
+            self.assertEqual([3, 5, 1], [request[4] for request in requests])
+            self.assertEqual(revision.encode() + pem, requests[0][12:])
+
+    def test_acme_ca_upload_rejects_noncanonical_managed_path_after_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            revision = '"' + "c" * 64 + '"'
+            wrong = (b'{"enabled":true,"directory_url":"https://acme.example/directory",'
+                     b'"ca_file":"/attacker/trust/managed-ca.pem",'
+                     b'"dns_names":["pdu.example"]}\n')
+            helper, _log = self.acme_admin_helper(root, [
+                (0, 0, b""), (0, 0, revision.encode() + b"\n"), (0, 0, wrong),
+            ])
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/ca", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=b"certificate",
+                content_type="application/x-pem-file",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper),
+                                   "HTTP_IF_MATCH": revision},
+            )
+            self.assertIn(b"Status: 503", result.stdout)
+            _headers, payload = self.cgi_json(result)
+            self.assertEqual("action_outcome_unknown", payload["code"])
+
+    def test_acme_mutations_enforce_csrf_if_match_media_type_and_stale_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"),
+                           "PM3000_ACME_ADMIN_HELPER": str(root / "must-not-run")}
+            body = b'{"enabled":true,"directoryUrl":"https://acme.example/directory","dnsNames":["pdu.example"]}'
+            missing_csrf = self.run_cgi("PUT", "/api/v1/settings/acme", cookie=cookie,
+                                        body=body, content_type="application/json",
+                                        extra_environment=environment)
+            self.assertIn(b"Status: 403", missing_csrf.stdout)
+            missing_match = self.run_cgi("PUT", "/api/v1/settings/acme", cookie=cookie,
+                                         csrf=str(session["csrfToken"]), body=body,
+                                         content_type="application/json", extra_environment=environment)
+            self.assertIn(b"Status: 428", missing_match.stdout)
+            wrong_media = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/ca", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=b"pem", content_type="text/plain",
+                extra_environment={**environment, "HTTP_IF_MATCH": '"' + "a" * 64 + '"'},
+            )
+            self.assertIn(b"Status: 415", wrong_media.stdout)
+            self.assertFalse((root / "must-not-run").exists())
+
+            current = (b'{"enabled":false,"directory_url":"https://old.example/directory",'
+                       b'"ca_file":"/ca.pem","dns_names":["old.example"]}\n')
+            helper, _log = self.acme_admin_helper(root, [(0, 0, current), (3, 5, b"")])
+            stale = self.run_cgi(
+                "PUT", "/api/v1/settings/acme", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=body, content_type="application/json",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper),
+                                   "HTTP_IF_MATCH": '"' + "a" * 64 + '"'},
+            )
+            headers, payload = self.cgi_json(stale)
+            self.assertIn(b"Status: 412", headers)
+            self.assertEqual("revision_changed", payload["code"])
+
+    def test_acme_renew_accepts_only_positive_broker_startup_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            helper, log = self.acme_admin_helper(root, [(0, 0, b"")])
+            result = self.run_cgi(
+                "POST", "/api/v1/settings/acme/renew", cookie=cookie,
+                csrf=str(session["csrfToken"]),
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper)},
+            )
+            self.assertIn(b"Status: 202 Accepted", result.stdout)
+            self.assertEqual(b"", result.stdout.split(b"\r\n\r\n", 1)[1])
+            requests = self.acme_requests(log)
+            self.assertEqual(1, len(requests))
+            self.assertEqual(b"PMA1" + bytes((6, 0, 0, 0)) + b"\0\0\0\0",
+                             requests[0])
+
+    def test_acme_renew_maps_busy_startup_failure_and_unknown_without_false_202(self) -> None:
+        for broker_code, expected_status, expected_code in (
+            (5, b"Status: 409 Conflict", "renewal_in_progress"),
+            (6, b"Status: 503 Service Unavailable", "renewal_startup_failed"),
+            (7, b"Status: 503 Service Unavailable", "action_outcome_unknown"),
+        ):
+            with self.subTest(broker_code=broker_code), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                cookie, session, _controller, _result = self.login_session(root)
+                helper, _log = self.acme_admin_helper(root, [(broker_code, 255, b"")])
+                result = self.run_cgi(
+                    "POST", "/api/v1/settings/acme/renew", cookie=cookie,
+                    csrf=str(session["csrfToken"]),
+                    extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                       "PM3000_ACME_ADMIN_HELPER": str(helper)},
+                )
+                headers, payload = self.cgi_json(result)
+                self.assertIn(expected_status, headers)
+                self.assertEqual(expected_code, payload["code"])
+                self.assertNotIn(b"Status: 202", headers)
+
+    def test_acme_renew_rejects_bearer_missing_csrf_wrong_method_and_body_before_broker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            marker = root / "must-not-run"
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"),
+                           "PM3000_ACME_ADMIN_HELPER": str(marker)}
+            cases = (
+                self.run_cgi("POST", "/api/v1/settings/acme/renew", cookie=cookie,
+                             authorization="Bearer denied", csrf=str(session["csrfToken"]),
+                             extra_environment=environment),
+                self.run_cgi("POST", "/api/v1/settings/acme/renew", cookie=cookie,
+                             extra_environment=environment),
+                self.run_cgi("GET", "/api/v1/settings/acme/renew", cookie=cookie,
+                             csrf=str(session["csrfToken"]), extra_environment=environment),
+                self.run_cgi("POST", "/api/v1/settings/acme/renew", cookie=cookie,
+                             csrf=str(session["csrfToken"]), body=b"{}",
+                             content_type="application/json", extra_environment=environment),
+            )
+            self.assertIn(b"Status: 401", cases[0].stdout)
+            self.assertIn(b"Status: 403", cases[1].stdout)
+            self.assertIn(b"Status: 405", cases[2].stdout)
+            self.assertIn(b"Status: 400", cases[3].stdout)
+            self.assertFalse(marker.exists())
 
     def test_session_login_accepts_exact_vendor_stylesheet_preamble(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2620,6 +3020,9 @@ class NativeAdapterTests(unittest.TestCase):
         self.assertIn("ci-${GITHUB_RUN_NUMBER}", workflow)
         self.assertNotIn("test-${GITHUB_RUN_NUMBER}", workflow)
         self.assertIn("bin/pm3000-gsp-session-helper", workflow)
+        self.assertIn("Verify packaged ACME broker ABI", workflow)
+        self.assertIn("bin/pm3000-acme-admin", workflow)
+        self.assertIn("not a static executable", workflow)
         self.assertIn("libgsp_auth.so", workflow)
         self.assertIn("libc.so.6", workflow)
         self.assertIn("GLIBC_2.0", workflow)

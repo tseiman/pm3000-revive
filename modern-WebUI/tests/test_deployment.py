@@ -66,8 +66,8 @@ class DeviceInstallDiskPreflightTests(unittest.TestCase):
             '[ "${FAKE_TAR_MODE:-complete}" != fail ] || exit 9\n'
             'mkdir -p RELEASE_MANIFEST.json.d apache bin web\n'
             'rm -rf RELEASE_MANIFEST.json.d\n'
-            'for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf '
-            'bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
+            'for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf '
+            'bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
             'web/app.js web/index.html web/styles.css; do\n'
             '  [ "${FAKE_TAR_MODE:-complete}:$member" = incomplete:web/styles.css ] || : >"$member"\n'
             'done\n',
@@ -191,6 +191,9 @@ class PackagingTests(unittest.TestCase):
         session_helper = self.source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
         session_helper.write_bytes(b"ELF-session-helper-test")
         session_helper.chmod(0o755)
+        acme_admin = self.source / "native" / "build" / "pm3000-acme-admin-ppc32"
+        acme_admin.write_bytes(b"ELF-acme-admin-test")
+        acme_admin.chmod(0o755)
         helper = self.source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
         helper.write_bytes(b"ELF-helper-test")
         helper.chmod(0o755)
@@ -201,6 +204,16 @@ class PackagingTests(unittest.TestCase):
         (self.source / "deploy" / "pm3000-revive.conf").write_text(
             "Alias /modern/ /mnt/hdUser/pm3000-revive/webui/current/web/\n",
             encoding="utf-8",
+        )
+        (self.source / "apache").mkdir()
+        (self.source / "apache" / "listen.conf").write_bytes(
+            b"Listen 80\nListen 443\n<VirtualHost _default_:80>\n"
+            b"\tRewriteEngine On\n"
+            b"\tRewriteRule ^/?\\.well-known/acme-challenge/ - [L]\n"
+            b"\tRewriteRule ^(.*)$ $1 [R]\n"
+            b"\tRewriteRule ^http://(.*)$ https://$1 [L]\n"
+            b"</VirtualHost>\nSSLProtocol all -SSLv2 -SSLv3\n"
+            b"SSLCipherSuite ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+EXP:+eNULL\n"
         )
 
     def test_package_contains_only_allowlist_and_finished_byte_checksums(self):
@@ -215,8 +228,10 @@ class PackagingTests(unittest.TestCase):
                 [
                     "RELEASE_MANIFEST.json",
                     "RELEASE_SHA256SUMS",
+                    "apache/listen.conf",
                     "apache/pm3000-revive.conf",
                     "bin/pm3000-acme",
+                    "bin/pm3000-acme-admin",
                     "bin/pm3000-atomic-publish",
                     "bin/pm3000-gsp-session-helper",
                     "bin/pm3000-rest",
@@ -229,7 +244,16 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(manifest["release_id"], "r1")
             modes = {entry["path"]: entry["mode"] for entry in manifest["files"]}
             self.assertEqual(0o755, modes["bin/pm3000-acme"])
+            self.assertEqual(0o4750, modes["bin/pm3000-acme-admin"])
             self.assertEqual(0o4750, modes["bin/pm3000-gsp-session-helper"])
+            listener = archive.extractfile("apache/listen.conf").read()
+            challenge = b"\tRewriteRule ^/?\\.well-known/acme-challenge/ - [L]\n"
+            self.assertEqual((self.source / "apache/listen.conf").read_bytes(), listener)
+            self.assertEqual(listener.count(challenge), 1)
+            self.assertLess(listener.index(challenge), listener.index(b"\tRewriteRule ^(.*)$ $1 [R]\n"))
+            vendor = listener.replace(challenge, b"")
+            self.assertEqual(hashlib.sha256(vendor).hexdigest(), helper.VENDOR_LISTEN_SHA256)
+            self.assertEqual(vendor.count(b"RewriteRule"), 2)
             index = archive.extractfile("web/index.html").read()
             self.assertIn(b"Build r1 (abcdef123456)", index)
             self.assertNotIn(b"__PM3000_", index)
@@ -240,19 +264,58 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), entry["sha256"])
                 self.assertEqual(len(payload), entry["size"])
 
+    def test_package_uses_only_explicit_hash_pinned_acme_binary(self):
+        helper = load_helper()
+        output = self.work / "accepted-release.tar"
+        accepted = self.work / "pm3000-acme-startup-fixed"
+        accepted.write_bytes(b"physically-accepted-acme-bytes")
+        expected = hashlib.sha256(accepted.read_bytes()).hexdigest()
+
+        helper.build_release(
+            self.source, output, "r1", "abcdef123456",
+            acme_binary=accepted, acme_sha256=expected,
+        )
+
+        with tarfile.open(output, "r:") as archive:
+            packaged = archive.extractfile("bin/pm3000-acme").read()
+        self.assertEqual(accepted.read_bytes(), packaged)
+        self.assertEqual(expected, hashlib.sha256(packaged).hexdigest())
+
+    def test_package_rejects_explicit_acme_binary_with_wrong_hash(self):
+        helper = load_helper()
+        output = self.work / "rejected-release.tar"
+        accepted = self.work / "pm3000-acme-startup-fixed"
+        accepted.write_bytes(b"physically-accepted-acme-bytes")
+
+        with self.assertRaisesRegex(helper.DeploymentError, "accepted ACME binary SHA-256 mismatch"):
+            helper.build_release(
+                self.source, output, "r1", "abcdef123456",
+                acme_binary=accepted, acme_sha256="0" * 64,
+            )
+        self.assertFalse(output.exists())
+        self.assertFalse(Path(str(output) + ".sha256").exists())
+
+    def test_package_rejects_noncanonical_managed_listener(self):
+        helper = load_helper()
+        output = self.work / "wrong-listener.tar"
+        (self.source / "apache/listen.conf").write_bytes(b"Listen 80\n")
+        with self.assertRaisesRegex(helper.DeploymentError, "listen.conf digest mismatch"):
+            helper.build_release(self.source, output, "r1", "abcdef123456")
+        self.assertFalse(output.exists())
+
     def test_package_rejects_complete_allowlist_above_release_budget(self):
         helper = load_helper()
         output = self.work / "oversized-release.tar"
         binary = self.source / "native" / "build" / "pm3000-rest-ppc32"
-        binary.write_bytes(b"X" * (544 * 1024))
-        with self.assertRaisesRegex(helper.DeploymentError, "544 KiB"):
+        binary.write_bytes(b"X" * (640 * 1024))
+        with self.assertRaisesRegex(helper.DeploymentError, "640 KiB"):
             helper.build_release(self.source, output, "r1", "abcdef123456")
         self.assertFalse(output.exists())
 
-    def test_deployment_documentation_matches_ten_member_archive(self):
+    def test_deployment_documentation_matches_twelve_member_archive(self):
         readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
-        self.assertEqual(2, readme.count("ten-member allowlist"))
-        self.assertNotIn("nine-member allowlist", readme)
+        self.assertEqual(2, readme.count("twelve-member allowlist"))
+        self.assertNotIn("eleven-member allowlist", readme)
 
 
 class DeploymentSimulationTests(unittest.TestCase):
@@ -279,8 +342,19 @@ class DeploymentSimulationTests(unittest.TestCase):
         self.config = self.root / "etc/apache2/conf.d/pm3000-revive.conf"
         self.config.parent.mkdir(parents=True)
         self.config.write_bytes(b"old-config\n")
+        self.listener = self.root / "etc/apache2/conf.d/listen.conf"
+        self.listener.write_bytes(
+            b"Listen 80\nListen 443\n<VirtualHost _default_:80>\n"
+            b"\tRewriteEngine On\n\tRewriteRule ^(.*)$ $1 [R]\n"
+            b"\tRewriteRule ^http://(.*)$ https://$1 [L]\n</VirtualHost>\n"
+            b"SSLProtocol all -SSLv2 -SSLv3\n"
+            b"SSLCipherSuite ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+EXP:+eNULL\n"
+        )
+        self.listener.chmod(0o755)
         self.original_token = self.token.read_bytes()
         self.original_config = self.config.read_bytes()
+        self.original_listener = self.listener.read_bytes()
+        self.original_listener_mode = stat.S_IMODE(self.listener.stat().st_mode)
         self.original_current = os.readlink(current)
 
     def _make_package(self, release_id):
@@ -301,11 +375,29 @@ class DeploymentSimulationTests(unittest.TestCase):
         (source / "native/build/pm3000-gsp-session-helper-ppc32").write_bytes(
             b"session-helper-" + release_id.encode()
         )
+        (source / "native/build/pm3000-acme-admin-ppc32").write_bytes(
+            b"acme-admin-" + release_id.encode()
+        )
         (source / "deploy/build/pm3000-atomic-publish-ppc32").write_bytes(b"helper-" + release_id.encode())
         acme = source.parent / "components/pm3000-acme/build/pm3000-acme"
         acme.parent.mkdir(parents=True, exist_ok=True)
         acme.write_bytes(b"acme-" + release_id.encode())
         (source / "deploy/pm3000-revive.conf").write_bytes(b"new-config-" + release_id.encode() + b"\n")
+        (source / "apache").mkdir(exist_ok=True)
+        vendor_listener = (
+            b"Listen 80\nListen 443\n<VirtualHost _default_:80>\n"
+            b"\tRewriteEngine On\n\tRewriteRule ^(.*)$ $1 [R]\n"
+            b"\tRewriteRule ^http://(.*)$ https://$1 [L]\n</VirtualHost>\n"
+            b"SSLProtocol all -SSLv2 -SSLv3\n"
+            b"SSLCipherSuite ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+EXP:+eNULL\n"
+        )
+        (source / "apache/listen.conf").write_bytes(
+            vendor_listener.replace(
+                b"\tRewriteRule ^(.*)$ $1 [R]\n",
+                b"\tRewriteRule ^/?\\.well-known/acme-challenge/ - [L]\n"
+                b"\tRewriteRule ^(.*)$ $1 [R]\n",
+            )
+        )
         self.helper.build_release(source, self.package, release_id)
 
     def deploy(self, fault=None):
@@ -320,6 +412,8 @@ class DeploymentSimulationTests(unittest.TestCase):
         current = self.root / "mnt/hdUser/pm3000-revive/webui/current"
         self.assertEqual(os.readlink(current), self.original_current)
         self.assertEqual(self.config.read_bytes(), self.original_config)
+        self.assertEqual(self.listener.read_bytes(), self.original_listener)
+        self.assertEqual(stat.S_IMODE(self.listener.stat().st_mode), self.original_listener_mode)
         self.assertFalse(self.old_release.parent / "r2" in [])
         self.assertFalse((self.old_release.parent / "r2").exists())
         self.assertFalse((self.old_release.parent / ".r2.stage6-tmp").exists())
@@ -364,7 +458,8 @@ class DeploymentSimulationTests(unittest.TestCase):
 
     def test_every_post_commit_failure_restores_old_state(self):
         for fault in ("state_publish", "active_publish", "after_release", "after_current",
-                      "after_config", "config_check", "reload", "health", "complete_publish"):
+                      "after_config", "after_listener", "config_check", "reload", "health",
+                      "complete_publish"):
             with self.subTest(fault=fault):
                 with self.assertRaises(self.helper.DeploymentError):
                     self.deploy(fault)
@@ -527,6 +622,54 @@ class DeploymentSimulationTests(unittest.TestCase):
         self.assertEqual(reload_calls, [True, True])
         self.assertEqual(self.config.read_bytes(), self.original_config)
         self.assertEqual(os.readlink(self.old_release.parent.parent / "current"), self.original_current)
+
+    def test_listener_source_and_live_digest_mismatch_fail_closed_before_commit(self):
+        with tarfile.open(self.package, "r:") as archive:
+            self.assertEqual(
+                hashlib.sha256(archive.extractfile("apache/listen.conf").read()).hexdigest(),
+                self.helper.MANAGED_LISTEN_SHA256,
+            )
+        self.listener.write_bytes(b"unexpected vendor drift\n")
+        with self.assertRaisesRegex(self.helper.DeploymentError, "listen.conf.*digest|listener.*digest"):
+            self.deploy()
+        self.assertEqual(os.readlink(self.old_release.parent.parent / "current"), self.original_current)
+
+    def test_listener_nonregular_is_rejected(self):
+        self.listener.unlink()
+        self.listener.symlink_to(self.config)
+        with self.assertRaisesRegex(self.helper.DeploymentError, "symlink|listen"):
+            self.deploy()
+
+    def test_success_installs_managed_listener_as_0644(self):
+        self.deploy()
+        self.assertEqual(hashlib.sha256(self.listener.read_bytes()).hexdigest(), self.helper.MANAGED_LISTEN_SHA256)
+        self.assertEqual(stat.S_IMODE(self.listener.stat().st_mode), 0o644)
+
+    def test_listener_digest_is_bound_to_exact_mode_on_install_and_rollback(self):
+        self.listener.chmod(0o644)
+        with self.assertRaisesRegex(self.helper.DeploymentError, "listen.conf.*mode|listener.*mode"):
+            self.deploy()
+        self.listener.chmod(0o755)
+        result = self.deploy()
+        self.listener.chmod(0o755)
+        with self.assertRaisesRegex(self.helper.DeploymentError, "listen.conf.*drift|listener.*drift"):
+            self.helper.rollback_simulated(self.root, Path(result["backup_dir"]))
+
+    def test_listener_digest_is_bound_to_trusted_owner_on_install_and_rollback(self):
+        trusted_uid = self.helper.os.geteuid
+        self.helper.os.geteuid = lambda: trusted_uid() + 1
+        try:
+            with self.assertRaisesRegex(self.helper.DeploymentError, "listen.conf.*owner|listener.*owner"):
+                self.deploy()
+        finally:
+            self.helper.os.geteuid = trusted_uid
+        result = self.deploy()
+        self.helper.os.geteuid = lambda: trusted_uid() + 1
+        try:
+            with self.assertRaisesRegex(self.helper.DeploymentError, "listen.conf.*drift|listener.*drift"):
+                self.helper.rollback_simulated(self.root, Path(result["backup_dir"]))
+        finally:
+            self.helper.os.geteuid = trusted_uid
 
     def test_existing_release_payload_drift_blocks_idempotent_retry(self):
         self.deploy()
@@ -756,6 +899,7 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertLess(extraction, private_initialization)
         self.assertIn('packaged_helper=$tmp/bin/pm3000-atomic-publish', installer)
         self.assertIn('atomic_helper=$work/pm3000-atomic-publish', installer)
+        self.assertIn('--verify-apache-listener "$listener" 0 "$live_listener_state"', installer)
         self.assertNotIn('sha256sum', installer)
         self.assertNotIn('tar tf "$package"', installer)
         self.assertNotIn('tar xf "$package"', installer)
@@ -764,18 +908,20 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('package_snapshot=$work/release.tar', rollback)
         self.assertNotIn('package path must be absolute', rollback)
         self.assertIn('atomic_helper=$work/pm3000-atomic-publish', rollback)
+        self.assertIn('--verify-apache-listener "$listener" 0 managed', rollback)
+        self.assertIn('--verify-apache-listener "$restore_dir/listen.conf" 0 "$restored_listener_state"', rollback)
         self.assertIn('actual=$(sha256_file "$package_snapshot")', rollback)
         self.assertIn('openssl dgst -sha256 "$1"', rollback)
         self.assertIn('cmp "$package_tree/RELEASE_MANIFEST.json" "$release/RELEASE_MANIFEST.json"', rollback)
         self.assertIn('verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"', rollback)
         self.assertNotIn('sha256sum', rollback)
         self.assertIn('--verify-release "$release" "$daemon_gid"', rollback)
-        self.assertIn('bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-acme\nbin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
-        self.assertIn('[ "$_sum_count" -eq 8 ]', rollback)
-        self.assertIn('bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', installer)
-        self.assertIn('[ "$_sum_count" -eq 8 ]', installer)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme\nbin/pm3000-acme-admin\nbin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
+        self.assertIn('[ "$_sum_count" -eq 10 ]', rollback)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', installer)
+        self.assertIn('[ "$_sum_count" -eq 10 ]', installer)
         self.assertIn('chmod 755 "$tmp/bin/pm3000-acme"', installer)
         self.assertIn('--verify-private-directory "$restore_dir"', rollback)
         apache = (DEPLOY / "pm3000-revive.conf").read_text()
@@ -818,6 +964,30 @@ class ScriptStructureTests(unittest.TestCase):
             regular = root / "regular"
             regular.write_bytes(b"safe")
             subprocess.run([str(helper), "--verify-regular", str(regular)], check=True)
+            regular.chmod(0o755)
+            subprocess.run([
+                str(helper), "--verify-apache-listener", str(regular),
+                str(os.geteuid()), "vendor",
+            ], check=True)
+            self.assertNotEqual(
+                subprocess.run([
+                    str(helper), "--verify-apache-listener", str(regular),
+                    str(os.geteuid()), "managed",
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
+            regular.chmod(0o644)
+            subprocess.run([
+                str(helper), "--verify-apache-listener", str(regular),
+                str(os.geteuid()), "managed",
+            ], check=True)
+            self.assertNotEqual(
+                subprocess.run([
+                    str(helper), "--verify-apache-listener", str(regular),
+                    str(os.geteuid() + 1), "managed",
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
             private_regular = root / "private-regular"
             private_regular.write_bytes(b"secret")
             private_regular.chmod(0o600)
@@ -897,6 +1067,32 @@ class ScriptStructureTests(unittest.TestCase):
                 str(os.geteuid()), str(os.getegid()),
             ], check=True)
             self.assertEqual(private.stat().st_mode & 0o7777, 0o700)
+            (private / "config.json").write_bytes(b"{}\n")
+            (private / "config.json").chmod(0o600)
+            trust = private / "trust"
+            trust.mkdir(mode=0o700)
+            (trust / "managed-ca.pem").write_bytes(b"certificate\n")
+            (trust / "managed-ca.pem").chmod(0o600)
+            subprocess.run([str(helper), "--verify-private-tree", str(private)], check=True)
+            (trust / "managed-ca.pem").chmod(0o644)
+            self.assertNotEqual(
+                subprocess.run([str(helper), "--verify-private-tree", str(private)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
+            (trust / "managed-ca.pem").chmod(0o600)
+            public = root / "public"
+            public.mkdir(mode=0o755)
+            challenge = public / "token"
+            challenge.write_bytes(b"key-authorization")
+            challenge.chmod(0o644)
+            subprocess.run([str(helper), "--verify-public-directory", str(public)], check=True)
+            challenge.chmod(0o600)
+            self.assertNotEqual(
+                subprocess.run([str(helper), "--verify-public-directory", str(public)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode,
+                0,
+            )
 
     def test_atomic_helper_rejects_unsafe_existing_release_trees(self):
         subprocess.run(["make", "-C", str(DEPLOY), "clean", "host"], check=True,
@@ -910,8 +1106,10 @@ class ScriptStructureTests(unittest.TestCase):
             files = {
                 "RELEASE_MANIFEST.json": 0o600,
                 "RELEASE_SHA256SUMS": 0o600,
+                "apache/listen.conf": 0o644,
                 "apache/pm3000-revive.conf": 0o644,
                 "bin/pm3000-acme": 0o755,
+                "bin/pm3000-acme-admin": 0o4750,
                 "bin/pm3000-atomic-publish": 0o755,
                 "bin/pm3000-gsp-session-helper": 0o4750,
                 "bin/pm3000-rest": 0o755,
@@ -987,6 +1185,15 @@ class ScriptStructureTests(unittest.TestCase):
             (apache / "conf.d").mkdir(parents=True)
             config = apache / "conf.d/pm3000-revive.conf"
             config.write_bytes(b"old-config\n")
+            listener = apache / "conf.d/listen.conf"
+            listener.write_bytes(
+                b"Listen 80\nListen 443\n<VirtualHost _default_:80>\n"
+                b"\tRewriteEngine On\n\tRewriteRule ^(.*)$ $1 [R]\n"
+                b"\tRewriteRule ^http://(.*)$ https://$1 [L]\n</VirtualHost>\n"
+                b"SSLProtocol all -SSLv2 -SSLv3\n"
+                b"SSLCipherSuite ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+EXP:+eNULL\n"
+            )
+            listener.chmod(0o755)
             tmp_root = root / "tmp"
             package_tree = tmp_root / "input/tree"
             for directory in (package_tree / "apache", package_tree / "bin", package_tree / "web"):
@@ -995,7 +1202,7 @@ class ScriptStructureTests(unittest.TestCase):
             helper.write_text(
                 "#!/bin/sh\n"
                 "set -eu\n"
-                "case \"$1\" in --verify-regular|--verify-release|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner|--set-private-directory-owner|--set-private-regular-owner) exit 0;; esac\n"
+                "case \"$1\" in --verify-regular|--verify-release|--verify-apache-listener|--verify-private-tree|--verify-public-directory|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner|--set-private-directory-owner|--set-private-regular-owner) exit 0;; esac\n"
                 "parent=$1; source=$2; destination=$3; expected_type=$4\n"
                 "rm -rf \"$parent/$destination\"\n"
                 "mv \"$parent/$source\" \"$parent/$destination\"\n"
@@ -1006,8 +1213,10 @@ class ScriptStructureTests(unittest.TestCase):
                 encoding="ascii",
             )
             payloads = {
+                "apache/listen.conf": (MODERN / "apache/listen.conf").read_bytes(),
                 "apache/pm3000-revive.conf": b"new-config\n",
                 "bin/pm3000-acme": b"#!/bin/sh\nexit 2\n",
+                "bin/pm3000-acme-admin": b"ELF-acme-admin\n",
                 "bin/pm3000-atomic-publish": helper.read_bytes(),
                 "bin/pm3000-gsp-session-helper": b"ELF-session-helper\n",
                 "bin/pm3000-rest": b"#!/bin/sh\nexit 0\n",
@@ -1019,12 +1228,12 @@ class ScriptStructureTests(unittest.TestCase):
                 path = package_tree / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
-                path.chmod(0o4750 if name == "bin/pm3000-gsp-session-helper"
+                path.chmod(0o4750 if name in ("bin/pm3000-acme-admin", "bin/pm3000-gsp-session-helper")
                            else 0o755 if name.startswith("bin/") else 0o644)
             entries = [
                 {"path": name, "sha256": hashlib.sha256(data).hexdigest(),
                  "size": len(data),
-                 "mode": (0o4750 if name == "bin/pm3000-gsp-session-helper"
+                 "mode": (0o4750 if name in ("bin/pm3000-acme-admin", "bin/pm3000-gsp-session-helper")
                           else 0o755 if name.startswith("bin/") else 0o644)}
                 for name, data in sorted(payloads.items())
             ]
@@ -1045,7 +1254,8 @@ class ScriptStructureTests(unittest.TestCase):
 
             with tarfile.open(package, "w") as archive:
                 for name in ["RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS",
-                             "apache/pm3000-revive.conf", "bin/pm3000-acme",
+                             "apache/listen.conf", "apache/pm3000-revive.conf", "bin/pm3000-acme",
+                             "bin/pm3000-acme-admin",
                              "bin/pm3000-atomic-publish",
                              "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
                              "web/app.js", "web/index.html", "web/styles.css"]:

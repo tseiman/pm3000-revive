@@ -41,6 +41,9 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/settings/data-buffering",
                 "/api/v1/settings/appliance-logging",
                 "/api/v1/settings/time-zone",
+                "/api/v1/settings/acme",
+                "/api/v1/settings/acme/ca",
+                "/api/v1/settings/acme/renew",
                 "/api/v1/system/information",
                 "/api/v1/system/usage/memory",
                 "/api/v1/system/usage/flash",
@@ -70,6 +73,9 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/data-buffering"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/appliance-logging"]))
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/time-zone"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/acme"]))
+        self.assertEqual({"put"}, set(paths["/api/v1/settings/acme/ca"]))
+        self.assertEqual({"post"}, set(paths["/api/v1/settings/acme/renew"]))
         for route in (
             "/api/v1/system/information",
             "/api/v1/system/usage/memory",
@@ -91,6 +97,136 @@ class RestV1ContractTests(unittest.TestCase):
                 for requirement in operation.get("security", []):
                     with self.subTest(path=path, method=method):
                         self.assertLessEqual(set(requirement), schemes)
+
+    def test_acme_settings_contract_is_closed_cookie_only_and_revisioned(self) -> None:
+        route = self.contract["paths"]["/api/v1/settings/acme"]
+        ca_upload = self.contract["paths"]["/api/v1/settings/acme/ca"]["put"]
+        renew = self.contract["paths"]["/api/v1/settings/acme/renew"]["post"]
+        schemas = self.contract["components"]["schemas"]
+
+        for operation in (route["get"], route["put"], ca_upload, renew):
+            self.assertEqual([{"cookieAuth": []}], operation["security"])
+        self.assertTrue(route["put"]["x-csrf-required"])
+        self.assertTrue(ca_upload["x-csrf-required"])
+        self.assertTrue(renew["x-csrf-required"])
+        self.assertEqual(8192, route["put"]["x-max-body-bytes"])
+        self.assertEqual(65536, ca_upload["x-max-body-bytes"])
+        self.assertEqual("application/x-pem-file", ca_upload["x-content-type"])
+        self.assertEqual("certificate-bundle-only-no-private-keys", ca_upload["x-pem-policy"])
+        self.assertEqual(0, renew["x-max-body-bytes"])
+        self.assertNotIn("parameters", renew)
+        self.assertNotIn("requestBody", renew)
+        self.assertEqual("lock-and-durable-running-status", renew["x-startup-acceptance"])
+        for operation in (route["get"], route["put"], ca_upload, renew):
+            self.assertEqual("pm3000-acme-admin", operation["x-fixed-privileged-broker"])
+        self.assertEqual("pm3000-acme config show", route["get"]["x-cli-equivalent"])
+        self.assertEqual(
+            "pm3000-acme config replace --stdin --if-match ETAG",
+            route["put"]["x-cli-equivalent"],
+        )
+        self.assertEqual(
+            "pm3000-acme ca install --stdin --if-match ETAG",
+            ca_upload["x-cli-equivalent"],
+        )
+        self.assertEqual(
+            "pm3000-acme config replace --stdin --if-none-match '*'",
+            route["put"]["x-cli-create-equivalent"],
+        )
+        self.assertEqual(
+            "pm3000-acme ca install --stdin --if-none-match '*'",
+            ca_upload["x-cli-create-equivalent"],
+        )
+        self.assertEqual("pm3000-acme renew --foreground", renew["x-cli-equivalent"])
+
+        parameters = {item["name"]: item for item in route["put"]["parameters"]}
+        self.assertEqual({"If-Match", "If-None-Match"}, set(parameters))
+        self.assertFalse(parameters["If-Match"]["required"])
+        self.assertEqual(
+            "#/components/schemas/StrongRevision",
+            parameters["If-Match"]["schema"]["$ref"],
+        )
+        create_parameter = next(
+            item for item in route["put"]["parameters"]
+            if item["name"] == "If-None-Match"
+        )
+        self.assertFalse(create_parameter["required"])
+        self.assertEqual(["*"], create_parameter["schema"]["enum"])
+
+        setting = schemas["AcmeSetting"]
+        replacement = schemas["AcmeReplacement"]
+        renewal = schemas["AcmeRenewalStatus"]
+        self.assertFalse(setting["additionalProperties"])
+        self.assertFalse(replacement["additionalProperties"])
+        self.assertFalse(renewal["additionalProperties"])
+        self.assertEqual(
+            {"enabled", "directoryUrl", "caFile", "dnsNames", "revision", "renewal"},
+            set(setting["required"]),
+        )
+        self.assertEqual(
+            {"enabled", "directoryUrl", "dnsNames"}, set(replacement["required"])
+        )
+        self.assertEqual(
+            {"enabled", "directoryUrl", "dnsNames"}, set(replacement["properties"])
+        )
+        for schema in (setting, replacement):
+            names = schema["properties"]["dnsNames"]
+            self.assertEqual(1, names["minItems"])
+            self.assertEqual(16, names["maxItems"])
+            self.assertTrue(names["uniqueItems"])
+            self.assertEqual(253, names["items"]["maxLength"])
+            self.assertEqual(1291, schema["properties"]["directoryUrl"]["maxLength"])
+        ca_file = setting["properties"]["caFile"]
+        self.assertTrue(ca_file["readOnly"])
+        self.assertEqual(1024, ca_file["maxLength"])
+        self.assertEqual("local-or-managed", ca_file["x-source"])
+        self.assertNotIn("caFile", replacement["properties"])
+
+        bootstrap = schemas["AcmeBootstrapState"]
+        self.assertFalse(bootstrap["additionalProperties"])
+        self.assertEqual({"configured", "caInstalled", "renewal"}, set(bootstrap["required"]))
+        self.assertIs(False, bootstrap["properties"]["configured"]["const"])
+        get_schema = route["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        self.assertEqual(
+            {"#/components/schemas/AcmeSetting", "#/components/schemas/AcmeBootstrapState"},
+            {item["$ref"] for item in get_schema["oneOf"]},
+        )
+
+        upload_parameters = {item["name"]: item for item in ca_upload["parameters"]}
+        self.assertEqual({"If-Match", "If-None-Match"}, set(upload_parameters))
+        self.assertFalse(upload_parameters["If-Match"]["required"])
+        self.assertFalse(upload_parameters["If-None-Match"]["required"])
+        self.assertEqual(["*"], upload_parameters["If-None-Match"]["schema"]["enum"])
+
+        self.assertEqual(
+            {"never_run", "starting", "running", "succeeded", "failed", "durability_uncertain", "unknown"},
+            set(renewal["properties"]["state"]["enum"]),
+        )
+        self.assertEqual(
+            {"directory", "nonce", "account", "order", "authorization", "challenge_publication", "challenge_acceptance", "challenge_poll", "finalize", "certificate_download", "certificate_validation", "certificate_publication"},
+            set(renewal["properties"]["phase"]["enum"]),
+        )
+        self.assertEqual(
+            {"tls", "http", "parse", "io", "rejected", "timeout", "validation", "publication"},
+            set(renewal["properties"]["reason"]["enum"]),
+        )
+        self.assertEqual(["reason"], renewal["dependentRequired"]["phase"])
+        self.assertEqual(["phase"], renewal["dependentRequired"]["reason"])
+        self.assertEqual({"202", "400", "401", "403", "405", "409", "503"}, set(renew["responses"]))
+
+    def test_rest_adapter_does_not_link_or_embed_the_acme_client(self) -> None:
+        makefile = (ROOT / "native" / "Makefile").read_text()
+        native_sources = "\n".join(
+            path.read_text() for path in (ROOT / "native").glob("*.c")
+        )
+        self.assertNotIn("components/pm3000-acme", makefile)
+        self.assertNotIn("components/pm3000-acme", native_sources)
+        self.assertNotIn('#include "pm3000_acme_', native_sources)
+        managed_ca = '"/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem"'
+        self.assertEqual(1, native_sources.count(managed_ca))
+        self.assertNotIn(
+            "/mnt/hdUser/pm3000-revive/acme/",
+            native_sources.replace(managed_ca, ""),
+        )
 
     def test_dsview_setting_is_a_closed_session_only_boolean_resource(self) -> None:
         route = self.contract["paths"]["/api/v1/settings/security/dsview"]
@@ -535,6 +671,13 @@ class RestV1ContractTests(unittest.TestCase):
                 "#/components/headers/ActiveSessionCookie",
                 response["headers"]["Set-Cookie"]["$ref"],
             )
+
+        navigation = self.contract["components"]["schemas"]["Session"]["properties"]["navigation"]
+        self.assertEqual(
+            {"paths", "canManageTokens", "canControlPower", "canManageAcme"},
+            set(navigation["required"]),
+        )
+        self.assertEqual("boolean", navigation["properties"]["canManageAcme"]["type"])
 
         self.assertEqual("bad_request", response_code(session["post"], "400"))
         self.assertEqual("unauthorized", response_code(session["post"], "401"))

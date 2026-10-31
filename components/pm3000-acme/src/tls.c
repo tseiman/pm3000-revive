@@ -21,6 +21,22 @@
 #define NID_SUBJECT_ALT_NAME 85
 #define GEN_DNS_VALUE 2
 
+#ifdef PM3000_FIRMWARE_ABI
+struct pm3000_kernel_timeval {
+    signed int tv_sec;
+    signed int tv_usec;
+};
+typedef char pm3000_kernel_timeval_must_be_8_bytes[
+    sizeof(struct pm3000_kernel_timeval) == 8U ? 1 : -1];
+/* Linux 2.6 PPC socket.h values; musl time64 exposes incompatible 66/67. */
+#define PM3000_SO_RCVTIMEO 18
+#define PM3000_SO_SNDTIMEO 19
+#else
+#define pm3000_kernel_timeval timeval
+#define PM3000_SO_RCVTIMEO SO_RCVTIMEO
+#define PM3000_SO_SNDTIMEO SO_SNDTIMEO
+#endif
+
 static int dns_pattern_matches(const unsigned char *pattern,
                                unsigned int pattern_length,
                                const char *hostname)
@@ -180,12 +196,12 @@ static int tcp_connect(const char *hostname, unsigned int port,
     }
     freeaddrinfo(addresses);
     if (descriptor >= 0) {
-        struct timeval timeout;
-        timeout.tv_sec = (long)timeout_seconds;
-        timeout.tv_usec = 0L;
-        if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+        struct pm3000_kernel_timeval timeout;
+        timeout.tv_sec = (signed int)timeout_seconds;
+        timeout.tv_usec = 0;
+        if (setsockopt(descriptor, SOL_SOCKET, PM3000_SO_RCVTIMEO, &timeout,
                        sizeof(timeout)) != 0 ||
-            setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+            setsockopt(descriptor, SOL_SOCKET, PM3000_SO_SNDTIMEO, &timeout,
                        sizeof(timeout)) != 0) {
             close(descriptor);
             descriptor = -1;

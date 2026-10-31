@@ -2,6 +2,8 @@
 #include "pm3000_acme_json.h"
 #include "pm3000_acme_url.h"
 
+#include <string.h>
+
 static void clear_config(struct pm3000_acme_runtime_config *config)
 {
     unsigned int index;
@@ -98,4 +100,78 @@ int pm3000_acme_config_parse(const unsigned char *json,
 rejected:
     clear_config(config);
     return PM3000_ACME_CONFIG_INVALID;
+}
+
+static int append_bytes(unsigned char *output, unsigned int capacity,
+                        unsigned int *length, const char *text)
+{
+    unsigned int amount = (unsigned int)strlen(text);
+    if (*length > capacity || amount > capacity - *length)
+        return PM3000_ACME_CONFIG_LIMIT;
+    memcpy(output + *length, text, amount);
+    *length += amount;
+    return PM3000_ACME_CONFIG_OK;
+}
+
+static int append_json_string(unsigned char *output, unsigned int capacity,
+                              unsigned int *length, const char *text)
+{
+    unsigned int index;
+    if (append_bytes(output, capacity, length, "\"") !=
+        PM3000_ACME_CONFIG_OK) return PM3000_ACME_CONFIG_LIMIT;
+    for (index = 0U; text[index] != '\0'; ++index) {
+        unsigned char value = (unsigned char)text[index];
+        char escaped[3];
+        if (value < 0x20U || value > 0x7eU)
+            return PM3000_ACME_CONFIG_INVALID;
+        if (value == '"' || value == '\\') {
+            escaped[0] = '\\';
+            escaped[1] = (char)value;
+            escaped[2] = '\0';
+            if (append_bytes(output, capacity, length, escaped) !=
+                PM3000_ACME_CONFIG_OK) return PM3000_ACME_CONFIG_LIMIT;
+        } else {
+            if (*length >= capacity) return PM3000_ACME_CONFIG_LIMIT;
+            output[(*length)++] = value;
+        }
+    }
+    return append_bytes(output, capacity, length, "\"");
+}
+
+int pm3000_acme_config_serialize(
+    const struct pm3000_acme_runtime_config *config,
+    unsigned char *output, unsigned int output_capacity,
+    unsigned int *output_length)
+{
+    unsigned int index;
+    unsigned int length = 0U;
+    if (config == (const struct pm3000_acme_runtime_config *)0 ||
+        output == (unsigned char *)0 || output_length == (unsigned int *)0 ||
+        config->dns_name_count == 0U ||
+        config->dns_name_count > PM3000_ACME_MAX_IDENTIFIERS)
+        return PM3000_ACME_CONFIG_INVALID;
+    if (append_bytes(output, output_capacity, &length, "{\"enabled\":") != 0 ||
+        append_bytes(output, output_capacity, &length,
+                     config->enabled ? "true" : "false") != 0 ||
+        append_bytes(output, output_capacity, &length,
+                     ",\"directory_url\":") != 0 ||
+        append_json_string(output, output_capacity, &length,
+                           config->directory_url) != 0 ||
+        append_bytes(output, output_capacity, &length, ",\"ca_file\":") != 0 ||
+        append_json_string(output, output_capacity, &length,
+                           config->ca_file) != 0 ||
+        append_bytes(output, output_capacity, &length, ",\"dns_names\":[") != 0)
+        return PM3000_ACME_CONFIG_LIMIT;
+    for (index = 0U; index < config->dns_name_count; ++index) {
+        if (index != 0U &&
+            append_bytes(output, output_capacity, &length, ",") != 0)
+            return PM3000_ACME_CONFIG_LIMIT;
+        if (append_json_string(output, output_capacity, &length,
+                               config->dns_names[index]) != 0)
+            return PM3000_ACME_CONFIG_LIMIT;
+    }
+    if (append_bytes(output, output_capacity, &length, "]}\n") != 0)
+        return PM3000_ACME_CONFIG_LIMIT;
+    *output_length = length;
+    return PM3000_ACME_CONFIG_OK;
 }

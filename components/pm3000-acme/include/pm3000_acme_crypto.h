@@ -6,6 +6,7 @@
 #define PM3000_ACME_THUMBPRINT_MAX 64U
 #define PM3000_ACME_CSR_DER_MAX 4096U
 #define PM3000_ACME_CSR_NAMES_MAX 16U
+#define PM3000_ACME_SHA256_BYTES 32U
 
 enum pm3000_acme_crypto_result {
     PM3000_ACME_CRYPTO_OK = 0,
@@ -18,6 +19,10 @@ enum pm3000_acme_crypto_result {
 struct pm3000_acme_key {
     void *handle;
 };
+
+int pm3000_acme_crypto_sha256(
+    const unsigned char *input, unsigned int input_length,
+    unsigned char output[PM3000_ACME_SHA256_BYTES]);
 
 int pm3000_acme_crypto_key_load(const char *path,
                                  struct pm3000_acme_key *key);

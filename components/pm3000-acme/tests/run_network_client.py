@@ -50,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.reply(200, body)
 
     def do_HEAD(self):
-        self.reply(204)
+        self.reply(200, b"{}\n")
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))

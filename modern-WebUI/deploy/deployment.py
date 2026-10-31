@@ -23,7 +23,9 @@ class DeploymentError(RuntimeError):
     pass
 
 
-MAX_RELEASE_REGULAR_BYTES = 544 * 1024
+MAX_RELEASE_REGULAR_BYTES = 640 * 1024
+VENDOR_LISTEN_SHA256 = "480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a6ab5835"
+MANAGED_LISTEN_SHA256 = "45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f"
 
 
 def _sha256(data: bytes) -> str:
@@ -55,7 +57,9 @@ def _tar_bytes(archive: tarfile.TarFile, name: str, data: bytes, mode: int) -> N
 
 
 def build_release(source_root: Path | str, output: Path | str, release_id: str,
-                  git_revision: str = "unknown") -> Path:
+                  git_revision: str = "unknown", *,
+                  acme_binary: Path | str | None = None,
+                  acme_sha256: str | None = None) -> Path:
     """Snapshot the exact allowlist bytes and write a deterministic uncompressed tar."""
     source = Path(source_root)
     destination = Path(output)
@@ -74,11 +78,19 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
     if len(names) != len(set(names)):
         raise DeploymentError("web release allowlist contains a duplicate")
 
+    if (acme_binary is None) != (acme_sha256 is None):
+        raise DeploymentError("accepted ACME binary and SHA-256 must be supplied together")
+    if acme_sha256 is not None and (
+            len(acme_sha256) != 64 or any(c not in "0123456789abcdef" for c in acme_sha256)):
+        raise DeploymentError("invalid accepted ACME binary SHA-256")
     sources = {f"web/{name}": source / "web" / name for name in names}
-    sources["bin/pm3000-acme"] = source.parent / "components" / "pm3000-acme" / "build" / "pm3000-acme"
+    sources["bin/pm3000-acme"] = (Path(acme_binary) if acme_binary is not None else
+                                    source.parent / "components" / "pm3000-acme" / "build" / "pm3000-acme")
+    sources["bin/pm3000-acme-admin"] = source / "native" / "build" / "pm3000-acme-admin-ppc32"
     sources["bin/pm3000-rest"] = source / "native" / "build" / "pm3000-rest-ppc32"
     sources["bin/pm3000-gsp-session-helper"] = source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
     sources["bin/pm3000-atomic-publish"] = source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
+    sources["apache/listen.conf"] = source / "apache" / "listen.conf"
     sources["apache/pm3000-revive.conf"] = source / "deploy" / "pm3000-revive.conf"
     snapshots: dict[str, tuple[bytes, int]] = {}
     for target, path in sources.items():
@@ -102,7 +114,7 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
                           opened_after.st_mtime_ns, opened_after.st_ctime_ns)
         if identity_before != identity_after or len(data) != opened_before.st_size:
             raise DeploymentError(f"release source changed while being read: {path}")
-        mode = (0o4750 if target == "bin/pm3000-gsp-session-helper"
+        mode = (0o4750 if target in ("bin/pm3000-acme-admin", "bin/pm3000-gsp-session-helper")
                 else 0o755 if target.startswith("bin/") else 0o644)
         if target == "web/index.html":
             release_placeholder = b"__PM3000_RELEASE_ID__"
@@ -111,6 +123,10 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
                 raise DeploymentError("web build identity placeholders are missing or duplicated")
             data = data.replace(release_placeholder, release_id.encode("ascii"))
             data = data.replace(revision_placeholder, git_revision.encode("ascii"))
+        if target == "bin/pm3000-acme" and acme_sha256 is not None and _sha256(data) != acme_sha256:
+            raise DeploymentError("accepted ACME binary SHA-256 mismatch")
+        if target == "apache/listen.conf" and _sha256(data) != MANAGED_LISTEN_SHA256:
+            raise DeploymentError("managed apache/listen.conf digest mismatch")
         snapshots[target] = (data, mode)
 
     entries = [
@@ -150,12 +166,14 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
 CURRENT = "/mnt/hdUser/pm3000-revive/webui/current"
 RELEASES = "/mnt/hdUser/pm3000-revive/webui/releases"
 APACHE_CONFIG = "/etc/apache2/conf.d/pm3000-revive.conf"
+APACHE_LISTEN_CONFIG = "/etc/apache2/conf.d/listen.conf"
 ACTIVE_TRANSACTION = "/mnt/hdUser/pm3000-revive/deploy/ACTIVE_TRANSACTION.json"
 BACKUP_ROOTS = (
     "/mnt/hdUser/pm3000-revive/webui",
     "/mnt/hdUser/pm3000-revive/rest",
     "/mnt/hdUser/pm3000-revive/deploy",
     APACHE_CONFIG,
+    APACHE_LISTEN_CONFIG,
     "/etc/pm3000-rest",
 )
 INVENTORY_PARENTS = (
@@ -409,7 +427,8 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
                 or manifest["format"] != 1 or not isinstance(manifest["files"], list)):
             raise DeploymentError("invalid release manifest schema")
         required_payloads = {
-            "apache/pm3000-revive.conf", "bin/pm3000-acme",
+            "apache/listen.conf", "apache/pm3000-revive.conf", "bin/pm3000-acme",
+            "bin/pm3000-acme-admin",
             "bin/pm3000-atomic-publish",
             "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
             "web/app.js", "web/index.html", "web/styles.css",
@@ -422,7 +441,8 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
         if len(entry_names) != len(set(entry_names)) or set(entry_names) != required_payloads:
             raise DeploymentError("release manifest allowlist mismatch")
         for entry in entries:
-            expected_mode = (0o4750 if entry["path"] == "bin/pm3000-gsp-session-helper"
+            expected_mode = (0o4750 if entry["path"] in
+                             ("bin/pm3000-acme-admin", "bin/pm3000-gsp-session-helper")
                              else 0o755 if entry["path"].startswith("bin/") else 0o644)
             if (entry["mode"] != expected_mode or not isinstance(entry["size"], int)
                     or isinstance(entry["size"], bool) or entry["size"] < 0
@@ -543,6 +563,7 @@ def _create_backup(root: Path, backup_root: Path, release_id: str, package_sha25
         RELEASES + "/." + release_id + ".stage6-tmp",
         "/mnt/hdUser/pm3000-revive/webui/.current.stage6-tmp",
         "/etc/apache2/conf.d/.pm3000-revive.conf.stage6-tmp",
+        "/etc/apache2/conf.d/.listen.conf.stage6-tmp",
     )
     entries, captured_payloads = _scope_entries(root)
     represented = {entry["path"] for entry in entries}
@@ -557,6 +578,8 @@ def _create_backup(root: Path, backup_root: Path, release_id: str, package_sha25
                      if _entry(root, name)["type"] == "absent"]
     apache_entry = next(entry for entry in release_manifest["files"]
                         if entry["path"] == "apache/pm3000-revive.conf")
+    listener_entry = next(entry for entry in release_manifest["files"]
+                          if entry["path"] == "apache/listen.conf")
     state = {
         "format": 1,
         "transaction_id": transaction_id,
@@ -566,6 +589,7 @@ def _create_backup(root: Path, backup_root: Path, release_id: str, package_sha25
         "created_release": new_release in created_paths,
         "post_current_target": "releases/" + release_id,
         "post_config_sha256": apache_entry["sha256"],
+        "post_listener_sha256": listener_entry["sha256"],
         "release_manifest": release_manifest,
     }
     state_bytes = _canonical_json(state)
@@ -667,20 +691,21 @@ def _switch_symlink(path: Path, target: str) -> None:
 
 def _restore_transaction(root: Path, manifest: dict, payloads: dict[str, bytes], remove_release: bool = True) -> None:
     entries = {entry["path"]: entry for entry in manifest["entries"]}
-    config = _device_path(root, APACHE_CONFIG)
-    old_config = entries[APACHE_CONFIG]
-    if old_config["type"] == "absent":
-        if config.exists() or config.is_symlink():
-            config.unlink()
+    for config_name in (APACHE_CONFIG, APACHE_LISTEN_CONFIG):
+        config = _device_path(root, config_name)
+        old_config = entries[config_name]
+        if old_config["type"] == "absent":
+            if config.exists() or config.is_symlink():
+                config.unlink()
+                _fsync_dir(config.parent)
+        elif old_config["type"] == "file":
+            _atomic_bytes(config, payloads[config_name], old_config["mode"])
+            try:
+                os.chown(config, old_config["uid"], old_config["gid"])
+            except PermissionError:
+                pass
+            _fsync_file(config)
             _fsync_dir(config.parent)
-    elif old_config["type"] == "file":
-        _atomic_bytes(config, payloads[APACHE_CONFIG], old_config["mode"])
-        try:
-            os.chown(config, old_config["uid"], old_config["gid"])
-        except PermissionError:
-            pass
-        _fsync_file(config)
-        _fsync_dir(config.parent)
     active = _device_path(root, ACTIVE_TRANSACTION)
     old_active = entries[ACTIVE_TRANSACTION]
     if old_active["type"] == "absent":
@@ -735,6 +760,12 @@ def _verify_deployed_state(root: Path, state: dict) -> None:
     if (not config.is_file() or config.is_symlink()
             or _sha256(config.read_bytes()) != state["post_config_sha256"]):
         raise DeploymentError("live Apache configuration drifted; refusing automatic rollback")
+    listener = _device_path(root, APACHE_LISTEN_CONFIG)
+    if (not listener.is_file() or listener.is_symlink()
+            or stat.S_IMODE(listener.stat().st_mode) != 0o644
+            or listener.stat().st_uid != os.geteuid()
+            or _sha256(listener.read_bytes()) != state["post_listener_sha256"]):
+        raise DeploymentError("live Apache listen.conf drifted; refusing automatic rollback")
     _verify_release_directory(
         _device_path(root, RELEASES + "/" + state["release_id"]),
         state["release_manifest"],
@@ -743,7 +774,7 @@ def _verify_deployed_state(root: Path, state: dict) -> None:
 
 def _verify_restored_state(root: Path, manifest: dict, state: dict) -> None:
     entries = {entry["path"]: entry for entry in manifest["entries"]}
-    for name in (CURRENT, APACHE_CONFIG, ACTIVE_TRANSACTION):
+    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION):
         expected = entries[name]
         actual = _entry(root, name)
         keys = {"path", "type", "mode", "uid", "gid"}
@@ -776,7 +807,7 @@ def _entries_match(actual: dict, expected: dict) -> bool:
 def _verify_resumable_rollback_state(root: Path, manifest: dict, state: dict,
                                      deployment_complete: dict) -> None:
     entries = {entry["path"]: entry for entry in manifest["entries"]}
-    for name in (CURRENT, APACHE_CONFIG, ACTIVE_TRANSACTION):
+    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION):
         actual = _entry(root, name)
         if _entries_match(actual, entries[name]):
             continue
@@ -786,6 +817,10 @@ def _verify_resumable_rollback_state(root: Path, manifest: dict, state: dict,
         elif name == APACHE_CONFIG:
             matches_post = (actual["type"] == "file" and actual.get("mode") == 0o644
                             and actual.get("sha256") == state["post_config_sha256"])
+        elif name == APACHE_LISTEN_CONFIG:
+            matches_post = (actual["type"] == "file" and actual.get("mode") == 0o644
+                            and actual.get("uid") == os.geteuid()
+                            and actual.get("sha256") == state["post_listener_sha256"])
         else:
             matches_post = (actual["type"] == "file" and actual.get("mode") == 0o600
                             and actual.get("sha256") == deployment_complete.get("active_sha256"))
@@ -834,11 +869,24 @@ def deploy_simulated(root: Path | str, package: Path | str, backup_root: Path | 
             raise DeploymentError("unsafe current symlink target")
         _safe_release_id(target_parts[1])
     _validate_chain(root, APACHE_CONFIG, ("file",))
+    _validate_chain(root, APACHE_LISTEN_CONFIG, ("file",))
+    listener_path = _device_path(root, APACHE_LISTEN_CONFIG)
+    listener_entry = _entry(root, APACHE_LISTEN_CONFIG)
+    listener_digest = listener_entry.get("sha256")
+    expected_listener_mode = (0o755 if listener_digest == VENDOR_LISTEN_SHA256
+                              else 0o644 if listener_digest == MANAGED_LISTEN_SHA256 else None)
+    if (listener_entry["type"] != "file" or expected_listener_mode is None
+            or listener_entry.get("mode") != expected_listener_mode
+            or listener_entry.get("uid") != os.geteuid()):
+        raise DeploymentError(
+            "live Apache listen.conf digest, mode, or owner is not an approved source or managed target"
+        )
     _validate_chain(root, ACTIVE_TRANSACTION, ("file",))
     for temporary_name in (
         RELEASES + "/." + release_id + ".stage6-tmp",
         "/mnt/hdUser/pm3000-revive/webui/.current.stage6-tmp",
         "/etc/apache2/conf.d/.pm3000-revive.conf.stage6-tmp",
+        "/etc/apache2/conf.d/.listen.conf.stage6-tmp",
     ):
         if _entry(root, temporary_name)["type"] != "absent":
             raise DeploymentError(f"transaction temporary path already exists: {temporary_name}")
@@ -943,6 +991,9 @@ def deploy_simulated(root: Path | str, package: Path | str, backup_root: Path | 
             os._exit(89)
         if fault == "after_config":
             raise DeploymentError("injected failure after config commit")
+        _atomic_bytes(listener_path, staged_payloads["apache/listen.conf"], 0o644)
+        if fault == "after_listener":
+            raise DeploymentError("injected failure after listener commit")
         if not syntax_check():
             raise DeploymentError("Apache syntax check failed")
         if not reload_apache():
@@ -994,7 +1045,8 @@ def rollback_simulated(root: Path | str, backup_dir: Path | str, *, syntax_check
         raise DeploymentError("deployment state is missing or invalid") from exc
     expected_state_keys = {
         "format", "transaction_id", "target_identity", "release_id", "backup_dir",
-        "created_release", "post_current_target", "post_config_sha256", "release_manifest",
+        "created_release", "post_current_target", "post_config_sha256", "post_listener_sha256",
+        "release_manifest",
     }
     if (not isinstance(state, dict) or set(state) != expected_state_keys or state.get("format") != 1
             or _sha256(state_bytes) != manifest.get("deployment_state_sha256")
@@ -1105,6 +1157,8 @@ def main(argv: list[str] | None = None) -> int:
     package.add_argument("--output", type=Path, required=True)
     package.add_argument("--release-id", required=True)
     package.add_argument("--git-revision", default="unknown")
+    package.add_argument("--acme-binary", type=Path)
+    package.add_argument("--acme-sha256")
     deploy = commands.add_parser("deploy-sim", help="deploy into an isolated synthetic root")
     deploy.add_argument("--root", type=Path, required=True)
     deploy.add_argument("--package", type=Path, required=True)
@@ -1124,7 +1178,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "package":
-            build_release(args.source, args.output, args.release_id, args.git_revision)
+            build_release(args.source, args.output, args.release_id, args.git_revision,
+                          acme_binary=args.acme_binary, acme_sha256=args.acme_sha256)
         elif args.command == "deploy-sim":
             deploy_simulated(args.root, args.package, args.backup_dir, fault=args.fault,
                              syntax_check=lambda: args.fault != "config_check",

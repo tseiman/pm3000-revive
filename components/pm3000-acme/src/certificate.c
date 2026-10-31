@@ -9,16 +9,11 @@
 
 #define CERTIFICATE_NAMES_MAX 16U
 #define CERTIFICATE_CHAIN_MAX 8U
-#define CERTIFICATE_FILE_MAX 65536U
+#define CERTIFICATE_FILE_MAX PM3000_ACME_CA_BUNDLE_MAX
 #define NID_SUBJECT_ALT_NAME 85
 #define GEN_DNS_VALUE 2
 
 static unsigned char certificate_file[CERTIFICATE_FILE_MAX + 1U];
-
-static int pem_space(unsigned char value)
-{
-    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
-}
 
 static int pem_base64(unsigned char value)
 {
@@ -28,38 +23,112 @@ static int pem_base64(unsigned char value)
            value == '=';
 }
 
+static int pem_marker(const unsigned char *data, unsigned int length)
+{
+    static const char begin[] = "-----BEGIN";
+    static const char end[] = "-----END";
+    unsigned int index;
+    for (index = 0U; index < length; ++index) {
+        if ((length - index >= sizeof(begin) - 1U &&
+             memcmp(data + index, begin, sizeof(begin) - 1U) == 0) ||
+            (length - index >= sizeof(end) - 1U &&
+             memcmp(data + index, end, sizeof(end) - 1U) == 0))
+            return 1;
+    }
+    return 0;
+}
+
+static int pem_line(const unsigned char *data, unsigned int length,
+                    unsigned int index, unsigned int *content_length,
+                    unsigned int *next)
+{
+    unsigned int end = index;
+    while (end < length && data[end] != '\r' && data[end] != '\n') ++end;
+    *content_length = end - index;
+    if (end == length) {
+        *next = end;
+        return 1;
+    }
+    if (data[end] == '\r') {
+        if (end + 1U >= length || data[end + 1U] != '\n') return 0;
+        *next = end + 2U;
+    } else {
+        *next = end + 1U;
+    }
+    return 1;
+}
+
 static int strict_pem_count(const unsigned char *data, unsigned int length,
-                            unsigned int *count)
+                            unsigned int *count, int allow_text)
 {
     static const char begin[] = "-----BEGIN CERTIFICATE-----";
     static const char end[] = "-----END CERTIFICATE-----";
     unsigned int index = 0U;
     unsigned int blocks = 0U;
-    if (data == (const unsigned char *)0 || length == 0U ||
-        length > CERTIFICATE_FILE_MAX) return 0;
+    int in_certificate = 0;
+    unsigned int payload = 0U;
+    if (data == (const unsigned char *)0 || count == (unsigned int *)0 ||
+        length == 0U || length > CERTIFICATE_FILE_MAX) return 0;
     while (index < length) {
-        unsigned int payload = 0U;
-        while (index < length && pem_space(data[index])) ++index;
-        if (index == length) break;
-        if (length - index < sizeof(begin) - 1U ||
-            memcmp(data + index, begin, sizeof(begin) - 1U) != 0)
-            return 0;
-        index += sizeof(begin) - 1U;
-        while (index < length) {
-            if (length - index >= sizeof(end) - 1U &&
-                memcmp(data + index, end,
-                       sizeof(end) - 1U) == 0) break;
-            if (pem_base64(data[index])) ++payload;
-            else if (!pem_space(data[index])) return 0;
-            ++index;
+        unsigned int line_length;
+        unsigned int next;
+        unsigned int item;
+        if (!pem_line(data, length, index, &line_length, &next)) return 0;
+        if (!in_certificate) {
+            if (line_length == sizeof(begin) - 1U &&
+                memcmp(data + index, begin, sizeof(begin) - 1U) == 0) {
+                in_certificate = 1;
+                payload = 0U;
+            } else {
+                if (pem_marker(data + index, line_length)) return 0;
+                for (item = 0U; item < line_length; ++item) {
+                    unsigned char value = data[index + item];
+                    if (value != '\t' && (value < 0x20U || value > 0x7eU))
+                        return 0;
+                    if (!allow_text && value != ' ' && value != '\t')
+                        return 0;
+                }
+            }
+        } else if (line_length == sizeof(end) - 1U &&
+                   memcmp(data + index, end, sizeof(end) - 1U) == 0) {
+            if (payload < 4U || ++blocks > CERTIFICATE_CHAIN_MAX + 1U)
+                return 0;
+            in_certificate = 0;
+        } else {
+            if (pem_marker(data + index, line_length)) return 0;
+            for (item = 0U; item < line_length; ++item) {
+                if (pem_base64(data[index + item])) ++payload;
+                else if (data[index + item] != ' ' &&
+                         data[index + item] != '\t')
+                    return 0;
+            }
         }
-        if (payload < 4U || length - index < sizeof(end) - 1U) return 0;
-        index += sizeof(end) - 1U;
-        if (++blocks > CERTIFICATE_CHAIN_MAX + 1U) return 0;
+        index = next;
     }
-    if (blocks == 0U) return 0;
+    if (in_certificate || blocks == 0U) return 0;
     *count = blocks;
     return 1;
+}
+
+int pm3000_acme_certificate_validate_ca_bundle(
+    const unsigned char *bundle, unsigned int bundle_length)
+{
+    BIO *bio;
+    X509 *certificate;
+    unsigned int expected = 0U;
+    unsigned int parsed = 0U;
+    if (!strict_pem_count(bundle, bundle_length, &expected, 1))
+        return PM3000_ACME_CERTIFICATE_INVALID;
+    bio = BIO_new_mem_buf((void *)bundle, (int)bundle_length);
+    if (bio == (BIO *)0) return PM3000_ACME_CERTIFICATE_IO;
+    while ((certificate = PEM_read_bio_X509(
+                bio, (X509 **)0, (void *)0, (void *)0)) != (X509 *)0) {
+        ++parsed;
+        X509_free(certificate);
+    }
+    BIO_free(bio);
+    return parsed == expected ? PM3000_ACME_CERTIFICATE_OK :
+                                PM3000_ACME_CERTIFICATE_INVALID;
 }
 
 static int exact_dns_names(X509 *certificate, const char *const *dns_names,
@@ -141,7 +210,7 @@ int pm3000_acme_certificate_validate_bytes(
         dns_names == (const char *const *)0 || dns_name_count == 0U ||
         dns_name_count > CERTIFICATE_NAMES_MAX ||
         !strict_pem_count(certificate_chain, certificate_length,
-                          &expected_count))
+                          &expected_count, 0))
         return PM3000_ACME_CERTIFICATE_INVALID;
     bio = BIO_new_mem_buf((void *)certificate_chain, (int)certificate_length);
     if (bio == (BIO *)0) return PM3000_ACME_CERTIFICATE_IO;

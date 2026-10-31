@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, timeZoneRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, timeZoneWritePending: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "", timeZoneRevision: "" };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, timeZoneRequest: 0, acmeRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, timeZoneWritePending: false, acmeMutationPending: false, acmeRenewalPending: false, acmeLoaded: false, acmeConfigured: false, acmeCaInstalled: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "", timeZoneRevision: "", acmeRevision: "", acmeRenewalTimer: 0 };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -6,6 +6,57 @@ let loginPending = false;
 let logoutPending = false;
 let bootstrapPending = true;
 let tokenIssuancePending = false;
+
+const supportedLocales = ["en", "de"];
+const locale = (navigator.languages || [navigator.language || "en"])
+  .map((value) => String(value).toLowerCase().split("-")[0])
+  .find((value) => supportedLocales.includes(value)) || "en";
+const messages = {
+  en: {
+    "acme.nav": "ACME certificates", "acme.eyebrow": "Certificates", "acme.title": "ACME certificates",
+    "acme.description": "Configure automatic certificate issuance from a fresh settings read.", "acme.reload": "Reload",
+    "acme.enabled": "Enable ACME", "acme.enabledHelp": "Allow automatic certificate issuance and renewal.",
+    "acme.directory": "Directory URL", "acme.dns": "DNS names", "acme.dnsHelp": "One DNS name per line; 1–16 unique names, at most 253 bytes each.",
+    "acme.loadFirst": "Load the current setting before saving.", "acme.loading": "Loading current ACME setting…",
+    "acme.loaded": "Current ACME setting loaded. Saving replaces all editable fields.",
+    "acme.firstRun": "First run: upload a CA bundle, then save the operator-supplied configuration.",
+    "acme.caReady": "Managed CA bundle installed. Save the configuration to finish first-run setup.",
+    "acme.unavailable": "Current ACME setting unavailable. Reload before saving.", "acme.invalidResponse": "The ACME settings response was invalid.",
+    "acme.save": "Save setting", "acme.saved": "ACME setting saved.", "acme.reloadRequired": "The setting may have changed. Reload before trying again.",
+    "acme.invalidDns": "Enter 1–16 unique DNS names, one per line, using at most 253 bytes per name.",
+    "acme.invalidDirectory": "Enter an HTTPS directory URL without spaces.", "acme.caTitle": "Certificate authority",
+    "acme.caPath": "Current CA file:", "acme.caUpload": "Managed CA bundle", "acme.caHelp": "PEM certificate bundles only; maximum 64 KiB. Private keys are rejected.",
+    "acme.upload": "Upload CA bundle", "acme.caEmpty": "Choose a non-empty CA bundle.", "acme.caLarge": "The CA bundle must not exceed 64 KiB.", "acme.caSaved": "Managed CA bundle installed.",
+    "acme.renewalTitle": "Renewal", "acme.status": "Status:", "acme.renew": "Start renewal", "acme.started": "Renewal started; completion has not yet been confirmed.",
+    "acme.refreshStopped": "Automatic status refresh stopped. Use Reload for the latest status.",
+    "acme.wait": "Wait for the ACME operation to finish before signing out.",
+    "acme.renewal.never_run": "Never run", "acme.renewal.starting": "Starting", "acme.renewal.running": "Running",
+    "acme.renewal.succeeded": "Succeeded", "acme.renewal.failed": "Failed", "acme.renewal.durability_uncertain": "Durability uncertain", "acme.renewal.unknown": "Unknown"
+  },
+  de: {
+    "acme.nav": "ACME-Zertifikate", "acme.eyebrow": "Zertifikate", "acme.title": "ACME-Zertifikate",
+    "acme.description": "Automatische Zertifikatsausstellung anhand frisch geladener Einstellungen konfigurieren.", "acme.reload": "Neu laden",
+    "acme.enabled": "ACME aktivieren", "acme.enabledHelp": "Automatische Zertifikatsausstellung und -erneuerung erlauben.",
+    "acme.directory": "Verzeichnis-URL", "acme.dns": "DNS-Namen", "acme.dnsHelp": "Ein DNS-Name pro Zeile; 1–16 eindeutige Namen mit höchstens 253 Byte.",
+    "acme.loadFirst": "Vor dem Speichern die aktuellen Einstellungen laden.", "acme.loading": "Aktuelle ACME-Einstellungen werden geladen…",
+    "acme.loaded": "Aktuelle ACME-Einstellungen geladen. Speichern ersetzt alle bearbeitbaren Felder.",
+    "acme.firstRun": "Ersteinrichtung: CA-Bündel hochladen und anschließend die vom Betreiber angegebenen Einstellungen speichern.",
+    "acme.caReady": "Verwaltetes CA-Bündel installiert. Zum Abschluss der Ersteinrichtung die Konfiguration speichern.",
+    "acme.unavailable": "Aktuelle ACME-Einstellungen nicht verfügbar. Vor dem Speichern neu laden.", "acme.invalidResponse": "Die Antwort mit den ACME-Einstellungen war ungültig.",
+    "acme.save": "Einstellung speichern", "acme.saved": "ACME-Einstellung gespeichert.", "acme.reloadRequired": "Die Einstellung könnte sich geändert haben. Vor einem neuen Versuch neu laden.",
+    "acme.invalidDns": "1–16 eindeutige DNS-Namen eingeben, einen pro Zeile und höchstens 253 Byte je Name.",
+    "acme.invalidDirectory": "Eine HTTPS-Verzeichnis-URL ohne Leerzeichen eingeben.", "acme.caTitle": "Zertifizierungsstelle",
+    "acme.caPath": "Aktuelle CA-Datei:", "acme.caUpload": "Verwaltetes CA-Bündel", "acme.caHelp": "Nur PEM-Zertifikatsbündel; höchstens 64 KiB. Private Schlüssel werden abgelehnt.",
+    "acme.upload": "CA-Bündel hochladen", "acme.caEmpty": "Ein nicht leeres CA-Bündel auswählen.", "acme.caLarge": "Das CA-Bündel darf höchstens 64 KiB groß sein.", "acme.caSaved": "Verwaltetes CA-Bündel installiert.",
+    "acme.renewalTitle": "Erneuerung", "acme.status": "Status:", "acme.renew": "Erneuerung starten", "acme.started": "Erneuerung gestartet; der Abschluss ist noch nicht bestätigt.",
+    "acme.refreshStopped": "Automatische Statusaktualisierung beendet. Für den aktuellen Status neu laden.",
+    "acme.wait": "Vor dem Abmelden das Ende des ACME-Vorgangs abwarten.",
+    "acme.renewal.never_run": "Noch nie ausgeführt", "acme.renewal.starting": "Wird gestartet", "acme.renewal.running": "Läuft",
+    "acme.renewal.succeeded": "Erfolgreich", "acme.renewal.failed": "Fehlgeschlagen", "acme.renewal.durability_uncertain": "Dauerhaftigkeit ungewiss", "acme.renewal.unknown": "Unbekannt"
+  }
+};
+const t = (key) => messages[locale][key] || messages.en[key] || key;
+document.documentElement.lang = locale;
 
 function serializeTransition(operation) {
   const current = transitionTail.then(operation, operation);
@@ -53,7 +104,7 @@ async function api(path, options = {}) {
   const generation = state.generation;
   const headers = new Headers(options.headers || {});
   const method = options.method || "GET";
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (method !== "GET" && options.csrf !== false && state.csrf) headers.set("X-CSRF-Token", state.csrf);
   const response = await fetch(path, { ...options, method, headers, cache: "no-store", credentials: "same-origin" });
   let payload = null;
@@ -63,7 +114,12 @@ async function api(path, options = {}) {
     disconnectLocal("Your PM3000 session has expired.");
     throw new Error("Session expired.");
   }
-  if (!response.ok) throw new Error(apiErrorMessage(payload, `Request failed (${response.status}).`));
+  if (!response.ok || (options.expectedStatus && response.status !== options.expectedStatus)) {
+    const error = new Error(apiErrorMessage(payload, `Request failed (${response.status}).`));
+    error.code = payload && typeof payload.code === "string" ? payload.code : "";
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -81,12 +137,12 @@ function setLoginDisabled(disabled) {
 }
 
 function disconnectLocal(message = "", enableLogin = true) {
-  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.applianceLoggingRequest += 1; state.timeZoneRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
+  state.generation += 1; state.outletRequest += 1; state.pduRequest += 1; state.dsviewRequest += 1; state.nisRequest += 1; state.helpLanguageRequest += 1; state.dataBufferingRequest += 1; state.applianceLoggingRequest += 1; state.timeZoneRequest += 1; state.acmeRequest += 1; state.tokenRequest += 1; state.sysinfoRequest += 1; state.memoryRequest += 1; state.flashRequest += 1; state.netdevRequest += 1; state.route4Request += 1; state.route6Request += 1; state.serialRequest += 1;
   state.session = null; state.csrf = ""; state.outlets = []; state.pdus = []; state.tokens = []; state.inventoryRevision = ""; state.pduInventoryRevision = ""; state.helpLanguageRevision = ""; state.dataBufferingRevision = ""; state.applianceLoggingRevision = ""; state.timeZoneRevision = "";
   if ($("create-token-dialog").open) $("create-token-dialog").close();
   if ($("token-secret-dialog").open) $("token-secret-dialog").close();
   clearOneTimeSecret(); clear($("outlet-grid")); clear($("pdu-grid")); clear($("token-rows")); clear($("navigation"));
-  setHelpLanguageLoaded(false); setDataBufferingLoaded(false); setApplianceLoggingLoaded(false); setTimeZoneLoaded(false);
+  setHelpLanguageLoaded(false); setDataBufferingLoaded(false); setApplianceLoggingLoaded(false); setTimeZoneLoaded(false); clearAcmeState();
   $("old-password").value = ""; $("new-password").value = ""; $("confirm-password").value = ""; $("password-change-error").textContent = "";
   $("authenticated").hidden = true; $("login-view").hidden = false; $("disconnect").hidden = true;
   setText("signed-in-user", ""); $("password-input").value = ""; $("login-error").textContent = message;
@@ -193,13 +249,19 @@ function renderNavigation() {
     const button = document.createElement("button"); button.type = "button"; button.className = "nav-item"; button.dataset.view = "tokens"; button.textContent = "Bearer tokens";
     button.addEventListener("click", () => switchView("tokens")); node.appendChild(button);
   }
+  if (state.session.navigation.canManageAcme) {
+    const heading = document.createElement("p"); heading.className = "nav-label"; heading.textContent = t("acme.eyebrow"); node.appendChild(heading);
+    const button = document.createElement("button"); button.type = "button"; button.className = "nav-item"; button.dataset.view = "acme"; button.textContent = t("acme.nav");
+    button.addEventListener("click", () => switchView("acme")); node.appendChild(button);
+  }
 }
 
 function switchView(view, path = "", label = "") {
+  if (view === "acme" && (!state.session || !state.session.navigation.canManageAcme)) view = "outlets";
   state.view = view;
-  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("appliance-logging-view").hidden = view !== "appliance-logging"; $("time-zone-view").hidden = view !== "time-zone"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
+  $("outlets-view").hidden = view !== "outlets"; $("pdus-view").hidden = view !== "pdus"; $("tokens-view").hidden = view !== "tokens"; $("nis-view").hidden = view !== "nis"; $("dsview-view").hidden = view !== "dsview"; $("help-language-view").hidden = view !== "help-language"; $("data-buffering-view").hidden = view !== "data-buffering"; $("appliance-logging-view").hidden = view !== "appliance-logging"; $("time-zone-view").hidden = view !== "time-zone"; $("acme-view").hidden = view !== "acme"; $("password-change-view").hidden = view !== "password"; $("sysinfo-view").hidden = view !== "sysinfo"; $("memory-view").hidden = view !== "memory"; $("flash-view").hidden = view !== "flash"; $("netdev-view").hidden = view !== "netdev"; $("route4-view").hidden = view !== "route4"; $("route6-view").hidden = view !== "route6"; $("serial-view").hidden = view !== "serial"; $("legacy-view").hidden = view !== "legacy";
   for (const button of document.querySelectorAll(".nav-item")) button.removeAttribute("aria-current");
-  let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : null;
+  let active = view === "tokens" ? document.querySelector('[data-view="tokens"]') : view === "acme" ? document.querySelector('[data-view="acme"]') : null;
   if (!active && path) active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === path);
   if (!active && view === "outlets") active = [...document.querySelectorAll("[data-path]")].find((button) => button.dataset.path === "units.topology");
   if (path) expandNavigationPath(path);
@@ -212,6 +274,7 @@ function switchView(view, path = "", label = "") {
   if (view === "data-buffering") loadDataBufferingSetting();
   if (view === "appliance-logging") loadApplianceLoggingSetting();
   if (view === "time-zone") loadTimeZoneSetting();
+  if (view === "acme") loadAcmeSetting();
   if (view === "sysinfo") loadSysinfo();
   if (view === "memory") loadMemory();
   if (view === "flash") loadFlash();
@@ -742,6 +805,198 @@ $("reload-data-buffering").addEventListener("click", loadDataBufferingSetting);
 $("reload-appliance-logging").addEventListener("click", loadApplianceLoggingSetting);
 $("reload-time-zone").addEventListener("click", loadTimeZoneSetting);
 
+const ACME_MAX_DNS_NAMES = 16;
+const ACME_MAX_DNS_NAME_BYTES = 253;
+const ACME_MAX_CA_BYTES = 65536;
+const ACME_RENEWAL_STATES = ["never_run", "starting", "running", "succeeded", "failed", "durability_uncertain", "unknown"];
+const ACME_FAILURE_PHASES = ["directory", "nonce", "account", "order", "authorization", "challenge_publication", "challenge_acceptance", "challenge_poll", "finalize", "certificate_download", "certificate_validation", "certificate_publication"];
+const ACME_FAILURE_REASONS = ["tls", "http", "parse", "io", "rejected", "timeout", "validation", "publication"];
+const acmeTerminalStates = ["succeeded", "failed", "durability_uncertain", "unknown"];
+const acmeTextIds = {
+  "acme-eyebrow": "acme.eyebrow", "acme-title": "acme.title", "acme-description": "acme.description",
+  "reload-acme": "acme.reload", "acme-enabled-label": "acme.enabled", "acme-enabled-help": "acme.enabledHelp",
+  "acme-directory-label": "acme.directory", "acme-dns-label": "acme.dns", "acme-dns-help": "acme.dnsHelp",
+  "save-acme": "acme.save", "acme-ca-title": "acme.caTitle", "acme-ca-path-label": "acme.caPath",
+  "acme-ca-upload-label": "acme.caUpload", "acme-ca-help": "acme.caHelp", "upload-acme-ca": "acme.upload",
+  "acme-renewal-title": "acme.renewalTitle", "acme-renewal-label": "acme.status", "acme-renew": "acme.renew"
+};
+for (const [id, key] of Object.entries(acmeTextIds)) setText(id, t(key));
+setText("acme-status", t("acme.loadFirst"));
+setText("acme-renewal-status", t("acme.renewal.unknown"));
+
+function acmeOperationPending() { return state.acmeMutationPending || state.acmeRenewalPending; }
+
+function setAcmeLoaded(loaded, preserveDraft = false) {
+  state.acmeLoaded = loaded;
+  const disabled = !loaded || acmeOperationPending();
+  for (const id of ["acme-enabled", "acme-directory-url", "acme-dns-names"]) $(id).disabled = disabled;
+  $("save-acme").disabled = disabled || (!state.acmeConfigured && !state.acmeCaInstalled);
+  for (const id of ["acme-ca-file", "upload-acme-ca"]) $(id).disabled = disabled || (!state.acmeConfigured && state.acmeCaInstalled);
+  $("acme-renew").disabled = disabled || !state.acmeConfigured;
+  $("reload-acme").disabled = acmeOperationPending() || !state.session || !state.session.navigation.canManageAcme;
+  if (!loaded && !preserveDraft) {
+    state.acmeRevision = ""; state.acmeConfigured = false; state.acmeCaInstalled = false;
+    $("acme-enabled").checked = false; $("acme-directory-url").value = ""; $("acme-dns-names").value = "";
+    setText("acme-ca-path", ""); setText("acme-renewal-status", t("acme.renewal.unknown"));
+  }
+}
+
+function clearAcmeState() {
+  state.acmeRequest += 1; state.acmeRevision = ""; state.acmeMutationPending = false; state.acmeRenewalPending = false;
+  if (state.acmeRenewalTimer) window.clearTimeout(state.acmeRenewalTimer); state.acmeRenewalTimer = 0;
+  $("acme-ca-form").reset(); setAcmeLoaded(false); $("reload-acme").disabled = true;
+  setText("acme-status", t("acme.loadFirst")); setText("acme-error", ""); setText("acme-renewal-note", "");
+}
+
+function validAcmeBootstrapPayload(payload) {
+  const keys = payload && typeof payload === "object" ? Object.keys(payload).sort().join(",") : "";
+  const renewalKeys = payload && payload.renewal && typeof payload.renewal === "object" ? Object.keys(payload.renewal).join(",") : "";
+  return keys === "caInstalled,configured,renewal" && payload.configured === false &&
+    typeof payload.caInstalled === "boolean" && renewalKeys === "state" &&
+    payload.renewal.state === "never_run";
+}
+
+function validAcmePayload(payload) {
+  if (payload && payload.configured === false) return validAcmeBootstrapPayload(payload);
+  const keys = payload && typeof payload === "object" ? Object.keys(payload).sort().join(",") : "";
+  const renewalKeys = payload && payload.renewal && typeof payload.renewal === "object" ? Object.keys(payload.renewal).sort().join(",") : "";
+  const renewalValid = renewalKeys === "state" ||
+    (renewalKeys === "phase,reason,state" && payload.renewal.state === "failed" &&
+     ACME_FAILURE_PHASES.includes(payload.renewal.phase) && ACME_FAILURE_REASONS.includes(payload.renewal.reason));
+  const dnsPattern = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
+  return keys === "caFile,directoryUrl,dnsNames,enabled,renewal,revision" && renewalValid &&
+    typeof payload.enabled === "boolean" && typeof payload.directoryUrl === "string" && /^https:\/\/[^\u0000-\u0020\u007F]+$/u.test(payload.directoryUrl) && new TextEncoder().encode(payload.directoryUrl).length <= 1291 &&
+    typeof payload.caFile === "string" && /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/u.test(payload.caFile) && new TextEncoder().encode(payload.caFile).length <= 1024 &&
+    Array.isArray(payload.dnsNames) && payload.dnsNames.length >= 1 && payload.dnsNames.length <= ACME_MAX_DNS_NAMES &&
+    new Set(payload.dnsNames).size === payload.dnsNames.length && payload.dnsNames.every((name) => typeof name === "string" && dnsPattern.test(name) && new TextEncoder().encode(name).length <= ACME_MAX_DNS_NAME_BYTES) &&
+    strongRevision(payload.revision) && ACME_RENEWAL_STATES.includes(payload.renewal.state);
+}
+
+function renderAcme(payload) {
+  if (payload.configured === false) {
+    state.acmeConfigured = false; state.acmeCaInstalled = payload.caInstalled; state.acmeRevision = "";
+    setText("acme-ca-path", payload.caInstalled ? "/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem" : "");
+    setText("acme-renewal-status", t("acme.renewal.never_run"));
+    return;
+  }
+  state.acmeConfigured = true; state.acmeCaInstalled = pm3000ManagedCaPath(payload.caFile);
+  $("acme-enabled").checked = payload.enabled; $("acme-directory-url").value = payload.directoryUrl;
+  $("acme-dns-names").value = payload.dnsNames.join("\n"); setText("acme-ca-path", payload.caFile);
+  setText("acme-renewal-status", t(`acme.renewal.${payload.renewal.state}`));
+  if (acmeTerminalStates.includes(payload.renewal.state)) {
+    setText("acme-renewal-note", payload.renewal.state === "failed" && payload.renewal.phase ?
+      `Failure: ${payload.renewal.phase} / ${payload.renewal.reason}` : "");
+  }
+  state.acmeRevision = payload.revision;
+}
+
+function pm3000ManagedCaPath(path) {
+  return path === "/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem";
+}
+
+async function loadAcmeSetting(writeReadback = false, renewalPoll = false) {
+  if (!state.session || !state.session.navigation.canManageAcme || (state.acmeMutationPending && !writeReadback) || (state.acmeRenewalPending && !renewalPoll)) return false;
+  const request = ++state.acmeRequest;
+  if (!renewalPoll) { setAcmeLoaded(false, writeReadback && !state.acmeConfigured); setText("acme-error", ""); setText("acme-status", t("acme.loading")); }
+  try {
+    const payload = await api("/api/v1/settings/acme");
+    if (request !== state.acmeRequest) return false;
+    if (!validAcmePayload(payload)) throw new Error(t("acme.invalidResponse"));
+    renderAcme(payload); setAcmeLoaded(true);
+    setText("acme-status", payload.configured === false ? t(payload.caInstalled ? "acme.caReady" : "acme.firstRun") : t("acme.loaded"));
+    return true;
+  } catch (error) {
+    if (request === state.acmeRequest) {
+      setAcmeLoaded(false); setText("acme-status", t("acme.unavailable"));
+      if (state.session) setText("acme-error", error.message);
+    }
+    return false;
+  }
+}
+
+function acmeDnsNames() {
+  const names = $("acme-dns-names").value.split(/\r?\n/u).map((name) => name.trim()).filter(Boolean);
+  const pattern = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/u;
+  if (names.length < 1 || names.length > ACME_MAX_DNS_NAMES || new Set(names).size !== names.length || names.some((name) => !pattern.test(name) || new TextEncoder().encode(name).length > ACME_MAX_DNS_NAME_BYTES)) return null;
+  return names;
+}
+
+async function runAcmeMutation(path, options, successKey) {
+  if (acmeOperationPending() || !state.acmeLoaded || (state.acmeConfigured && !state.acmeRevision)) return;
+  const generation = state.generation; state.acmeMutationPending = true; setAcmeLoaded(true); setText("acme-error", ""); $("disconnect").disabled = true;
+  try {
+    await api(path, { ...options, expectedStatus: 204 });
+    if (generation !== state.generation) return;
+    const loaded = await loadAcmeSetting(true);
+    if (generation === state.generation && loaded) { toast(t(successKey)); if (state.acmeConfigured) setText("acme-status", t("acme.loaded")); }
+  } catch (error) {
+    if (generation === state.generation && state.session) {
+      setAcmeLoaded(false); setText("acme-status", t("acme.reloadRequired")); setText("acme-error", error.message);
+    }
+  } finally {
+    if (generation === state.generation) {
+      state.acmeMutationPending = false; setAcmeLoaded(state.acmeLoaded);
+      if (!state.helpLanguageWritePending && !state.dataBufferingWritePending && !state.applianceLoggingWritePending && !state.timeZoneWritePending && !tokenIssuancePending && !logoutPending && state.session) $("disconnect").disabled = false;
+    }
+  }
+}
+
+$("acme-form").addEventListener("submit", (event) => {
+  event.preventDefault(); if ($("save-acme").disabled || acmeOperationPending() || !state.acmeLoaded || (state.acmeConfigured && !state.acmeRevision)) return;
+  const directoryUrl = $("acme-directory-url").value; const dnsNames = acmeDnsNames();
+  if (!/^https:\/\/[^\u0000-\u0020\u007F]+$/u.test(directoryUrl) || new TextEncoder().encode(directoryUrl).length > 1291) { setText("acme-error", t("acme.invalidDirectory")); return; }
+  if (!dnsNames) { setText("acme-error", t("acme.invalidDns")); return; }
+  const headers = state.acmeConfigured ? { "If-Match": state.acmeRevision } : { "If-None-Match": "*" };
+  runAcmeMutation("/api/v1/settings/acme", { method: "PUT", headers, body: JSON.stringify({ enabled: $("acme-enabled").checked, directoryUrl: directoryUrl, dnsNames }) }, "acme.saved");
+});
+
+$("acme-ca-form").addEventListener("submit", async (event) => {
+  event.preventDefault(); if ($("upload-acme-ca").disabled || acmeOperationPending() || !state.acmeLoaded || (state.acmeConfigured && !state.acmeRevision)) return;
+  const file = $("acme-ca-file").files[0];
+  if (!file || file.size === 0) { setText("acme-error", t("acme.caEmpty")); $("acme-ca-form").reset(); return; }
+  if (file.size > ACME_MAX_CA_BYTES) { setText("acme-error", t("acme.caLarge")); $("acme-ca-form").reset(); return; }
+  const revision = state.acmeRevision; const configured = state.acmeConfigured; const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length === 0 || bytes.length > ACME_MAX_CA_BYTES || revision !== state.acmeRevision || configured !== state.acmeConfigured || acmeOperationPending()) { setText("acme-error", bytes.length ? t("acme.caLarge") : t("acme.caEmpty")); $("acme-ca-form").reset(); return; }
+  const headers = configured ? { "If-Match": revision, "Content-Type": "application/x-pem-file" } : { "If-None-Match": "*", "Content-Type": "application/x-pem-file" };
+  try { await runAcmeMutation("/api/v1/settings/acme/ca", { method: "PUT", headers, body: bytes }, "acme.caSaved"); }
+  finally { $("acme-ca-form").reset(); }
+});
+
+function scheduleAcmeRenewalRefresh(generation, remaining) {
+  if (!state.acmeRenewalPending || generation !== state.generation) return;
+  if (remaining === 0) {
+    state.acmeRenewalPending = false; state.acmeRenewalTimer = 0; setAcmeLoaded(Boolean(state.acmeRevision)); setText("acme-renewal-note", t("acme.refreshStopped"));
+    if (state.session) $("disconnect").disabled = false;
+    return;
+  }
+  state.acmeRenewalTimer = window.setTimeout(async () => {
+    state.acmeRenewalTimer = 0; const loaded = await loadAcmeSetting(false, true);
+    if (generation !== state.generation || !state.session) return;
+    const label = $("acme-renewal-status").textContent;
+    const terminal = acmeTerminalStates.some((status) => label === t(`acme.renewal.${status}`));
+    if (loaded && terminal) { state.acmeRenewalPending = false; setAcmeLoaded(true); $("disconnect").disabled = false; return; }
+    scheduleAcmeRenewalRefresh(generation, remaining - 1);
+  }, 2000);
+}
+
+$("acme-renew").addEventListener("click", async () => {
+  if ($("acme-renew").disabled || acmeOperationPending() || !state.acmeRevision) return;
+  const generation = state.generation; state.acmeRenewalPending = true; setAcmeLoaded(true); setText("acme-error", ""); setText("acme-renewal-note", ""); $("disconnect").disabled = true;
+  try {
+    await api("/api/v1/settings/acme/renew", { method: "POST", expectedStatus: 202 });
+    if (generation !== state.generation) return;
+    setText("acme-renewal-note", t("acme.started")); scheduleAcmeRenewalRefresh(generation, 6);
+  } catch (error) {
+    if (generation !== state.generation || !state.session) return;
+    state.acmeRenewalPending = false;
+    if (error.code === "action_outcome_unknown") { setAcmeLoaded(false); setText("acme-status", t("acme.reloadRequired")); }
+    else setAcmeLoaded(Boolean(state.acmeRevision));
+    setText("acme-error", error.message); $("disconnect").disabled = false;
+  }
+});
+
+$("reload-acme").addEventListener("click", () => loadAcmeSetting());
+
 $("password-change-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = $("submit-password-change");
@@ -794,6 +1049,7 @@ $("connect-form").addEventListener("submit", (event) => {
 
 $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
+  if (state.acmeMutationPending || state.acmeRenewalPending) { toast(t("acme.wait")); return; }
   if (state.helpLanguageWritePending || state.dataBufferingWritePending || state.applianceLoggingWritePending || state.timeZoneWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);

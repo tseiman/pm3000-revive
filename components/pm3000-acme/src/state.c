@@ -24,13 +24,10 @@ static void state_clear(struct pm3000_acme_state *state)
 }
 
 
-static int lock_state_root(const char *root, int *root_fd_output)
+static int open_state_root(const char *root)
 {
     struct pm3000_acme_stat details;
-    struct flock lock;
-    int root_fd;
-    int lock_fd;
-    root_fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
+    int root_fd = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
     if (root_fd < 0) return -1;
     if (pm3000_acme_fstat(root_fd, &details) != 0 ||
         !PM3000_ACME_S_ISDIR(details.mode) ||
@@ -39,6 +36,16 @@ static int lock_state_root(const char *root, int *root_fd_output)
         close(root_fd);
         return -1;
     }
+    return root_fd;
+}
+
+static int lock_state_root(const char *root, int *root_fd_output)
+{
+    struct pm3000_acme_stat details;
+    struct flock lock;
+    int root_fd = open_state_root(root);
+    int lock_fd;
+    if (root_fd < 0) return -1;
     lock_fd = openat(root_fd, "renew.lock",
                      O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0600);
     if (lock_fd < 0) {
@@ -146,6 +153,17 @@ int pm3000_acme_state_open(const char *root,
     }
     if (state->lock_fd < 0) return PM3000_ACME_STATE_UNSAFE;
     return PM3000_ACME_STATE_OK;
+}
+
+int pm3000_acme_state_open_root(const char *root,
+                                struct pm3000_acme_state *state)
+{
+    if (root == (const char *)0 || state == (struct pm3000_acme_state *)0)
+        return PM3000_ACME_STATE_INVALID;
+    state_clear(state);
+    state->root_fd = open_state_root(root);
+    return state->root_fd < 0 ? PM3000_ACME_STATE_UNSAFE :
+                               PM3000_ACME_STATE_OK;
 }
 
 int pm3000_acme_state_prepare_locked(struct pm3000_acme_state *state)

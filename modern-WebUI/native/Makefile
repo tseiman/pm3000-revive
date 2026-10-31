@@ -4,13 +4,14 @@ CC ?= cc
 CFLAGS ?= -std=c99 -Os -Wall -Wextra -Werror -pedantic
 CPPFLAGS ?=
 BUILD := build
-SOURCES := main.c sha256.c identifiers.c projector.c token_auth.c token_admin.c controller_xml.c fixed_form.c avtrans.c session.c service_session.c
-HEADERS := sha256.h identifiers.h projector.h token_auth.h token_admin.h controller_xml.h fixed_form.h avtrans.h session.h service_session.h
+SOURCES := main.c sha256.c identifiers.c projector.c token_auth.c token_admin.c controller_xml.c fixed_form.c avtrans.c session.c service_session.c acme_admin_client.c acme_settings.c
+HEADERS := sha256.h identifiers.h projector.h token_auth.h token_admin.h controller_xml.h fixed_form.h avtrans.h session.h service_session.h acme_admin_client.h acme_settings.h
 CROSS := ../../components/dropbear/output-buildroot/host/bin/powerpc-buildroot-linux-musl-
 TARGET_CC := $(CROSS)gcc
 TARGET_LD := $(CROSS)ld
 TARGET_STRIP := $(CROSS)strip
 GSP_HELPER := $(BUILD)/pm3000-gsp-session-helper-ppc32
+ACME_ADMIN := $(BUILD)/pm3000-acme-admin-ppc32
 GSP_OBJECT := $(BUILD)/gsp-session-helper.o
 GSP_START := $(BUILD)/gsp-ppc-start.o
 ABI_STUB_SOURCE := abi-stubs
@@ -29,13 +30,18 @@ $(BUILD)/pm3000-rest-host: $(SOURCES) $(HEADERS)
 
 target: CC := $(TARGET_CC)
 target: CFLAGS += -static -mcpu=e300c3 -msoft-float -ffunction-sections -fdata-sections -Wl,--gc-sections
-target: $(BUILD)/pm3000-rest-ppc32 $(GSP_HELPER)
+target: $(BUILD)/pm3000-rest-ppc32 $(GSP_HELPER) $(ACME_ADMIN)
 	$(TARGET_STRIP) --strip-all $(BUILD)/pm3000-rest-ppc32
 	$(TARGET_STRIP) --strip-unneeded $(GSP_HELPER)
+	$(TARGET_STRIP) --strip-all $(ACME_ADMIN)
 
 $(BUILD)/pm3000-rest-ppc32: $(SOURCES) $(HEADERS)
 	mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SOURCES)
+
+$(ACME_ADMIN): pm3000-acme-admin.c
+	mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $<
 
 $(GSP_OBJECT): gsp-session-helper.c
 	mkdir -p $(BUILD)

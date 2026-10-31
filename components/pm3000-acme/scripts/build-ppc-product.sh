@@ -21,7 +21,7 @@ done
 rm -rf "$obj_dir"
 mkdir -p "$obj_dir" "$(dirname -- "$out")"
 
-sources='main app config state store publish certificate client transport tls http challenge protocol json url jws crypto base64url stat_compat syscall_compat'
+sources='main app admin config state store publish certificate client transport tls http challenge protocol json url jws crypto base64url stat_compat syscall_compat'
 for name in $sources; do
     "$cc" -DPM3000_FIRMWARE_ABI -I"$component_dir/include" \
         -I"$component_dir/src" -std=c99 -Os -Wall -Wextra -Werror \
@@ -49,15 +49,38 @@ command -v qemu-ppc >/dev/null 2>&1 || {
     echo "qemu-ppc missing; PPC runtime gate cannot run" >&2
     exit 1
 }
-set +e
-qemu_output=$(LD_BIND_NOW=1 LD_LIBRARY_PATH=/lib:/usr/lib \
+command -v bwrap >/dev/null 2>&1 || {
+    echo "bwrap missing; isolated PPC runtime gate cannot run" >&2
+    exit 1
+}
+qemu_control=$(LD_BIND_NOW=1 LD_LIBRARY_PATH=/lib:/usr/lib \
     qemu-ppc -cpu e300c3 -L "$firmware_root" \
-    "$out" renew --invalid 2>&1)
+    "$firmware_root/bin/arch" 2>&1) || {
+    printf 'PPC runtime control failed:\n%s\n' "$qemu_control" >&2
+    exit 1
+}
+test "$qemu_control" = ppc || {
+    printf 'PPC runtime control returned unexpected output: %s\n' \
+        "$qemu_control" >&2
+    exit 1
+}
+runtime_root=$(mktemp -d "${TMPDIR:-/tmp}/pm3000-acme-qemu.XXXXXX")
+trap 'rm -rf "$runtime_root"' EXIT HUP INT TERM
+mkdir -p "$runtime_root/hdUser/pm3000-revive/acme"
+chmod 700 "$runtime_root/hdUser/pm3000-revive/acme"
+set +e
+qemu_output=$(bwrap --ro-bind / / --bind "$runtime_root" /mnt \
+    --dev-bind /dev /dev --proc /proc \
+    --setenv LD_BIND_NOW 1 --setenv LD_LIBRARY_PATH /lib:/usr/lib \
+    qemu-ppc -cpu e300c3 -L "$firmware_root" "$out" status 2>&1)
 qemu_status=$?
 set -e
-if test "$qemu_status" -ne 2; then
-    printf 'PPC runtime gate failed: exit=%s\n%s\n' \
+if test "$qemu_status" -ne 0 ||
+        test "$qemu_output" != '{"state":"never_run"}'; then
+    printf 'PPC status runtime gate failed: exit=%s\n%s\n' \
         "$qemu_status" "$qemu_output" >&2
     exit 1
 fi
+printf 'ppc.product.qemu_control=qualified\n'
+printf 'ppc.product.qemu_status=%s\n' "$qemu_output"
 printf 'ppc.product.qemu_bind_now.complete=yes\n'

@@ -9,6 +9,55 @@
 #define PM3000_ACME_CERTIFICATE_MAX PM3000_ACME_HTTP_BODY_MAX
 #define PM3000_ACME_POLL_ATTEMPTS_MAX 20U
 
+enum pm3000_acme_failure_phase {
+    PM3000_ACME_PHASE_NONE = 0,
+    PM3000_ACME_PHASE_DIRECTORY,
+    PM3000_ACME_PHASE_NONCE,
+    PM3000_ACME_PHASE_ACCOUNT,
+    PM3000_ACME_PHASE_ORDER,
+    PM3000_ACME_PHASE_AUTHORIZATION,
+    PM3000_ACME_PHASE_CHALLENGE_PUBLICATION,
+    PM3000_ACME_PHASE_CHALLENGE_ACCEPTANCE,
+    PM3000_ACME_PHASE_CHALLENGE_POLL,
+    PM3000_ACME_PHASE_FINALIZE,
+    PM3000_ACME_PHASE_CERTIFICATE_DOWNLOAD,
+    PM3000_ACME_PHASE_CERTIFICATE_VALIDATION,
+    PM3000_ACME_PHASE_CERTIFICATE_PUBLICATION
+};
+
+enum pm3000_acme_failure_reason {
+    PM3000_ACME_REASON_NONE = 0,
+    PM3000_ACME_REASON_TLS,
+    PM3000_ACME_REASON_HTTP,
+    PM3000_ACME_REASON_PARSE,
+    PM3000_ACME_REASON_IO,
+    PM3000_ACME_REASON_REJECTED,
+    PM3000_ACME_REASON_TIMEOUT,
+    PM3000_ACME_REASON_VALIDATION,
+    PM3000_ACME_REASON_PUBLICATION
+};
+
+enum pm3000_acme_problem {
+    PM3000_ACME_PROBLEM_NONE = 0,
+    PM3000_ACME_PROBLEM_UNAUTHORIZED,
+    PM3000_ACME_PROBLEM_CONNECTION,
+    PM3000_ACME_PROBLEM_DNS,
+    PM3000_ACME_PROBLEM_MALFORMED,
+    PM3000_ACME_PROBLEM_REJECTED_IDENTIFIER,
+    PM3000_ACME_PROBLEM_RATE_LIMITED,
+    PM3000_ACME_PROBLEM_SERVER_INTERNAL,
+    PM3000_ACME_PROBLEM_TLS,
+    PM3000_ACME_PROBLEM_INCORRECT_RESPONSE,
+    PM3000_ACME_PROBLEM_ORDER_NOT_READY,
+    PM3000_ACME_PROBLEM_UNKNOWN
+};
+
+enum pm3000_acme_exchange_result {
+    PM3000_ACME_EXCHANGE_OK = 0,
+    PM3000_ACME_EXCHANGE_TLS = -1,
+    PM3000_ACME_EXCHANGE_HTTP = -2
+};
+
 struct pm3000_acme_client_config {
     const char *directory_url;
     const char *existing_account_url;
@@ -24,6 +73,10 @@ struct pm3000_acme_client_result {
     char account_url[PM3000_ACME_KID_MAX + 1U];
     unsigned char certificate_pem[PM3000_ACME_CERTIFICATE_MAX + 1U];
     unsigned int certificate_length;
+    enum pm3000_acme_failure_phase failure_phase;
+    enum pm3000_acme_failure_reason failure_reason;
+    unsigned int http_status_code;
+    enum pm3000_acme_problem problem;
 };
 
 struct pm3000_acme_client_workspace {
@@ -63,5 +116,8 @@ int pm3000_acme_client_issue(
     const struct pm3000_acme_client_io *io,
     struct pm3000_acme_client_workspace *workspace,
     struct pm3000_acme_client_result *result);
+const char *pm3000_acme_failure_phase_name(enum pm3000_acme_failure_phase phase);
+const char *pm3000_acme_failure_reason_name(enum pm3000_acme_failure_reason reason);
+const char *pm3000_acme_problem_name(enum pm3000_acme_problem problem);
 
 #endif

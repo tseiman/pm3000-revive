@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 
 #include "avtrans.h"
+#include "acme_admin_client.h"
+#include "acme_settings.h"
 #include "controller_xml.h"
 #include "fixed_form.h"
 #include "identifiers.h"
@@ -64,6 +66,12 @@ static const char *service_helper_path(void) {
     return configured_path(
         "PM3000_SERVICE_SESSION_HELPER",
         "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-gsp-session-helper");
+}
+
+static const char *acme_admin_helper_path(void) {
+    return configured_path(
+        "PM3000_ACME_ADMIN_HELPER",
+        "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-admin");
 }
 
 static int service_fetch_topology(const char *socket_path,
@@ -634,6 +642,30 @@ static int read_json_body(unsigned char *body, size_t limit, size_t *body_length
     return 0;
 }
 
+static int read_exact_body(unsigned char *body, size_t limit, size_t *body_length,
+                           const char *required_content_type) {
+    const char *content_type = getenv("CONTENT_TYPE");
+    const char *content_encoding = getenv("HTTP_CONTENT_ENCODING");
+    const char *length_text = getenv("CONTENT_LENGTH");
+    char *end = NULL;
+    unsigned long length;
+    size_t used = 0U;
+    if (content_encoding != NULL && content_encoding[0] != '\0') return 415;
+    if (content_type == NULL || strcmp(content_type, required_content_type) != 0) return 415;
+    if (length_text == NULL || length_text[0] == '\0' || length_text[0] == '-' ||
+        length_text[0] == '+') return 400;
+    length = strtoul(length_text, &end, 10);
+    if (end == length_text || *end != '\0') return 400;
+    if (length > (unsigned long)limit) return 413;
+    while (used < (size_t)length) {
+        size_t amount = fread(body + used, 1U, (size_t)length - used, stdin);
+        if (amount == 0U) return 400;
+        used += amount;
+    }
+    *body_length = used;
+    return 0;
+}
+
 static int session_identifier_from_cookie(char identifier[PM3000_SESSION_ID_LENGTH + 1U]) {
     const char *header = getenv("HTTP_COOKIE");
     const char *cursor;
@@ -1094,6 +1126,289 @@ static int run_fixed_setting_route(const char *method,
     }
 }
 
+static int acme_read_revision(const char *helper, char revision[67],
+                              enum pm3000_acme_admin_result *call_result) {
+    struct pm3000_acme_admin_response response;
+    *call_result = pm3000_acme_admin_call(helper, PM3000_ACME_ADMIN_CONFIG_REVISION,
+                                           NULL, NULL, 0U, &response);
+    if (*call_result == PM3000_ACME_ADMIN_CHILD_FAILED &&
+        response.child_status == 6U) return -3;
+    if (*call_result != PM3000_ACME_ADMIN_SUCCESS) return -1;
+    if (response.output_length != 67U || response.output[66] != '\n') return -2;
+    memcpy(revision, response.output, 66U); revision[66] = '\0';
+    return pm3000_acme_valid_etag(revision) ? 0 : -2;
+}
+
+static int acme_read_bootstrap(const char *helper, int *ca_installed,
+                               enum pm3000_acme_admin_result *call_result) {
+    static const unsigned char absent[] = "{\"ca_installed\":false}\n";
+    static const unsigned char installed[] = "{\"ca_installed\":true}\n";
+    struct pm3000_acme_admin_response response;
+    *call_result = pm3000_acme_admin_call(
+        helper, PM3000_ACME_ADMIN_BOOTSTRAP_STATUS,
+        NULL, NULL, 0U, &response);
+    if (*call_result != PM3000_ACME_ADMIN_SUCCESS) return -1;
+    if (response.output_length == sizeof(absent) - 1U &&
+        memcmp(response.output, absent, sizeof(absent) - 1U) == 0) {
+        *ca_installed = 0;
+        return 0;
+    }
+    if (response.output_length == sizeof(installed) - 1U &&
+        memcmp(response.output, installed, sizeof(installed) - 1U) == 0) {
+        *ca_installed = 1;
+        return 0;
+    }
+    return -2;
+}
+
+static int acme_read_config(const char *helper, struct pm3000_acme_setting *setting,
+                            enum pm3000_acme_admin_result *call_result) {
+    struct pm3000_acme_admin_response response;
+    *call_result = pm3000_acme_admin_call(helper, PM3000_ACME_ADMIN_CONFIG_SHOW,
+                                           NULL, NULL, 0U, &response);
+    if (*call_result != PM3000_ACME_ADMIN_SUCCESS) return -1;
+    return pm3000_acme_parse_cli_config(response.output, response.output_length, setting) == 0 ? 0 : -2;
+}
+
+static int acme_backend_error(enum pm3000_acme_admin_result result, int mutation) {
+    if (result == PM3000_ACME_ADMIN_BAD_REQUEST)
+        return cgi_error(400U, "Bad Request", "bad_request", "The ACME broker rejected the request.");
+    if (result == PM3000_ACME_ADMIN_PROTOCOL_ERROR)
+        return cgi_error(502U, "Bad Gateway", "backend_protocol_error", "The ACME broker response was invalid.");
+    if (result == PM3000_ACME_ADMIN_OUTCOME_UNKNOWN)
+        return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                         "The ACME change may have been dispatched; do not retry automatically.");
+    if (result == PM3000_ACME_ADMIN_CHILD_FAILED && mutation)
+        return cgi_error(503U, "Service Unavailable", "action_outcome_unknown",
+                         "The ACME change was not confirmed; do not retry automatically.");
+    return cgi_error(503U, "Service Unavailable", mutation ? "action_outcome_unknown" : "backend_unavailable",
+                     mutation ? "The ACME change was not confirmed; do not retry automatically." :
+                                "The ACME administration backend was unavailable.");
+}
+
+static int acme_read_snapshot(const char *helper, struct pm3000_acme_setting *setting,
+                              char revision[67], struct pm3000_acme_renewal_status *status,
+                              enum pm3000_acme_admin_result *call_result) {
+    unsigned int attempt;
+    for (attempt = 0U; attempt < 2U; ++attempt) {
+        char after[67];
+        int result = acme_read_revision(helper, revision, call_result);
+        if (result != 0) return result;
+        result = acme_read_config(helper, setting, call_result);
+        if (result != 0) return result;
+        result = acme_read_revision(helper, after, call_result);
+        if (result != 0) return result;
+        if (strcmp(revision, after) == 0) {
+            struct pm3000_acme_admin_response response;
+            *call_result = pm3000_acme_admin_call(helper, PM3000_ACME_ADMIN_STATUS,
+                                                   NULL, NULL, 0U, &response);
+            if (*call_result != PM3000_ACME_ADMIN_SUCCESS) return -1;
+            return pm3000_acme_parse_status(response.output, response.output_length, status) == 0 ? 0 : -2;
+        }
+    }
+    *call_result = PM3000_ACME_ADMIN_UNAVAILABLE;
+    return -1;
+}
+
+static int write_acme_setting(const struct pm3000_acme_setting *setting,
+                              const char *revision,
+                              const struct pm3000_acme_renewal_status *status) {
+    unsigned int index;
+    cgi_settings_headers(revision);
+    fprintf(stdout, "{\"enabled\":%s,\"directoryUrl\":", setting->enabled ? "true" : "false");
+    if (write_json_ascii_string(stdout, setting->directory_url) != 0) return 1;
+    fputs(",\"caFile\":", stdout);
+    if (write_json_ascii_string(stdout, setting->ca_file) != 0) return 1;
+    fputs(",\"dnsNames\":[", stdout);
+    for (index = 0U; index < setting->dns_name_count; ++index) {
+        if (index != 0U) fputc(',', stdout);
+        if (write_json_ascii_string(stdout, setting->dns_names[index]) != 0) return 1;
+    }
+    fputs("],\"revision\":", stdout);
+    if (write_json_ascii_string(stdout, revision) != 0) return 1;
+    fputs(",\"renewal\":{\"state\":", stdout);
+    if (write_json_ascii_string(stdout, status->state) != 0) return 1;
+    if (status->has_diagnostic) {
+        fputs(",\"phase\":", stdout);
+        if (write_json_ascii_string(stdout, status->phase) != 0) return 1;
+        fputs(",\"reason\":", stdout);
+        if (write_json_ascii_string(stdout, status->reason) != 0) return 1;
+    }
+    fputs("}}\n", stdout);
+    return ferror(stdout) ? 1 : 0;
+}
+
+static int run_acme_setting_route(const char *method, const char *path,
+                                  const pm3000_session *session) {
+    const char *helper = acme_admin_helper_path();
+    enum pm3000_acme_admin_result call_result = PM3000_ACME_ADMIN_UNAVAILABLE;
+    if (strcmp(path, "/api/v1/settings/acme/renew") == 0) {
+        struct pm3000_acme_admin_response response;
+        const char *content_length;
+        const char *content_encoding;
+        if (strcmp(method, "POST") != 0)
+            return cgi_error(405U, "Method Not Allowed", "method_not_allowed",
+                             "Method not allowed.");
+        if (!pm3000_session_csrf_matches(session, getenv("HTTP_X_CSRF_TOKEN")))
+            return cgi_error(403U, "Forbidden", "csrf_rejected",
+                             "CSRF token rejected.");
+        content_length = getenv("CONTENT_LENGTH");
+        content_encoding = getenv("HTTP_CONTENT_ENCODING");
+        if ((content_length != NULL && content_length[0] != '\0' &&
+             strcmp(content_length, "0") != 0) ||
+            (content_encoding != NULL && content_encoding[0] != '\0'))
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "The renewal request must not contain a body.");
+        call_result = pm3000_acme_admin_call(
+            helper, PM3000_ACME_ADMIN_RENEW_ASYNC, NULL, NULL, 0U, &response);
+        if (call_result == PM3000_ACME_ADMIN_SUCCESS) {
+            if (response.output_length != 0U)
+                return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+            cgi_headers(202U, "Accepted");
+            return ferror(stdout) ? 1 : 0;
+        }
+        if (call_result == PM3000_ACME_ADMIN_BUSY)
+            return cgi_error(409U, "Conflict", "renewal_in_progress",
+                             "An ACME renewal is already in progress.");
+        if (call_result == PM3000_ACME_ADMIN_STARTUP_FAILED)
+            return cgi_error(503U, "Service Unavailable", "renewal_startup_failed",
+                             "The ACME renewal did not start.");
+        return acme_backend_error(call_result, 1);
+    }
+    if (strcmp(path, "/api/v1/settings/acme") == 0 && strcmp(method, "GET") == 0) {
+        struct pm3000_acme_setting setting;
+        char revision[67];
+        struct pm3000_acme_renewal_status status;
+        int result = acme_read_snapshot(helper, &setting, revision, &status, &call_result);
+        if (result == -3) {
+            int ca_installed = 0;
+            result = acme_read_bootstrap(helper, &ca_installed, &call_result);
+            if (result == -2)
+                return acme_backend_error(PM3000_ACME_ADMIN_PROTOCOL_ERROR, 0);
+            if (result != 0) return acme_backend_error(call_result, 0);
+            cgi_headers(200U, "OK");
+            fprintf(stdout,
+                    "{\"configured\":false,\"caInstalled\":%s,"
+                    "\"renewal\":{\"state\":\"never_run\"}}\n",
+                    ca_installed ? "true" : "false");
+            return ferror(stdout) ? 1 : 0;
+        }
+        if (result == -2) return acme_backend_error(PM3000_ACME_ADMIN_PROTOCOL_ERROR, 0);
+        if (result != 0) return acme_backend_error(call_result, 0);
+        return write_acme_setting(&setting, revision, &status);
+    }
+    if ((strcmp(path, "/api/v1/settings/acme") == 0 && strcmp(method, "PUT") != 0) ||
+        (strcmp(path, "/api/v1/settings/acme/ca") == 0 && strcmp(method, "PUT") != 0))
+        return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    if (!pm3000_session_csrf_matches(session, getenv("HTTP_X_CSRF_TOKEN")))
+        return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+    {
+        const char *if_match = getenv("HTTP_IF_MATCH");
+        const char *if_none_match = getenv("HTTP_IF_NONE_MATCH");
+        int creating = if_none_match != NULL && if_none_match[0] != '\0';
+        if (creating && if_match != NULL && if_match[0] != '\0')
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "If-Match and If-None-Match cannot be combined.");
+        if (creating && strcmp(if_none_match, "*") != 0)
+            return cgi_error(400U, "Bad Request", "bad_request",
+                             "If-None-Match must be * for first-run creation.");
+        if (!creating && (if_match == NULL || if_match[0] == '\0'))
+            return cgi_error(428U, "Precondition Required", "precondition_required",
+                             "A strong If-Match revision or If-None-Match: * is required.");
+        if (!creating && !pm3000_acme_valid_etag(if_match))
+            return cgi_error(400U, "Bad Request", "bad_request", "If-Match is invalid.");
+        if (strcmp(path, "/api/v1/settings/acme") == 0) {
+            unsigned char body[8193], serialized[8192];
+            size_t body_length = 0U, serialized_length = 0U;
+            struct pm3000_acme_setting desired, current, confirmed;
+            struct pm3000_acme_admin_response response;
+            int body_result = read_json_body(body, 8192U, &body_length);
+            int result;
+            if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                                                     "Content-Type must be application/json without content encoding.");
+            if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                                                     "The request body is too large.");
+            if (body_result != 0 || pm3000_acme_parse_api_replacement(body, body_length, &desired) != 0)
+                return cgi_error(400U, "Bad Request", "bad_request", "The complete ACME setting is invalid.");
+            if (creating) {
+                strcpy(desired.ca_file,
+                       "/mnt/hdUser/pm3000-revive/acme/trust/managed-ca.pem");
+            } else {
+                result = acme_read_config(helper, &current, &call_result);
+                if (result == -2) return acme_backend_error(PM3000_ACME_ADMIN_PROTOCOL_ERROR, 0);
+                if (result != 0) return acme_backend_error(call_result, 0);
+                strcpy(desired.ca_file, current.ca_file);
+            }
+            if (pm3000_acme_serialize_cli_config(&desired, serialized, sizeof(serialized), &serialized_length) != 0)
+                return cgi_error(400U, "Bad Request", "bad_request", "The complete ACME setting is invalid.");
+            call_result = pm3000_acme_admin_call(
+                helper, creating ? PM3000_ACME_ADMIN_CONFIG_CREATE
+                                 : PM3000_ACME_ADMIN_CONFIG_REPLACE,
+                creating ? NULL : if_match, serialized, serialized_length,
+                &response);
+            if (call_result == PM3000_ACME_ADMIN_CHILD_FAILED && response.child_status == 5U)
+                return cgi_error(412U, "Precondition Failed", "revision_changed",
+                                 "The setting changed; reload it before saving.");
+            if (call_result == PM3000_ACME_ADMIN_CHILD_FAILED &&
+                (response.child_status == 1U || response.child_status == 2U))
+                return cgi_error(400U, "Bad Request", "bad_request", "The ACME change was rejected.");
+            if (call_result != PM3000_ACME_ADMIN_SUCCESS) return acme_backend_error(call_result, 1);
+            if (response.output_length != 0U) return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+            result = acme_read_config(helper, &confirmed, &call_result);
+            if (result == -2) return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+            if (result != 0 || !pm3000_acme_setting_matches(&desired, &confirmed, 1))
+                return acme_backend_error(result != 0 ? call_result : PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+        } else {
+            unsigned char *body = malloc(PM3000_ACME_ADMIN_CA_LIMIT);
+            size_t body_length = 0U;
+            struct pm3000_acme_admin_response response;
+            struct pm3000_acme_setting confirmed;
+            char revision[67];
+            int body_result, result;
+            if (body == NULL) return cgi_error(503U, "Service Unavailable", "backend_unavailable", "Memory unavailable.");
+            body_result = read_exact_body(body, PM3000_ACME_ADMIN_CA_LIMIT, &body_length, "application/x-pem-file");
+            if (body_result == 415) { free(body); return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type",
+                                                                   "Content-Type must be application/x-pem-file without content encoding."); }
+            if (body_result == 413) { free(body); return cgi_error(413U, "Payload Too Large", "payload_too_large",
+                                                                   "The request body is too large."); }
+            if (body_result != 0 || body_length == 0U) { free(body); return cgi_error(400U, "Bad Request", "bad_request",
+                                                                                       "A non-empty CA bundle is required."); }
+            call_result = pm3000_acme_admin_call(
+                helper, creating ? PM3000_ACME_ADMIN_CA_CREATE
+                                 : PM3000_ACME_ADMIN_CA_INSTALL,
+                creating ? NULL : if_match, body, body_length, &response);
+            memset(body, 0, body_length); free(body);
+            if (call_result == PM3000_ACME_ADMIN_CHILD_FAILED && response.child_status == 5U)
+                return cgi_error(412U, "Precondition Failed", "revision_changed",
+                                 "The setting changed; reload it before saving.");
+            if (call_result == PM3000_ACME_ADMIN_CHILD_FAILED &&
+                (response.child_status == 1U || response.child_status == 2U))
+                return cgi_error(400U, "Bad Request", "bad_request", "The ACME CA bundle was rejected.");
+            if (call_result != PM3000_ACME_ADMIN_SUCCESS) return acme_backend_error(call_result, 1);
+            if (response.output_length != 0U) return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+            if (creating) {
+                int ca_installed = 0;
+                result = acme_read_bootstrap(helper, &ca_installed, &call_result);
+                if (result == -2)
+                    return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+                if (result != 0 || !ca_installed)
+                    return acme_backend_error(
+                        result != 0 ? call_result
+                                    : PM3000_ACME_ADMIN_OUTCOME_UNKNOWN,
+                        1);
+            } else {
+                result = acme_read_revision(helper, revision, &call_result);
+                if (result == 0) result = acme_read_config(helper, &confirmed, &call_result);
+                if (result == -2) return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+                if (result != 0 || !pm3000_acme_is_managed_ca_file(confirmed.ca_file))
+                    return acme_backend_error(result != 0 ? call_result : PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+            }
+        }
+    }
+    cgi_headers(204U, "No Content");
+    return ferror(stdout) ? 1 : 0;
+}
+
 static int run_cgi(void) {
     const char *method = getenv("REQUEST_METHOD");
     const char *path = getenv("PATH_INFO");
@@ -1189,6 +1504,23 @@ static int run_cgi(void) {
                              "The password change was not confirmed.");
         cgi_headers(204U, "No Content");
         return ferror(stdout) ? 1 : 0;
+    }
+    if (method != NULL && path != NULL &&
+        (strcmp(path, "/api/v1/settings/acme") == 0 ||
+         strcmp(path, "/api/v1/settings/acme/ca") == 0 ||
+         strcmp(path, "/api/v1/settings/acme/renew") == 0)) {
+        if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Bearer authentication is not accepted for ACME administration.");
+        if (load_request_session(
+                configured_path("PM3000_SESSION_DIR", "/tmp/pm3000-modern-sessions"),
+                1, &gui_session) != 0)
+            return cgi_error(401U, "Unauthorized", "unauthorized",
+                             "Session authentication required.");
+        if (!gui_session.can_manage_acme)
+            return cgi_error(403U, "Forbidden", "forbidden",
+                             "ACME administration is not permitted.");
+        return run_acme_setting_route(method, path, &gui_session);
     }
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/settings/help-language") == 0 ||

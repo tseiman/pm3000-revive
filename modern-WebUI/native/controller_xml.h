@@ -12,7 +12,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           int *can_manage, int *can_help_language,
                           int *can_data_buffering,
                           int *can_appliance_logging,
-                          int *can_time_zone);
+                          int *can_time_zone,
+                          int *can_manage_acme);
 int pm3000_xml_topology_controls(const unsigned char *xml, size_t length,
                                  int *can_control);
 int pm3000_xml_confirm(const unsigned char *xml, size_t length,

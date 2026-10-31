@@ -11,6 +11,7 @@ geteuid
 getpid
 getsockopt
 memcmp
+memcpy
 memset
 open
 poll

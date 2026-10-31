@@ -64,7 +64,10 @@ int main(int argc, char **argv)
         strstr((const char *)result.certificate_pem,
                "BEGIN CERTIFICATE") == NULL ||
         lstat(challenge_path, &(struct stat){0}) == 0) {
-        fprintf(stderr, "network.client.status=%d\n", status);
+        fprintf(stderr, "network.client.status=%d phase=%s reason=%s\n",
+                status,
+                pm3000_acme_failure_phase_name(result.failure_phase),
+                pm3000_acme_failure_reason_name(result.failure_reason));
         return 1;
     }
     puts("network.client.complete=yes");

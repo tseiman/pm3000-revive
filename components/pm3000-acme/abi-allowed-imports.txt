@@ -82,6 +82,7 @@ getsockopt
 i2d_PublicKey
 i2d_X509_REQ
 memcmp
+memcpy
 memset
 open
 poll

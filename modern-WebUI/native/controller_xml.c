@@ -120,6 +120,7 @@ struct document {
     unsigned int data_buffering_capability;
     unsigned int appliance_logging_capability;
     unsigned int time_zone_capability;
+    unsigned int acme_admin_capability;
     char table_id[XML_MAX_NAME + 1U];
     char current_table_id[XML_MAX_NAME + 1U];
     unsigned int table_count;
@@ -652,6 +653,10 @@ static int start_element(struct document *document, int *self_closing) {
             strcmp(access_path, "configuration.appliance.language") == 0 &&
             strcmp(access_rights, "w") == 0)
             document->help_language_capability = 1U;
+        if (strcmp(path, "units.applianceSettings.security") == 0 &&
+            strcmp(access_path, "configuration.security.profile") == 0 &&
+            strcmp(access_rights, "w") == 0)
+            document->acme_admin_capability = 1U;
         if (strcmp(path, "units.applianceSettings.date_and_time.time_zone") == 0) {
             size_t ancestor;
             for (ancestor = 0U; ancestor < document->depth; ++ancestor) {
@@ -851,7 +856,8 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
                           int *can_manage, int *can_help_language,
                           int *can_data_buffering,
                           int *can_appliance_logging,
-                          int *can_time_zone) {
+                          int *can_time_zone,
+                          int *can_manage_acme) {
     struct document document;
     unsigned int index, candidate;
     if (allowed_count > 64U || parse_document(xml, length, &document) != 0 ||
@@ -873,6 +879,7 @@ int pm3000_xml_navigation(const unsigned char *xml, size_t length,
     *can_data_buffering = document.data_buffering_capability == 1U;
     *can_appliance_logging = document.appliance_logging_capability == 1U;
     *can_time_zone = document.time_zone_capability == 1U;
+    *can_manage_acme = document.acme_admin_capability == 1U;
     return 0;
 }
 

@@ -18,6 +18,7 @@ PROFILES = {
     "modern-webui": (
         "mnt/hdUser/pm3000-revive/webui",
         "etc/apache2/conf.d/pm3000-revive.conf",
+        "etc/apache2/conf.d/listen.conf",
     ),
     "apache": ("etc/apache2",),
 }

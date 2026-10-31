@@ -1205,6 +1205,165 @@
         "x-conditional-replacement": "Inactive descendants are omitted from the firmware save and preserved from the fresh GET."
       }
     },
+    "/api/v1/settings/acme": {
+      "get": {
+        "operationId": "getAcmeSetting",
+        "summary": "Read non-secret ACME configuration and renewal status",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-capability": "acme-administration",
+        "x-fixed-privileged-broker": "pm3000-acme-admin",
+        "x-cli-equivalent": "pm3000-acme config show",
+        "responses": {
+          "200": {
+            "description": "Current non-secret ACME configuration, renewal status, and strong revision.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" },
+              "ETag": { "$ref": "#/components/headers/StrongETag" }
+            },
+            "content": { "application/json": { "schema": { "oneOf": [
+              { "$ref": "#/components/schemas/AcmeSetting" },
+              { "$ref": "#/components/schemas/AcmeBootstrapState" }
+            ] } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+        }
+      },
+      "put": {
+        "operationId": "replaceAcmeSetting",
+        "summary": "Replace the complete non-secret ACME configuration after a revision check",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-capability": "acme-administration",
+        "x-fixed-privileged-broker": "pm3000-acme-admin",
+        "x-cli-equivalent": "pm3000-acme config replace --stdin --if-match ETAG",
+        "x-cli-create-equivalent": "pm3000-acme config replace --stdin --if-none-match '*'",
+        "x-csrf-required": true,
+        "x-full-replacement": true,
+        "x-max-body-bytes": 8192,
+        "x-ca-file-policy": "preserve-current-local-or-managed-path; first-run creation uses the fixed managed path after CA upload",
+        "x-success-confirmation": "atomic-write-and-exact-read-back",
+        "parameters": [{
+          "name": "If-Match", "in": "header", "required": false,
+          "description": "Strong revision returned in the latest successful GET response body and ETag header.",
+          "schema": { "$ref": "#/components/schemas/StrongRevision" }
+        }, {
+          "name": "If-None-Match", "in": "header", "required": false,
+          "description": "Use * only to create the first configuration after the managed CA upload. Mutually exclusive with If-Match.",
+          "schema": { "type": "string", "enum": ["*"] }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AcmeReplacement" } } }
+        },
+        "responses": {
+          "204": {
+            "description": "The exact validated configuration was committed and read back.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "412": { "$ref": "#/components/responses/RevisionChanged" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/SettingWriteUnconfirmed" }
+        }
+      }
+    },
+    "/api/v1/settings/acme/ca": {
+      "put": {
+        "operationId": "uploadAcmeCaBundle",
+        "summary": "Validate and install a managed ACME CA certificate bundle",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-capability": "acme-administration",
+        "x-fixed-privileged-broker": "pm3000-acme-admin",
+        "x-cli-equivalent": "pm3000-acme ca install --stdin --if-match ETAG",
+        "x-cli-create-equivalent": "pm3000-acme ca install --stdin --if-none-match '*'",
+        "x-csrf-required": true,
+        "x-max-body-bytes": 65536,
+        "x-content-type": "application/x-pem-file",
+        "x-pem-policy": "certificate-bundle-only-no-private-keys",
+        "x-success-confirmation": "first-run: managed CA exact read-back while config remains absent; configured: managed CA and config exact read-back",
+        "parameters": [{
+          "name": "If-Match", "in": "header", "required": false,
+          "description": "Strong revision returned in the latest successful ACME settings GET.",
+          "schema": { "$ref": "#/components/schemas/StrongRevision" }
+        }, {
+          "name": "If-None-Match", "in": "header", "required": false,
+          "description": "Use * only to create the managed CA in an empty ACME state. Mutually exclusive with If-Match.",
+          "schema": { "type": "string", "enum": ["*"] }
+        }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-pem-file": {
+              "schema": { "type": "string", "format": "binary", "minLength": 1, "maxLength": 65536 }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The CA bundle was validated and durably published before the configuration was switched to it and read back.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "412": { "$ref": "#/components/responses/RevisionChanged" },
+          "413": { "$ref": "#/components/responses/PayloadTooLarge" },
+          "415": { "$ref": "#/components/responses/UnsupportedMediaType" },
+          "428": { "$ref": "#/components/responses/PreconditionRequired" },
+          "502": { "$ref": "#/components/responses/BackendProtocolError" },
+          "503": { "$ref": "#/components/responses/SettingWriteUnconfirmed" }
+        }
+      }
+    },
+    "/api/v1/settings/acme/renew": {
+      "post": {
+        "operationId": "renewAcmeCertificate",
+        "summary": "Request one fixed asynchronous ACME renewal",
+        "security": [{ "cookieAuth": [] }],
+        "x-bearer-rejected": true,
+        "x-required-capability": "acme-administration",
+        "x-fixed-privileged-broker": "pm3000-acme-admin",
+        "x-cli-equivalent": "pm3000-acme renew --foreground",
+        "x-csrf-required": true,
+        "x-max-body-bytes": 0,
+        "x-startup-acceptance": "lock-and-durable-running-status",
+        "responses": {
+          "202": {
+            "description": "The fixed renewal child acquired the renewal lock and durably published running status; completion is reported through renewal status.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+              "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "405": { "$ref": "#/components/responses/MethodNotAllowed" },
+          "409": { "$ref": "#/components/responses/RenewalInProgress" },
+          "503": { "$ref": "#/components/responses/ActionUnavailable" }
+        }
+      }
+    },
     "/api/v1/settings/time-zone": {
       "get": {
         "operationId": "getTimeZoneSetting",
@@ -1797,11 +1956,12 @@
           "csrfToken": { "type": "string", "minLength": 43, "maxLength": 43, "pattern": "^[A-Za-z0-9_-]{43}$" },
           "navigation": {
             "type": "object", "additionalProperties": false,
-            "required": ["paths", "canManageTokens", "canControlPower"],
+            "required": ["paths", "canManageTokens", "canControlPower", "canManageAcme"],
             "properties": {
               "paths": { "type": "array", "maxItems": 58, "uniqueItems": true, "items": { "type": "string", "pattern": "^units(?:\\.[A-Za-z0-9_]+)*$" } },
               "canManageTokens": { "type": "boolean" },
-              "canControlPower": { "type": "boolean" }
+              "canControlPower": { "type": "boolean" },
+              "canManageAcme": { "type": "boolean" }
             }
           }
         }
@@ -2189,6 +2349,96 @@
             "maxLength": 99,
             "pattern": "^[A-Za-z0-9._:-]+$"
           }
+        }
+      },
+      "AcmeRenewalStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "maxProperties": 3,
+        "required": ["state"],
+        "dependentRequired": {
+          "phase": ["reason"],
+          "reason": ["phase"]
+        },
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": ["never_run", "starting", "running", "succeeded", "failed", "durability_uncertain", "unknown"]
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["directory", "nonce", "account", "order", "authorization", "challenge_publication", "challenge_acceptance", "challenge_poll", "finalize", "certificate_download", "certificate_validation", "certificate_publication"]
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["tls", "http", "parse", "io", "rejected", "timeout", "validation", "publication"]
+          }
+        },
+        "if": { "required": ["phase"] },
+        "then": { "properties": { "state": { "const": "failed" } } },
+        "description": "Closed safe diagnostics. Legacy state-only status remains valid; phase and reason appear together only for newly recorded failures."
+      },
+      "AcmeReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 3,
+        "maxProperties": 3,
+        "required": ["enabled", "directoryUrl", "dnsNames"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "directoryUrl": {
+            "type": "string", "minLength": 1, "maxLength": 1291,
+            "pattern": "^https://[^\\u0000-\\u0020\\u007F]+$", "x-max-utf8-bytes": 1291
+          },
+          "dnsNames": {
+            "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+            "items": {
+              "type": "string", "minLength": 1, "maxLength": 253,
+              "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$", "x-max-utf8-bytes": 253
+            }
+          }
+        }
+      },
+      "AcmeBootstrapState": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 3,
+        "maxProperties": 3,
+        "required": ["configured", "caInstalled", "renewal"],
+        "properties": {
+          "configured": { "type": "boolean", "const": false },
+          "caInstalled": { "type": "boolean" },
+          "renewal": { "$ref": "#/components/schemas/AcmeRenewalStatus", "readOnly": true }
+        },
+        "description": "First-run projection. Directory URL and DNS names are intentionally absent until supplied by the operator."
+      },
+      "AcmeSetting": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 6,
+        "maxProperties": 6,
+        "required": ["enabled", "directoryUrl", "caFile", "dnsNames", "revision", "renewal"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "directoryUrl": {
+            "type": "string", "minLength": 1, "maxLength": 1291,
+            "pattern": "^https://[^\\u0000-\\u0020\\u007F]+$", "x-max-utf8-bytes": 1291
+          },
+          "caFile": {
+            "type": "string", "minLength": 1, "maxLength": 1024,
+            "pattern": "^/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$", "x-max-utf8-bytes": 1024,
+            "readOnly": true, "x-source": "local-or-managed"
+          },
+          "dnsNames": {
+            "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+            "items": {
+              "type": "string", "minLength": 1, "maxLength": 253,
+              "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$", "x-max-utf8-bytes": 253
+            }
+          },
+          "revision": { "$ref": "#/components/schemas/StrongRevision", "readOnly": true },
+          "renewal": { "$ref": "#/components/schemas/AcmeRenewalStatus", "readOnly": true }
         }
       },
       "StrongRevision": {
@@ -3174,7 +3424,21 @@
         }
       },
       "ActionUnavailable": {
-        "description": "The controller action could not be confirmed. `backend_unavailable` and `controller_service_user_unavailable` mean dispatch did not complete. `action_outcome_unknown` means the action may have been dispatched and MUST NOT be retried automatically.",
+        "description": "The fixed action could not be accepted. `action_outcome_unknown` means it may have been accepted and MUST NOT be retried automatically.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        },
+        "headers": {
+          "Cache-Control": { "$ref": "#/components/headers/CacheControlNoStore" },
+          "X-Content-Type-Options": { "$ref": "#/components/headers/ContentTypeOptionsNoSniff" }
+        }
+      },
+      "RenewalInProgress": {
+        "description": "A renewal already holds the fixed nonblocking renewal lock.",
         "content": {
           "application/json": {
             "schema": {

@@ -124,6 +124,33 @@ jobs:
             exit 1
           }
 
+      - name: Verify packaged ACME broker ABI
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          releases=(modern-WebUI/dist/pm3000-release-*.tar)
+          [ "${#releases[@]}" -eq 1 ] || {
+            echo "Expected exactly one release TAR" >&2
+            exit 1
+          }
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          tar -xf "${releases[0]}" -C "$work" bin/pm3000-acme-admin
+          broker=$work/bin/pm3000-acme-admin
+          file "$broker" | grep -F 'ELF 32-bit MSB executable, PowerPC'
+          file "$broker" | grep -F 'statically linked' || {
+            echo "Packaged ACME broker is not a static executable" >&2
+            exit 1
+          }
+          if readelf -l "$broker" | grep -q 'Requesting program interpreter:'; then
+            echo "Packaged ACME broker unexpectedly has an interpreter" >&2
+            exit 1
+          fi
+          if readelf -d "$broker" 2>&1 | grep -q '(NEEDED)'; then
+            echo "Packaged ACME broker unexpectedly has DT_NEEDED entries" >&2
+            exit 1
+          fi
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

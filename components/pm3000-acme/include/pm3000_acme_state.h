@@ -25,6 +25,8 @@ int pm3000_acme_state_prepare(const char *root,
                               struct pm3000_acme_state *state);
 int pm3000_acme_state_open(const char *root,
                            struct pm3000_acme_state *state);
+int pm3000_acme_state_open_root(const char *root,
+                                struct pm3000_acme_state *state);
 int pm3000_acme_state_prepare_locked(struct pm3000_acme_state *state);
 void pm3000_acme_state_close(struct pm3000_acme_state *state);
 int pm3000_acme_state_store_account_url(

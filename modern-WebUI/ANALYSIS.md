@@ -78,7 +78,7 @@ Largest components:
 - XSL stylesheet: 104,397 bytes;
 - images and styles: approximately 205 KiB.
 
-A dependency-free modern UI, inline or tightly bundled SVG icons, the native CGI adapter, fixed-purpose helpers, and the ACME client currently total about 500 KiB of regular release payload. The enforced ceiling is 544 KiB and must be measured from every release archive and installed tree. The current operator-reported storage snapshot is recorded in [`docs/DEVICE-STORAGE.md`](docs/DEVICE-STORAGE.md); deployment re-measures available space and requires additional transactional headroom.
+A dependency-free modern UI, inline or tightly bundled SVG icons, the native CGI adapter, fixed-purpose helpers, and the expanded ACME client currently total about 582 KiB of regular release payload. The enforced ceiling is 640 KiB and must be measured from every release archive and installed tree. The current operator-reported storage snapshot is recorded in [`docs/DEVICE-STORAGE.md`](docs/DEVICE-STORAGE.md); deployment re-measures available space and requires additional transactional headroom.
 
 ## Recommended target architecture
 

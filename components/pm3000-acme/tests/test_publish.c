@@ -27,6 +27,7 @@ int main(void)
 {
     char root[] = "build/publish-test-XXXXXX";
     char candidate_path[256];
+    char active_path[256];
     unsigned char pem[32768U];
     unsigned char bad_pem[32768U];
     unsigned char stored[32768U];
@@ -40,6 +41,8 @@ int main(void)
     if (mkdtemp(root) == NULL || chmod(root, 0700) != 0 ||
         snprintf(candidate_path, sizeof(candidate_path),
                  "%s/certificate.candidate", root) < 0 ||
+        snprintf(active_path, sizeof(active_path),
+                 "%s/certificate.pem", root) < 0 ||
         read_file("tests/fixtures/tls/issued.pem", pem, sizeof(pem),
                   &pem_length) != 0 ||
         pm3000_acme_crypto_key_load("tests/fixtures/tls/server-key.pem",
@@ -65,7 +68,9 @@ int main(void)
         pm3000_acme_store_read(root, "certificate.pem", stored,
                                sizeof(stored), &stored_length, 0) !=
             PM3000_ACME_STORE_OK || stored_length != pem_length ||
-        memcmp(stored, pem, pem_length) != 0) {
+        memcmp(stored, pem, pem_length) != 0 ||
+        lstat(active_path, &details) != 0 ||
+        (details.st_mode & 0777) != 0600) {
         fprintf(stderr, "valid certificate publication failed\n");
         return 1;
     }

@@ -65,6 +65,56 @@ static int verify_group_at(int directory_fd, const char *name, gid_t group) {
     return result;
 }
 
+static int verify_runtime_tree(int directory_fd, mode_t directory_mode,
+                               mode_t file_mode, int allow_subdirectories) {
+    DIR *directory;
+    struct dirent *entry;
+    struct stat root;
+    int duplicate;
+    int result = 0;
+    if (fstat(directory_fd, &root) != 0 || !S_ISDIR(root.st_mode) ||
+            root.st_uid != geteuid() || (root.st_mode & 07777) != directory_mode)
+        return -1;
+    duplicate = dup(directory_fd);
+    if (duplicate < 0 || (directory = fdopendir(duplicate)) == NULL) {
+        if (duplicate >= 0) close(duplicate);
+        return -1;
+    }
+    for (;;) {
+        int child_fd;
+        struct stat child;
+        errno = 0;
+        entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0) result = -1;
+            break;
+        }
+        if (result != 0) break;
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        child_fd = openat(directory_fd, entry->d_name,
+                          O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        if (child_fd < 0 || fstat(child_fd, &child) != 0 ||
+                child.st_uid != geteuid()) {
+            if (child_fd >= 0) close(child_fd);
+            result = -1;
+            break;
+        }
+        if (S_ISREG(child.st_mode)) {
+            if (child.st_nlink != 1 || (child.st_mode & 07777) != file_mode)
+                result = -1;
+        } else if (S_ISDIR(child.st_mode) && allow_subdirectories) {
+            if (verify_runtime_tree(child_fd, directory_mode, file_mode, 1) != 0)
+                result = -1;
+        } else {
+            result = -1;
+        }
+        if (close(child_fd) != 0) result = -1;
+    }
+    if (closedir(directory) != 0) result = -1;
+    return result;
+}
+
 static int verify_subdirectory(int root_fd, const char *name,
                                const char *const *files, const mode_t *modes, size_t count) {
     int directory_fd = openat(root_fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -90,13 +140,13 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
     static const char *const root_names[] = {
         "RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS", "apache", "bin", "web"
     };
-    static const char *const apache_files[] = {"pm3000-revive.conf"};
-    static const mode_t apache_modes[] = {0644};
+    static const char *const apache_files[] = {"listen.conf", "pm3000-revive.conf"};
+    static const mode_t apache_modes[] = {0644, 0644};
     static const char *const bin_files[] = {
-        "pm3000-acme", "pm3000-atomic-publish",
+        "pm3000-acme", "pm3000-acme-admin", "pm3000-atomic-publish",
         "pm3000-gsp-session-helper", "pm3000-rest"
     };
-    static const mode_t bin_modes[] = {0755, 0755, 04750, 0755};
+    static const mode_t bin_modes[] = {0755, 04750, 0755, 04750, 0755};
     static const char *const web_files[] = {"app.js", "index.html", "styles.css"};
     static const mode_t web_modes[] = {0644, 0644, 0644};
     int root_fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -109,13 +159,14 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
             && verify_entries(root_fd, root_names, 5) == 0
             && verify_regular_at(root_fd, "RELEASE_MANIFEST.json", 0600) == 0
             && verify_regular_at(root_fd, "RELEASE_SHA256SUMS", 0600) == 0
-            && verify_subdirectory(root_fd, "apache", apache_files, apache_modes, 1) == 0
-            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 4) == 0
+            && verify_subdirectory(root_fd, "apache", apache_files, apache_modes, 2) == 0
+            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 5) == 0
             && verify_subdirectory(root_fd, "web", web_files, web_modes, 3) == 0) {
         bin_fd = openat(root_fd, "bin", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
         if (bin_fd >= 0 && (!verify_helper_group ||
-                verify_group_at(bin_fd, "pm3000-gsp-session-helper",
-                                expected_helper_group) == 0))
+                (verify_group_at(bin_fd, "pm3000-acme-admin", expected_helper_group) == 0 &&
+                 verify_group_at(bin_fd, "pm3000-gsp-session-helper",
+                                 expected_helper_group) == 0)))
             result = 0;
     }
     if (bin_fd >= 0 && close(bin_fd) != 0) result = -1;
@@ -135,6 +186,58 @@ int main(int argc, char **argv) {
     int directory_fd;
     struct stat source;
     int expected_type;
+
+    if (argc == 5 && strcmp(argv[1], "--verify-apache-listener") == 0) {
+        unsigned long parsed = 0UL;
+        uid_t expected_owner;
+        mode_t expected_mode;
+        int descriptor;
+        if (!parse_id(argv[3], (unsigned long)(uid_t)-1, &parsed)) {
+            fprintf(stderr, "invalid expected listener owner\n");
+            return 2;
+        }
+        if (strcmp(argv[4], "vendor") == 0)
+            expected_mode = 0755;
+        else if (strcmp(argv[4], "managed") == 0)
+            expected_mode = 0644;
+        else {
+            fprintf(stderr, "invalid listener state\n");
+            return 2;
+        }
+        expected_owner = (uid_t)parsed;
+        descriptor = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        if (descriptor < 0) {
+            perror("open Apache listener");
+            return 1;
+        }
+        if (fstat(descriptor, &source) != 0 || !S_ISREG(source.st_mode)
+                || source.st_nlink != 1 || source.st_uid != expected_owner
+                || (source.st_mode & 07777) != expected_mode) {
+            fprintf(stderr, "Apache listener metadata does not match selected state\n");
+            close(descriptor);
+            return 1;
+        }
+        return close(descriptor) == 0 ? 0 : 1;
+    }
+
+    if (argc == 3 && (strcmp(argv[1], "--verify-private-tree") == 0 ||
+                      strcmp(argv[1], "--verify-public-directory") == 0)) {
+        int descriptor = open(argv[2], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        int is_private = strcmp(argv[1], "--verify-private-tree") == 0;
+        int result;
+        if (descriptor < 0) {
+            perror("open runtime directory");
+            return 1;
+        }
+        result = verify_runtime_tree(descriptor, is_private ? 0700 : 0755,
+                                     is_private ? 0600 : 0644, is_private);
+        if (close(descriptor) != 0) result = -1;
+        if (result != 0) {
+            fprintf(stderr, "runtime directory metadata verification failed\n");
+            return 1;
+        }
+        return 0;
+    }
 
     if (argc == 4 &&
             (strcmp(argv[1], "--verify-private-directory-owner") == 0 ||
@@ -278,7 +381,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc != 5 || !safe_name(argv[2]) || !safe_name(argv[3])) {
-        fprintf(stderr, "usage: pm3000-atomic-publish --verify-private-directory DIRECTORY | --set-private-regular-owner FILE UID GID | --verify-regular FILE | --verify-release DIRECTORY [HELPER_GID] | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
+        fprintf(stderr, "usage: pm3000-atomic-publish --verify-apache-listener FILE UID vendor|managed | --verify-private-tree DIRECTORY | --verify-public-directory DIRECTORY | --verify-private-directory DIRECTORY | --set-private-regular-owner FILE UID GID | --verify-regular FILE | --verify-release DIRECTORY [HELPER_GID] | DIRECTORY NEW_NAME DEST_NAME symlink|regular|directory\n");
         return 2;
     }
     if (strcmp(argv[4], "symlink") == 0) {

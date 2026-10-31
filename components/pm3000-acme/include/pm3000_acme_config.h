@@ -4,6 +4,7 @@
 #include "pm3000_acme_protocol.h"
 
 #define PM3000_ACME_CA_PATH_MAX 1024U
+#define PM3000_ACME_CONFIG_MAX_BYTES 8192U
 
 enum pm3000_acme_config_result {
     PM3000_ACME_CONFIG_OK = 0,
@@ -23,5 +24,9 @@ struct pm3000_acme_runtime_config {
 int pm3000_acme_config_parse(const unsigned char *json,
                              unsigned int json_length,
                              struct pm3000_acme_runtime_config *config);
+int pm3000_acme_config_serialize(
+    const struct pm3000_acme_runtime_config *config,
+    unsigned char *output, unsigned int output_capacity,
+    unsigned int *output_length);
 
 #endif

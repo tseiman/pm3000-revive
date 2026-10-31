@@ -29,7 +29,7 @@ int pm3000_acme_http_build_request(
     unsigned int body_length, char *output, unsigned int output_capacity,
     unsigned int *output_length);
 int pm3000_acme_http_parse_response(
-    const unsigned char *input, unsigned int input_length,
+    const char *method, const unsigned char *input, unsigned int input_length,
     const struct pm3000_acme_url *origin,
     struct pm3000_acme_http_response *response,
     unsigned char *body, unsigned int body_capacity);

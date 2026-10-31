@@ -2,18 +2,18 @@ CC ?= cc
 CFLAGS ?= -std=c99 -O2 -Wall -Wextra -Werror -pedantic
 CPPFLAGS ?= -Iinclude
 
-PRODUCT_SOURCES := src/main.c src/app.c src/config.c src/state.c src/store.c \
+PRODUCT_SOURCES := src/main.c src/app.c src/admin.c src/config.c src/state.c src/store.c \
 	src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
 	src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
 	src/jws.c src/crypto.c src/base64url.c src/stat_compat.c \
 	src/syscall_compat.c
 
-.PHONY: test clean fixtures host-product ppc-product ppc-release-product
+.PHONY: test target-abi-test clean fixtures host-product ppc-product ppc-release-product
 
 fixtures:
 	sh tests/generate-fixtures.sh
 
-test: fixtures build/test_url build/test_base64url build/test_json build/test_directory build/test_protocol build/test_crypto build/test_jws build/test_csr build/test_tls build/test_http build/test_challenge build/test_client build/test_network_client build/test_store build/test_certificate build/test_config build/test_state build/test_publish build/test_app
+test: fixtures build/test_url build/test_base64url build/test_json build/test_directory build/test_protocol build/test_crypto build/test_jws build/test_csr build/test_tls build/test_http build/test_challenge build/test_client build/test_network_client build/test_store build/test_certificate build/test_config build/test_state build/test_publish build/test_admin build/test_app
 	./build/test_url
 	./build/test_base64url
 	./build/test_json
@@ -33,8 +33,12 @@ test: fixtures build/test_url build/test_base64url build/test_json build/test_di
 	./build/test_config
 	./build/test_state
 	./build/test_publish
+	./build/test_admin
 	./build/test_app
 	python3 tests/test_link_stubs.py
+
+target-abi-test:
+	./tests/run_target_abi_test.sh
 
 build/test_url: tests/test_url.c src/url.c include/pm3000_acme_url.h
 	mkdir -p build
@@ -141,13 +145,21 @@ build/test_publish: tests/test_publish.c src/publish.c src/store.c \
 		tests/test_publish.c src/publish.c src/store.c src/certificate.c \
 		src/tls.c src/crypto.c src/base64url.c src/url.c src/stat_compat.c -lssl -lcrypto
 
-build/test_app: tests/test_app.c src/app.c src/config.c src/state.c src/store.c \
+build/test_admin: tests/test_admin.c src/admin.c src/config.c src/state.c \
+		src/store.c src/certificate.c src/tls.c src/json.c src/url.c src/crypto.c src/base64url.c \
+		src/stat_compat.c include/pm3000_acme_admin.h
+	mkdir -p build
+	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
+		tests/test_admin.c src/admin.c src/config.c src/state.c src/store.c \
+		src/certificate.c src/tls.c src/json.c src/url.c src/crypto.c src/base64url.c src/stat_compat.c -lssl -lcrypto
+
+build/test_app: tests/test_app.c src/app.c src/admin.c src/config.c src/state.c src/store.c \
 		src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
 		src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
 		src/jws.c src/crypto.c src/base64url.c src/stat_compat.c include/pm3000_acme_app.h
 	mkdir -p build
 	$(CC) $(CPPFLAGS) -Isrc $(CFLAGS) -DPM3000_OPENSSL3_HOST -o $@ \
-		tests/test_app.c src/app.c src/config.c src/state.c src/store.c \
+		tests/test_app.c src/app.c src/admin.c src/config.c src/state.c src/store.c \
 		src/publish.c src/certificate.c src/client.c src/transport.c src/tls.c \
 		src/http.c src/challenge.c src/protocol.c src/json.c src/url.c \
 		src/jws.c src/crypto.c src/base64url.c src/stat_compat.c -lssl -lcrypto

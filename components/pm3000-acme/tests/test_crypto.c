@@ -54,7 +54,21 @@ int main(void)
     char thumbprint[PM3000_ACME_THUMBPRINT_MAX];
     unsigned char pem[4096U];
     unsigned int pem_length = 0U;
+    unsigned char digest[PM3000_ACME_SHA256_BYTES];
+    static const unsigned char expected_digest[PM3000_ACME_SHA256_BYTES] = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+        0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+        0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad
+    };
     int failed = 0;
+
+    if (pm3000_acme_crypto_sha256((const unsigned char *)"abc", 3U,
+                                  digest) != PM3000_ACME_CRYPTO_OK ||
+        memcmp(digest, expected_digest, sizeof(digest)) != 0) {
+        fprintf(stderr, "SHA-256 bytes contract failed\n");
+        failed = 1;
+    }
 
     if (pm3000_acme_crypto_key_load("tests/fixtures/account-test-key.pem",
                                     &fixture) != PM3000_ACME_CRYPTO_OK ||

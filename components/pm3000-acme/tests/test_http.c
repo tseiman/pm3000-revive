@@ -5,14 +5,14 @@
 
 static int failures;
 
-static void expect_invalid(const char *wire,
+static void expect_invalid(const char *method, const char *wire,
                            const struct pm3000_acme_url *origin,
                            const char *message)
 {
     struct pm3000_acme_http_response response;
     unsigned char body[PM3000_ACME_HTTP_BODY_MAX + 1U];
     if (pm3000_acme_http_parse_response(
-            (const unsigned char *)wire, (unsigned int)strlen(wire), origin,
+            method, (const unsigned char *)wire, (unsigned int)strlen(wire), origin,
             &response, body, sizeof(body)) == PM3000_ACME_HTTP_OK) {
         fprintf(stderr, "%s\n", message);
         ++failures;
@@ -38,11 +38,16 @@ int main(void)
         "HTTP/1.1 200 OK\r\n"
         "Transfer-Encoding: chunked\r\n\r\n"
         "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
+    const char head_response[] =
+        "HTTP/1.1 200 OK\r\n"
+        "Replay-Nonce: bm9uY2U\r\n"
+        "Content-Length: 3\r\n"
+        "Connection: close\r\n\r\n";
 
     if (pm3000_acme_url_parse("https://acme.example.test/directory", &origin) !=
             PM3000_ACME_URL_OK ||
         pm3000_acme_http_parse_response(
-            (const unsigned char *)content_response,
+            "GET", (const unsigned char *)content_response,
             sizeof(content_response) - 1U, &origin, &response, body,
             sizeof(body)) != PM3000_ACME_HTTP_OK ||
         response.status_code != 201U ||
@@ -55,7 +60,7 @@ int main(void)
         ++failures;
     }
     if (pm3000_acme_http_parse_response(
-            (const unsigned char *)chunked_response,
+            "GET", (const unsigned char *)chunked_response,
             sizeof(chunked_response) - 1U, &origin, &response, body,
             sizeof(body)) != PM3000_ACME_HTTP_OK ||
         response.body_length != 9U || memcmp(body, "Wikipedia", 9U) != 0) {
@@ -63,19 +68,40 @@ int main(void)
         ++failures;
     }
 
-    expect_invalid("HTTP/1.1 200 OK\r\nReplay-Nonce: YQ\r\nReplay-Nonce: Yg\r\nContent-Length: 0\r\n\r\n",
+    if (pm3000_acme_http_parse_response(
+            "HEAD", (const unsigned char *)head_response,
+            sizeof(head_response) - 1U, &origin, &response, body,
+            sizeof(body)) != PM3000_ACME_HTTP_OK ||
+        response.status_code != 200U ||
+        strcmp(response.replay_nonce, "bm9uY2U") != 0 ||
+        response.body_length != 0U || body[0] != '\0') {
+        fprintf(stderr, "HEAD content-length metadata response failed\n");
+        ++failures;
+    }
+
+    expect_invalid("HEAD", "HTTP/1.1 200 OK\r\nReplay-Nonce: YQ\r\nContent-Length: 3\r\n\r\nabc",
+                   &origin, "unexpected HEAD body accepted");
+    expect_invalid("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\n",
+                   &origin, "duplicate HEAD content-length accepted");
+    expect_invalid("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n",
+                   &origin, "ambiguous HEAD framing accepted");
+    expect_invalid("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: three\r\n\r\n",
+                   &origin, "malformed HEAD content-length accepted");
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n",
+                   &origin, "non-HEAD length mismatch accepted");
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nReplay-Nonce: YQ\r\nReplay-Nonce: Yg\r\nContent-Length: 0\r\n\r\n",
                    &origin, "duplicate nonce accepted");
-    expect_invalid("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
                    &origin, "content-length plus chunked accepted");
-    expect_invalid("HTTP/1.1 200 OK\r\nLocation: https://evil.example/order/1\r\nContent-Length: 0\r\n\r\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nLocation: https://evil.example/order/1\r\nContent-Length: 0\r\n\r\n",
                    &origin, "cross-origin location accepted");
-    expect_invalid("HTTP/1.1 200 OK\r\nX-Test: one\r\n folded\r\nContent-Length: 0\r\n\r\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nX-Test: one\r\n folded\r\nContent-Length: 0\r\n\r\n",
                    &origin, "folded header accepted");
-    expect_invalid("HTTP/1.1 200 OK\nContent-Length: 0\n\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\nContent-Length: 0\n\n",
                    &origin, "bare LF accepted");
-    expect_invalid("HTTP/1.1 200 OK\r\nContent-Length: 65537\r\n\r\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nContent-Length: 65537\r\n\r\n",
                    &origin, "oversized body accepted");
-    expect_invalid("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
+    expect_invalid("GET", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
                    &origin, "unsupported transfer encoding accepted");
 
     if (pm3000_acme_http_build_request(

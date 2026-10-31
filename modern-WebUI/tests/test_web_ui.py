@@ -277,6 +277,56 @@ class WebUiTests(unittest.TestCase):
         for unsafe in ("innerHTML", "outerHTML", "insertAdjacentHTML"):
             self.assertNotIn(unsafe, self.javascript)
 
+    def test_acme_ui_is_capability_gated_localized_and_accessible(self) -> None:
+        self.assertIn('id="acme-view"', self.html)
+        self.assertIn('id="acme-form"', self.html)
+        self.assertIn('id="acme-ca-form"', self.html)
+        self.assertIn('id="acme-renew"', self.html)
+        self.assertRegex(self.html, r'id="save-acme"[^>]*disabled')
+        self.assertRegex(self.html, r'id="acme-ca-file"[^>]*disabled')
+        self.assertRegex(self.html, r'id="acme-renew"[^>]*disabled')
+        self.assertIn("canManageAcme", self.javascript)
+        self.assertIn('button.dataset.view = "acme"', self.javascript)
+        self.assertIn('state.session.navigation.canManageAcme', self.javascript)
+        self.assertIn("navigator.languages", self.javascript)
+        self.assertIn('document.documentElement.lang = locale', self.javascript)
+        self.assertIn('de: {', self.javascript)
+        self.assertIn('aria-live="polite"', self.html)
+
+    def test_acme_contract_is_bounded_and_keeps_ca_path_read_only(self) -> None:
+        self.assertIn('id="acme-ca-path"', self.html)
+        self.assertNotRegex(self.html, r'<input[^>]+id="acme-ca-path"')
+        self.assertRegex(self.html, r'id="acme-directory-url"[^>]+maxlength="1291"')
+        self.assertRegex(self.html, r'id="acme-dns-names"[^>]+maxlength="4063"')
+        self.assertIn("ACME_MAX_DNS_NAMES = 16", self.javascript)
+        self.assertIn("ACME_MAX_DNS_NAME_BYTES = 253", self.javascript)
+        self.assertIn("ACME_MAX_CA_BYTES = 65536", self.javascript)
+        self.assertIn('"application/x-pem-file"', self.javascript)
+        self.assertIn('{ "If-Match": state.acmeRevision }', self.javascript)
+        self.assertIn('body: JSON.stringify({ enabled:', self.javascript)
+        self.assertIn('directoryUrl:', self.javascript)
+        self.assertIn('dnsNames', self.javascript)
+        self.assertIn('{ "If-None-Match": "*"', self.javascript)
+        self.assertIn("payload.configured === false", self.javascript)
+
+    def test_acme_statuses_are_closed_and_unknown_values_fail_closed(self) -> None:
+        for status in ("never_run", "starting", "running", "succeeded", "failed", "durability_uncertain", "unknown"):
+            self.assertIn(f'"{status}"', self.javascript)
+        self.assertIn("ACME_RENEWAL_STATES", self.javascript)
+        self.assertIn('throw new Error(t("acme.invalidResponse"))', self.javascript)
+        self.assertNotIn("acmeRevision: localStorage", self.javascript)
+
+    def test_acme_runtime_state_machine_covers_write_upload_renewal_and_teardown(self) -> None:
+        for scenario in ("bootstrap", "save", "stale", "ca", "renew", "teardown", "german"):
+            with self.subTest(scenario=scenario):
+                result = subprocess.run(
+                    ["node", str(ROOT / "tests" / "ui_acme_state.js"), str(WEB / "app.js"), scenario],
+                    check=True, capture_output=True, text=True,
+                )
+                payload = json.loads(result.stdout)
+                self.assertEqual(scenario, payload["scenario"])
+                self.assertTrue(payload["passed"])
+
     def test_ui_exposes_rights_gated_password_change_without_browser_storage(self) -> None:
         self.assertIn('id="password-change-view"', self.html)
         self.assertIn('id="password-change-form"', self.html)

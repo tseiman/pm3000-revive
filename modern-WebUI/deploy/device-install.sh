@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/listen.conf|apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,7 +34,7 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 8 ]
+    [ "$_sum_count" -eq 10 ]
 }
 
 # BEGIN DISK PREFLIGHT TEST FUNCTIONS
@@ -121,8 +121,8 @@ extract_release_archive()
         echo "release archive extraction failed" >&2
         return 1
     fi
-    for extracted_member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-        bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+    for extracted_member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf \
+        bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
         web/app.js web/index.html web/styles.css; do
         [ -f "$_extract_root/$extracted_member" ] && [ ! -L "$_extract_root/$extracted_member" ] || {
             echo "release archive extraction incomplete: $extracted_member" >&2
@@ -167,12 +167,22 @@ release=$releases/$release_id
 tmp=$releases/.$release_id.stage6-tmp
 config_dir=/etc/apache2/conf.d
 config=$config_dir/pm3000-revive.conf
+listener=$config_dir/listen.conf
+vendor_listener_sha256=480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a6ab5835
+managed_listener_sha256=45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f
 work=/tmp/stage6-install-$$
 for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
     [ ! -L "$parent" ] || { echo "unsafe parent symlink: $parent" >&2; exit 1; }
 done
 [ ! -e "$tmp" ] && [ ! -L "$tmp" ] || { echo "transaction temporary exists" >&2; exit 1; }
 [ ! -L "$config" ] || { echo "unsafe Apache config symlink" >&2; exit 1; }
+[ -f "$listener" ] && [ ! -L "$listener" ] || { echo "unsafe Apache listen.conf" >&2; exit 1; }
+live_listener_sha256=$(sha256_file "$listener") || { echo "Apache listen.conf digest unavailable" >&2; exit 1; }
+case "$live_listener_sha256" in
+    "$vendor_listener_sha256") live_listener_state=vendor;;
+    "$managed_listener_sha256") live_listener_state=managed;;
+    *) echo "Apache listen.conf digest is not an approved source or managed target" >&2; exit 1;;
+esac
 if [ -e "$base/current" ] && [ ! -L "$base/current" ]; then
     echo "unsafe non-symlink current pointer" >&2
     exit 1
@@ -190,8 +200,10 @@ tar tf "$package_snapshot" >"$members"
 cat >"$expected_members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
+apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
+bin/pm3000-acme-admin
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -213,6 +225,7 @@ if [ -L "$base/current" ]; then
 fi
 old_config=absent
 if [ -f "$config" ]; then cp -p "$config" "$work/old-config"; old_config=file; fi
+cp -p "$listener" "$work/old-listen.conf"
 created_release=no
 committed=no
 publish_ambiguous=no
@@ -225,6 +238,8 @@ rollback_failed_install()
     else
         rm -f "$config"
     fi
+    cp -p "$work/old-listen.conf" "$config_dir/.listen.conf.stage6-tmp" || return 1
+    "$atomic_helper" "$config_dir" .listen.conf.stage6-tmp listen.conf regular || return 1
     if [ "$old_current" = absent ]; then
         rm -f "$base/current"
     else
@@ -265,6 +280,9 @@ atomic_helper=$work/pm3000-atomic-publish
 cp "$packaged_helper" "$atomic_helper"
 chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
+"$atomic_helper" --verify-apache-listener "$listener" 0 "$live_listener_state" || {
+    echo "unsafe live Apache listen.conf owner or mode" >&2; exit 1;
+}
 daemon_uid=$(id -u daemon)
 case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
 daemon_gid=$(id -g daemon)
@@ -301,6 +319,24 @@ initialize_private_regular()
     fi
     verify_private_regular "$_private_path"
 }
+initialize_acme_directory()
+{
+    _acme_directory=$1
+    [ ! -L "$_acme_directory" ] || return 1
+    if [ ! -e "$_acme_directory" ]; then
+        mkdir -m 700 "$_acme_directory" || return 1
+    fi
+    "$atomic_helper" --verify-private-directory "$_acme_directory"
+}
+initialize_public_directory()
+{
+    _public_directory=$1
+    [ ! -L "$_public_directory" ] || return 1
+    if [ ! -e "$_public_directory" ]; then
+        mkdir -m 755 "$_public_directory" || return 1
+    fi
+    "$atomic_helper" --verify-public-directory "$_public_directory"
+}
 initialize_private_directory "$root/rest" || { echo "unsafe REST private directory" >&2; exit 1; }
 initialize_private_regular "$root/rest/tokens.json" '{"generation":1,"schemaVersion":1,"tokens":[]}' || {
     echo "unsafe token store" >&2; exit 1;
@@ -318,8 +354,12 @@ done
 for prerequisite in "$root/rest/tokens.json" "$root/rest/tokens.json.lock"; do
     "$atomic_helper" --verify-private-regular-owner "$prerequisite" "$daemon_uid"
 done
-for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf \
-    bin/pm3000-acme bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+initialize_acme_directory "$root/acme" || { echo "unsafe ACME private state root" >&2; exit 1; }
+initialize_acme_directory "$root/acme/trust" || { echo "unsafe ACME trust directory" >&2; exit 1; }
+"$atomic_helper" --verify-private-tree "$root/acme" || { echo "unsafe ACME private state" >&2; exit 1; }
+initialize_public_directory "$root/acme-http-01" || { echo "unsafe ACME challenge webroot" >&2; exit 1; }
+for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf \
+    bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
     web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$tmp/$member" || {
         echo "unsafe extracted release member: $member" >&2
@@ -327,6 +367,12 @@ for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/pm3000-revive.conf
     }
 done
 verify_release_sums "$tmp" "$tmp/RELEASE_SHA256SUMS"
+packaged_listener_sha256=$(sha256_file "$tmp/apache/listen.conf") || {
+    echo "managed Apache listen.conf digest unavailable" >&2; exit 1;
+}
+[ "$packaged_listener_sha256" = "$managed_listener_sha256" ] || {
+    echo "managed Apache listen.conf digest mismatch" >&2; exit 1;
+}
 approved_manifest=$work/RELEASE_MANIFEST.json
 approved_sums=$work/RELEASE_SHA256SUMS
 cp "$tmp/RELEASE_MANIFEST.json" "$approved_manifest"
@@ -336,11 +382,19 @@ chmod 600 "$approved_manifest" "$approved_sums"
 "$atomic_helper" --verify-regular "$approved_sums" || exit 1
 chmod 755 "$tmp" "$tmp/apache" "$tmp/bin" "$tmp/web"
 chmod 755 "$tmp/bin/pm3000-acme" "$tmp/bin/pm3000-atomic-publish" "$tmp/bin/pm3000-rest"
+chown 0:"$daemon_gid" "$tmp/bin/pm3000-acme-admin"
+chmod 4750 "$tmp/bin/pm3000-acme-admin"
 chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"
 chmod 4750 "$tmp/bin/pm3000-gsp-session-helper"
 chmod 600 "$tmp/RELEASE_MANIFEST.json" "$tmp/RELEASE_SHA256SUMS"
-chmod 644 "$tmp/web/index.html" "$tmp/web/styles.css" "$tmp/web/app.js" "$tmp/apache/pm3000-revive.conf"
+chmod 644 "$tmp/web/index.html" "$tmp/web/styles.css" "$tmp/web/app.js" \
+    "$tmp/apache/listen.conf" "$tmp/apache/pm3000-revive.conf"
 "$atomic_helper" --verify-release "$tmp" "$daemon_gid" || { echo "unsafe staged release tree" >&2; exit 1; }
+set +e
+LD_BIND_NOW=1 "$tmp/bin/pm3000-acme" renew --invalid >/dev/null 2>&1
+acme_status=$?
+set -e
+[ "$acme_status" -eq 2 ] || { echo "ACME runtime compatibility check failed" >&2; exit 1; }
 if [ ! -e "$release" ]; then
     if "$atomic_helper" "$releases" ".$release_id.stage6-tmp" "$release_id" directory; then
         created_release=yes
@@ -375,6 +429,14 @@ ln -s "releases/$release_id" "$base/.current.stage6-tmp"
 cp "$release/apache/pm3000-revive.conf" "$config_dir/.pm3000-revive.conf.stage6-tmp"
 chmod 644 "$config_dir/.pm3000-revive.conf.stage6-tmp"
 "$atomic_helper" "$config_dir" .pm3000-revive.conf.stage6-tmp pm3000-revive.conf regular
+cp "$release/apache/listen.conf" "$config_dir/.listen.conf.stage6-tmp"
+chmod 644 "$config_dir/.listen.conf.stage6-tmp"
+"$atomic_helper" "$config_dir" .listen.conf.stage6-tmp listen.conf regular
 /usr/sbin/httpd -t -D SSL -f /etc/apache2/httpd.conf
 /etc/init.d/apache2 reload
+health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on \
+    "$base/current/bin/pm3000-rest")
+case "$health" in *"Status: 200 OK"*'"apiVersion":"v1","status":"live"'*) :;;
+    *) echo "installed REST health check failed" >&2; exit 1;;
+esac
 committed=no

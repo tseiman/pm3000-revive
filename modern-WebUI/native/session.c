@@ -170,14 +170,16 @@ static int parse_navigation(const unsigned char *xml, size_t length,
                             int *can_control, int *can_help_language,
                             int *can_data_buffering,
                             int *can_appliance_logging,
-                            int *can_time_zone) {
+                            int *can_time_zone,
+                            int *can_manage_acme) {
     char error[160] = {0};
     if (pm3000_xml_navigation(xml, length, allowed_paths,
                               PM3000_SESSION_PATH_COUNT, path_mask,
                               can_manage, can_help_language,
                               can_data_buffering,
                               can_appliance_logging,
-                              can_time_zone) != 0) return -1;
+                              can_time_zone,
+                              can_manage_acme) != 0) return -1;
     *can_control = 0;
     if (topology == NULL || topology_length == 0U) return 0;
     return pm3000_project_bytes(topology, (unsigned long)topology_length,
@@ -193,7 +195,8 @@ static int serialize(const pm3000_session *session, time_t expires,
                          (session->can_help_language ? 4U : 0U) |
                          (session->can_data_buffering ? 8U : 0U) |
                          (session->can_appliance_logging ? 16U : 0U) |
-                         (session->can_time_zone ? 32U : 0U);
+                         (session->can_time_zone ? 32U : 0U) |
+                         (session->can_manage_acme ? 64U : 0U);
     int amount = snprintf(output, SESSION_FILE_LIMIT + 1U,
                           "PM3000_SESSION_V1\n%lld\n%s\n%s\n%s\n%llu\n%u\n",
                           (long long)expires, session->sid, session->csrf,
@@ -251,7 +254,7 @@ static int parse_file(char *data, size_t length, pm3000_session *session,
     if (!safe_line(lines[2], 128U) || !valid_identifier(lines[3], PM3000_CSRF_LENGTH) ||
         !safe_line(lines[4], 128U) || parse_unsigned64(lines[5], &session->path_mask) != 0 ||
         session->path_mask >= (UINT64_C(1) << PM3000_SESSION_PATH_COUNT) ||
-        parse_unsigned64(lines[6], &flags) != 0 || flags > 63U) return -1;
+        parse_unsigned64(lines[6], &flags) != 0 || flags > 127U) return -1;
     strcpy(session->sid, lines[2]);
     strcpy(session->csrf, lines[3]);
     strcpy(session->username, lines[4]);
@@ -261,6 +264,7 @@ static int parse_file(char *data, size_t length, pm3000_session *session,
     session->can_data_buffering = (flags & 8U) != 0U;
     session->can_appliance_logging = (flags & 16U) != 0U;
     session->can_time_zone = (flags & 32U) != 0U;
+    session->can_manage_acme = (flags & 64U) != 0U;
     *expires = (time_t)parsed_expiry;
     if ((long long)*expires != parsed_expiry) return -1;
     return 0;
@@ -360,7 +364,8 @@ int pm3000_session_create(const char *directory, const char *username,
                           &session->can_help_language,
                           &session->can_data_buffering,
                           &session->can_appliance_logging,
-                          &session->can_time_zone) != 0) {
+                          &session->can_time_zone,
+                          &session->can_manage_acme) != 0) {
         set_error(error, error_size, "session metadata rejected");
         return -1;
     }
@@ -523,8 +528,9 @@ int pm3000_session_write_json(FILE *output, const pm3000_session *session) {
         first = 0;
         json_string(output, allowed_paths[index]);
     }
-    fprintf(output, "],\"canManageTokens\":%s,\"canControlPower\":%s}}\n",
+    fprintf(output, "],\"canManageTokens\":%s,\"canControlPower\":%s,\"canManageAcme\":%s}}\n",
             session->can_manage_tokens ? "true" : "false",
-            session->can_control_power ? "true" : "false");
+            session->can_control_power ? "true" : "false",
+            session->can_manage_acme ? "true" : "false");
     return ferror(output) ? -1 : 0;
 }

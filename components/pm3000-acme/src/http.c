@@ -1,5 +1,7 @@
 #include "pm3000_acme_http.h"
 
+#include <limits.h>
+
 static char lower_ascii(char value)
 {
     if (value >= 'A' && value <= 'Z') return (char)(value + ('a' - 'A'));
@@ -170,7 +172,7 @@ static int parse_decimal(const unsigned char *data, unsigned int length,
         unsigned int digit;
         if (data[index] < '0' || data[index] > '9') return 0;
         digit = (unsigned int)(data[index] - '0');
-        if (result > (PM3000_ACME_HTTP_BODY_MAX - digit) / 10U) return 0;
+        if (result > (UINT_MAX - digit) / 10U) return 0;
         result = result * 10U + digit;
     }
     *value = result;
@@ -222,7 +224,7 @@ static int decode_chunked(const unsigned char *input, unsigned int length,
 }
 
 int pm3000_acme_http_parse_response(
-    const unsigned char *input, unsigned int input_length,
+    const char *method, const unsigned char *input, unsigned int input_length,
     const struct pm3000_acme_url *origin,
     struct pm3000_acme_http_response *response,
     unsigned char *body, unsigned int body_capacity)
@@ -236,7 +238,8 @@ int pm3000_acme_http_parse_response(
     int have_nonce = 0;
     int have_location = 0;
     int have_content_type = 0;
-    if (input == (const unsigned char *)0 ||
+    if (method == (const char *)0 || !valid_method(method) ||
+        input == (const unsigned char *)0 ||
         response == (struct pm3000_acme_http_response *)0 ||
         body == (unsigned char *)0 || body_capacity == 0U ||
         input_length > PM3000_ACME_HTTP_HEADER_MAX +
@@ -339,6 +342,12 @@ int pm3000_acme_http_parse_response(
     }
     if (have_content_length && have_transfer_encoding)
         return PM3000_ACME_HTTP_INVALID;
+    if (text_equal(method, "HEAD")) {
+        if (input_length != header_end) return PM3000_ACME_HTTP_INVALID;
+        body[0] = '\0';
+        response->body_length = 0U;
+        return PM3000_ACME_HTTP_OK;
+    }
     if (have_transfer_encoding)
         return decode_chunked(input + header_end, input_length - header_end,
                               body, body_capacity, &response->body_length);

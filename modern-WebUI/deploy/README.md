@@ -27,8 +27,9 @@ flowchart TB
         tokenStore["Bearer token store<br/>/mnt/hdUser/pm3000-revive/rest"]
     end
 
-    subgraph BROKER["Setuid privilege boundary"]
+    subgraph BROKER["Setuid privilege boundaries"]
         helper["pm3000-gsp-session-helper<br/>real UID daemon / effective UID root<br/>owner root:daemon, mode 4750"]
+        acmeHelper["pm3000-acme-admin<br/>fixed exec of current/bin/pm3000-acme<br/>owner root:daemon, mode 4750"]
     end
 
     subgraph FIRMWARE["Existing PM3000 firmware boundary"]
@@ -51,6 +52,7 @@ flowchart TB
     helper -->|"fixed GSP AAA C API calls"| gspLib
     gspLib -->|"firmware-local session API"| gspAaa
     helper -.->|"session destroy on cleanup"| gspAaa
+    adapter -->|"bounded ACME operation protocol"| acmeHelper
 
     adapter -->|"AVTRANS XML + in-memory SID via /dev/avtrans_socket"| avtrans
     avtrans -->|"existing firmware IPC, including /dev/cacpd"| cacpd
@@ -70,10 +72,14 @@ Interface and trust-boundary rules:
   the compile-time identity `pm3000-rest`.
 - The adapter verifies authentication, CSRF where applicable, bearer scope, and
   outlet allowlists before starting a controller session.
-- The only privileged executable is the fixed-purpose GSP session helper. It accepts
+- The GSP session helper is fixed-purpose. It accepts
   no arguments, no inherited environment, no configurable identity, and no controller
   operation. It verifies that its real caller is `daemon` and that both IPC directions
   belong to its parent process.
+- The separate fixed-purpose ACME broker is also `root:daemon` mode `4750`. It accepts
+  only its bounded protocol and executes the fixed release target
+  `/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme`; it does not widen the
+  GSP helper or invoke a shell.
 - The SID exists only in helper/adapter process memory and on their private socketpair.
   It is never written to a file, log, HTTP response, command line, or CGI environment.
 - Controller requests use `/dev/avtrans_socket`; the existing firmware continues from
@@ -107,6 +113,9 @@ Interface and trust-boundary rules:
   once; the script never reads or stores it. Progress messages identify each
   validation, installation, and activation phase. Rollback remains separate.
 - `pm3000-revive.conf` — isolated Apache 2.2 `/modern/` pilot mapping.
+- `listen.conf` — exact vendor port-80/443 configuration plus one early
+  no-substitution `[L]` exception for `/.well-known/acme-challenge/`; all other
+  vendor redirect lines are unchanged.
 
 ## Prerequisites
 
@@ -152,7 +161,7 @@ This is a write operation. Run it only during an approved maintenance window.
 ## Build the exact allowlist release archive
 
 For a complete PPC32 big-endian release package on Linux, including the native runtime,
-fixed-purpose GSP session helper, ACME client, atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
+fixed-purpose GSP session helper, fixed-purpose ACME broker, ACME client, atomic helper, package, checksum sidecar, and an optional QEMU e300c3 check when
 `qemu-ppc` is installed, run from the repository root:
 
 ```sh
@@ -187,7 +196,7 @@ python3 modern-WebUI/deploy/deployment.py package \
 
 The builder reads only the three names in `web/release-files.txt`, the finished
 PPC REST binary, the finished fixed-purpose GSP session helper, the finished PPC
-ACME client, the finished PPC atomic-publication helper, and this
+ACME broker, the finished PPC ACME client, the finished PPC atomic-publication helper, and this
 directory's Apache configuration. It snapshots each source
 once, rejects non-regular/symlink sources and source mutation during a read, and
 writes deterministic `RELEASE_MANIFEST.json`, `RELEASE_SHA256SUMS`, and a whole
@@ -221,12 +230,22 @@ Defaults represented by the transaction are:
 - releases: `/mnt/hdUser/pm3000-revive/webui/releases/<release-id>`
 - active pointer: `/mnt/hdUser/pm3000-revive/webui/current`
 - isolated config: `/etc/apache2/conf.d/pm3000-revive.conf`
+- release-owned listener config: `/etc/apache2/conf.d/listen.conf`
 - preserved private store: `/mnt/hdUser/pm3000-revive/rest/tokens.json`
+- preserved private ACME state: `/mnt/hdUser/pm3000-revive/acme` (`root`, `0700`),
+  including `trust/` (`0700`) and root-owned state/key files (`0600`)
+- public HTTP-01 webroot: `/mnt/hdUser/pm3000-revive/acme-http-01` (`root`, `0755`),
+  containing only root-owned regular challenge files (`0644`)
 
 An initial bearer token is not an installation prerequisite. If the private token
 store directory, store, or lock file do not yet exist, the device installer
 creates the private directory, a canonical empty store, and a private lock file.
 Existing objects are validated and preserved.
+The installer creates only missing ACME directories; it never creates or replaces
+ACME configuration, hostname, CA selection, account material, keys, certificates,
+or status. WebUI release rollback changes only the release pointer and WebUI Apache
+fragment: persistent ACME state and issued certificates are not rolled back. ACME
+operations do not reload Apache, and no scheduler or cron integration is installed.
 The authorized browser WebUI can create a bearer token later if an external REST
 client needs one.
 
@@ -248,15 +267,22 @@ small static PPC helper that calls `renameat(2)` and `fsync(2)`, avoiding
 unverified BusyBox `mv` behavior for symlink-to-directory destinations. Its
 `--verify-release` operation rejects extra, missing, symlinked, hard-linked, wrongly owned, or
 wrong-mode roots, subdirectories, and payloads in both staged and pre-existing release directories.
-When passed the required helper GID, it also rejects a `pm3000-gsp-session-helper` that is not
-owned by that group; production install, reuse, and rollback paths pass the resolved `daemon` GID.
+When passed the required helper GID, it also rejects either setuid helper when it is
+not owned by that group; production install, reuse, and rollback paths pass the
+resolved `daemon` GID.
 The device scripts compose that inode/shape check with the canonical checksum list from
 the digest-approved package, so accepted native release bytes match the approved package.
 The release directory is
 immutable by ID. Apache syntax check precedes reload. Any failure after release,
 current-pointer, config, syntax-check, reload, or health boundary restores the
 prior pointer and configuration and removes the new release only if that run
-created it. A release-publish error is treated as a potentially successful
+created it.
+The listener update is in that same transaction. Installation accepts only the
+known vendor listener digest or exact managed digest, rejects links and
+non-regular files, snapshots prior bytes and mode, publishes `root:root 0644`,
+then syntax-checks and reloads Apache once with the Modern WebUI fragment. A
+later failure restores the exact listener bytes/mode, prior fragment, and prior
+current pointer before the rollback reload. A release-publish error is treated as a potentially successful
 `renameat()` followed by failed parent `fsync()`: the installer classifies the
 destination against private package-bound manifest/checksum copies and removes it
 only when that exact transaction-created release is proven. An unauthenticatable
@@ -391,12 +417,12 @@ The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3
 manifest, its archive binding, and an exact match between the manifest's saved
 SSH target and the requested SSH target. It validates the release sidecar before
 transfer, then reads the package once with no-follow semantics, requires the
-exact ordered ten-member allowlist with regular non-link members, fixed modes,
+exact ordered twelve-member allowlist with regular non-link members, fixed modes,
 and root archive ownership, and writes those same bytes to private host storage.
 The uploaded digest binds the remote bytes to that immutable snapshot. It uses legacy `scp -O`
 to copy the package into a
 private `/tmp/pm3000-stage7-compat-*` directory, checks the uploaded SHA-256 with
-OpenSSL, enforces the ten-member allowlist, normalizes only those fixed members
+OpenSSL, enforces the twelve-member allowlist, normalizes only those fixed members
 to the installer contract's exact modes, executes the packaged helper's
 regular-file and release-tree checks, runs the exact packaged ACME binary with
 `LD_BIND_NOW=1` through its non-mutating invalid-argument path and requires exit

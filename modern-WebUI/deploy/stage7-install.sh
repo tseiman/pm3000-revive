@@ -125,6 +125,9 @@ try:
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as release:
         member = release.getmember("RELEASE_MANIFEST.json")
         release_manifest = json.load(release.extractfile(member))
+        listener = release.extractfile("apache/listen.conf").read()
+        if hashlib.sha256(listener).hexdigest() != "45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f":
+            raise SystemExit("managed listen.conf digest mismatch")
 except (KeyError, OSError, ValueError, tarfile.TarError) as exc:
     raise SystemExit(f"invalid release manifest: {exc}")
 release_id = release_manifest.get("release_id")
@@ -169,8 +172,10 @@ log "Checking release archive allowlist"
 cat >"$work/expected-members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
+apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
+bin/pm3000-acme-admin
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -186,7 +191,7 @@ mkdir "$work/release"
 (cd "$work/release" && tar xf "$work/release.tar")
 chmod 755 "$work/release" "$work/release/apache" "$work/release/bin" "$work/release/web"
 chmod 600 "$work/release/RELEASE_MANIFEST.json" "$work/release/RELEASE_SHA256SUMS"
-chmod 644 "$work/release/apache/pm3000-revive.conf" \
+chmod 644 "$work/release/apache/listen.conf" "$work/release/apache/pm3000-revive.conf" \
     "$work/release/web/app.js" "$work/release/web/index.html" "$work/release/web/styles.css"
 chmod 755 "$work/release/bin/pm3000-acme" \
     "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
@@ -198,10 +203,14 @@ helper=$work/release/bin/pm3000-atomic-publish
 acme=$work/release/bin/pm3000-acme
 rest=$work/release/bin/pm3000-rest
 session_helper=$work/release/bin/pm3000-gsp-session-helper
+acme_admin=$work/release/bin/pm3000-acme-admin
 "$helper" --verify-regular "$helper"
 "$helper" --verify-regular "$acme"
 "$helper" --verify-regular "$rest"
 "$helper" --verify-regular "$session_helper"
+"$helper" --verify-regular "$acme_admin"
+chown 0:"$daemon_gid" "$acme_admin"
+chmod 4750 "$acme_admin"
 chown 0:"$daemon_gid" "$session_helper"
 chmod 4750 "$session_helper"
 "$helper" --verify-release "$work/release" "$daemon_gid"
@@ -217,6 +226,15 @@ for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-
             "$helper" --verify-private-regular-owner "$token_file" "$daemon_uid"
     fi
 done
+if [ -e /mnt/hdUser/pm3000-revive/acme ] || [ -L /mnt/hdUser/pm3000-revive/acme ]; then
+    "$helper" --verify-private-tree /mnt/hdUser/pm3000-revive/acme
+    if [ -e /mnt/hdUser/pm3000-revive/acme/trust ] || [ -L /mnt/hdUser/pm3000-revive/acme/trust ]; then
+        "$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/acme/trust
+    fi
+fi
+if [ -e /mnt/hdUser/pm3000-revive/acme-http-01 ] || [ -L /mnt/hdUser/pm3000-revive/acme-http-01 ]; then
+    "$helper" --verify-public-directory /mnt/hdUser/pm3000-revive/acme-http-01
+fi
 log "Running read-only PPC/CGI compatibility health check"
 set +e
 LD_BIND_NOW=1 "$acme" renew --invalid >/dev/null 2>&1

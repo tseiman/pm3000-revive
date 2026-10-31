@@ -22,6 +22,8 @@ struct mock_state {
     unsigned int order_polls;
     unsigned int sleeps;
     unsigned int always_pending;
+    unsigned int challenge_status;
+    const char *challenge_problem;
 };
 
 static void copy_text(char *output, unsigned int capacity, const char *text)
@@ -126,6 +128,10 @@ static int mock_exchange(
         ++state->challenge_requests;
         if (!challenge_file_matches(state->webroot)) return -1;
         state->challenge_triggered = 1U;
+        if (state->challenge_status != 0U)
+            return set_response(state, response, body, capacity,
+                                state->challenge_status, NULL,
+                                state->challenge_problem);
         return set_response(state, response, body, capacity, 200U, NULL,
                             "{\"status\":\"pending\"}");
     }
@@ -182,6 +188,7 @@ int main(void)
     struct mock_state state;
     int status;
     int timeout_status;
+    int failure_status;
 
     unlink(challenge_path);
     rmdir(webroot);
@@ -228,6 +235,46 @@ int main(void)
 
     memset(&state, 0, sizeof(state));
     state.webroot = webroot;
+    state.challenge_status = 400U;
+    state.challenge_problem =
+        "{\"type\":\"urn:ietf:params:acme:error:incorrectResponse\","
+        "\"detail\":\"SECRET response detail must never escape\"}";
+    io.context = &state;
+    config.existing_account_url = "https://localhost/account/1";
+    failure_status = pm3000_acme_client_issue(
+        &config, &io, &workspace, &result);
+    if (failure_status != PM3000_ACME_CLIENT_PROTOCOL ||
+        result.failure_phase != PM3000_ACME_PHASE_CHALLENGE_ACCEPTANCE ||
+        result.failure_reason != PM3000_ACME_REASON_HTTP ||
+        result.http_status_code != 400U ||
+        result.problem != PM3000_ACME_PROBLEM_INCORRECT_RESPONSE ||
+        strcmp(pm3000_acme_problem_name(result.problem),
+               "incorrect_response") != 0 ||
+        lstat(challenge_path, &(struct stat){0}) == 0) {
+        fprintf(stderr, "incorrectResponse diagnostic fixture failed\n");
+        return 1;
+    }
+
+    memset(&state, 0, sizeof(state));
+    state.webroot = webroot;
+    state.challenge_status = 503U;
+    state.challenge_problem =
+        "{\"type\":\"https://ca.invalid/private/problem/category\","
+        "\"detail\":\"SECRET unknown detail must never escape\"}";
+    io.context = &state;
+    failure_status = pm3000_acme_client_issue(
+        &config, &io, &workspace, &result);
+    if (failure_status != PM3000_ACME_CLIENT_PROTOCOL ||
+        result.http_status_code != 503U ||
+        result.problem != PM3000_ACME_PROBLEM_UNKNOWN ||
+        strcmp(pm3000_acme_problem_name(result.problem), "unknown") != 0 ||
+        lstat(challenge_path, &(struct stat){0}) == 0) {
+        fprintf(stderr, "unknown problem diagnostic fixture failed\n");
+        return 1;
+    }
+
+    memset(&state, 0, sizeof(state));
+    state.webroot = webroot;
     state.always_pending = 1U;
     io.context = &state;
     config.poll_attempts = 1U;
@@ -237,6 +284,8 @@ int main(void)
     pm3000_acme_crypto_key_free(&certificate_key);
     pm3000_acme_crypto_key_free(&account_key);
     if (timeout_status != PM3000_ACME_CLIENT_TIMEOUT ||
+        result.failure_phase != PM3000_ACME_PHASE_CHALLENGE_POLL ||
+        result.failure_reason != PM3000_ACME_REASON_TIMEOUT ||
         state.account_requests != 0U ||
         lstat(challenge_path, &(struct stat){0}) == 0) {
         fprintf(stderr, "client timeout cleanup failed status=%d\n",

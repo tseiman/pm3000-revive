@@ -221,6 +221,43 @@
           </div>
         </section>
 
+        <section id="acme-view" class="view" aria-labelledby="acme-title" hidden>
+          <div class="page-heading">
+            <div><span id="acme-eyebrow" class="eyebrow">Certificates</span><h1 id="acme-title">ACME certificates</h1><p id="acme-description">Configure automatic certificate issuance from a fresh settings read.</p></div>
+            <button id="reload-acme" class="secondary-button" type="button" disabled>Reload</button>
+          </div>
+          <div class="settings-grid">
+            <div class="panel">
+              <form id="acme-form">
+                <label class="check-row"><input id="acme-enabled" type="checkbox" disabled><span><strong id="acme-enabled-label">Enable ACME</strong><small id="acme-enabled-help">Allow automatic certificate issuance and renewal.</small></span></label>
+                <label id="acme-directory-label" for="acme-directory-url">Directory URL</label><input id="acme-directory-url" type="url" maxlength="1291" disabled required>
+                <label id="acme-dns-label" for="acme-dns-names">DNS names</label><textarea id="acme-dns-names" rows="5" maxlength="4063" spellcheck="false" disabled required></textarea>
+                <small id="acme-dns-help" class="field-help">One DNS name per line; 1–16 unique names, at most 253 bytes each.</small>
+                <p id="acme-status" class="panel-status" aria-live="polite">Load the current setting before saving.</p>
+                <p id="acme-error" class="form-error" role="alert"></p>
+                <button id="save-acme" class="primary-button" type="submit" disabled>Save setting</button>
+              </form>
+            </div>
+            <div class="panel acme-side-panel">
+              <section aria-labelledby="acme-ca-title">
+                <h2 id="acme-ca-title">Certificate authority</h2>
+                <p><span id="acme-ca-path-label">Current CA file:</span> <code id="acme-ca-path"></code></p>
+                <form id="acme-ca-form">
+                  <label id="acme-ca-upload-label" for="acme-ca-file">Managed CA bundle</label><input id="acme-ca-file" type="file" accept=".pem,application/x-pem-file" disabled required>
+                  <small id="acme-ca-help" class="field-help">PEM certificate bundles only; maximum 64 KiB. Private keys are rejected.</small>
+                  <button id="upload-acme-ca" class="secondary-button" type="submit" disabled>Upload CA bundle</button>
+                </form>
+              </section>
+              <section class="acme-renewal" aria-labelledby="acme-renewal-title">
+                <h2 id="acme-renewal-title">Renewal</h2>
+                <p><span id="acme-renewal-label">Status:</span> <strong id="acme-renewal-status">Unknown</strong></p>
+                <p id="acme-renewal-note" class="panel-status" aria-live="polite"></p>
+                <button id="acme-renew" class="primary-button" type="button" disabled>Start renewal</button>
+              </section>
+            </div>
+          </div>
+        </section>
+
         <section id="password-change-view" class="view" aria-labelledby="password-change-title" hidden>
           <div class="page-heading"><div><span class="eyebrow">Account security</span><h1 id="password-change-title">Change password</h1><p>Update the password of the signed-in PM3000 user.</p></div></div>
           <div class="panel">

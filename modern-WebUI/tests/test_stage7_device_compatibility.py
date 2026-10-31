@@ -35,7 +35,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.fake_bin.mkdir()
         self.log = self.root / "transport.log"
         self.environment = os.environ.copy()
-        self.environment["PATH"] = f"{self.fake_bin}:{self.environment['PATH']}"
+        self.environment["PATH"] = f"{self.fake_bin}:/usr/bin:/bin"
         self.environment["FAKE_TRANSPORT_LOG"] = str(self.log)
         device = self.root / "device"
         private_rest = device / "mnt/hdUser/pm3000-revive/rest"
@@ -87,7 +87,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         return backups[0]
 
-    def _create_package(self, extra_member=False, malicious_link=None):
+    def _create_package(self, extra_member=False, malicious_link=None, broker_mode=0o4750):
         helper = self.host_helper.read_bytes()
         rest = (
             b"#!/bin/sh\n"
@@ -104,8 +104,10 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         members = [
             ("RELEASE_MANIFEST.json", b"{}\n", 0o600),
             ("RELEASE_SHA256SUMS", b"test\n", 0o600),
+            ("apache/listen.conf", (ROOT / "modern-WebUI/apache/listen.conf").read_bytes(), 0o644),
             ("apache/pm3000-revive.conf", b"test\n", 0o644),
             ("bin/pm3000-acme", acme, 0o755),
+            ("bin/pm3000-acme-admin", b"broker\n", broker_mode),
             ("bin/pm3000-atomic-publish", helper, 0o755),
             ("bin/pm3000-gsp-session-helper", b"helper\n", 0o4750),
             ("bin/pm3000-rest", rest, 0o755),
@@ -132,6 +134,17 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         )
 
     def _install_transport_fakes(self):
+        fake_id = self.fake_bin / "id"
+        fake_id.write_text(
+            "#!/bin/sh\n"
+            f"[ \"$1\" = -u ] && printf '%s\\n' {os.geteuid()} && exit 0\n"
+            f"[ \"$1\" = -g ] && printf '%s\\n' {os.getegid()} && exit 0\n"
+            "exit 2\n"
+        )
+        fake_id.chmod(0o755)
+        fake_chown = self.fake_bin / "chown"
+        fake_chown.write_text("#!/bin/sh\nexit 0\n")
+        fake_chown.chmod(0o755)
         fake_ssh = self.fake_bin / "ssh"
         fake_ssh.write_text(
             "#!/usr/bin/env python3\n"
@@ -188,6 +201,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertIn("PATH_INFO=/health", transport)
         self.assertIn("acme-runtime-gate=yes", transport)
         self.assertIn('LD_BIND_NOW=1 "$acme" renew --invalid', transport)
+        self.assertIn('chmod 4750 "$work/release/bin/pm3000-acme-admin"', transport)
         self.assertNotIn("/etc/apache2", transport)
         self.assertIn("for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json", transport)
         self.assertIn('--verify-private-regular "$token_file"', transport)
@@ -203,6 +217,27 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ACME runtime compatibility check failed", result.stderr)
         self.assert_no_remote_tree()
+
+    def test_rejects_acme_broker_without_setuid_metadata_before_transport(self):
+        self._create_package(broker_mode=0o755)
+        result = self.run_compatibility()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe release member metadata: bin/pm3000-acme-admin", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_runtime_contract_keeps_private_acme_state_separate(self):
+        compatibility = SCRIPT.read_text(encoding="ascii")
+        installer = (DEPLOY / "device-install.sh").read_text(encoding="ascii")
+        rollback = (DEPLOY / "device-rollback.sh").read_text(encoding="ascii")
+        self.assertIn('/mnt/hdUser/pm3000-revive/acme', compatibility)
+        self.assertIn('/mnt/hdUser/pm3000-revive/acme/trust', compatibility)
+        self.assertIn('/mnt/hdUser/pm3000-revive/acme-http-01', compatibility)
+        self.assertIn('initialize_acme_directory "$root/acme"', installer)
+        self.assertIn('initialize_acme_directory "$root/acme/trust"', installer)
+        self.assertIn('initialize_public_directory "$root/acme-http-01"', installer)
+        self.assertNotIn('config.json', installer)
+        self.assertNotIn('/mnt/hdUser/pm3000-revive/acme', rollback)
+        self.assertNotIn('crontab', installer + compatibility + rollback)
 
     def test_rejects_backup_from_other_target_before_transport(self):
         result = self.run_compatibility("root@other-pdu")

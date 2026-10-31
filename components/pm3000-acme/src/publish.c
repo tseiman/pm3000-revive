@@ -25,7 +25,7 @@ int pm3000_acme_publish_certificate(
         return result;
     store_result = pm3000_acme_store_write_at(
         state_root_fd, "certificate.pem", certificate_pem,
-        certificate_length, 0644);
+        certificate_length, 0600);
     if (store_result == PM3000_ACME_STORE_COMMITTED_UNCERTAIN)
         result = PM3000_ACME_PUBLISH_COMMITTED_UNCERTAIN;
     else if (store_result == PM3000_ACME_STORE_OK)

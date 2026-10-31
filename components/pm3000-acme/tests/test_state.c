@@ -53,6 +53,7 @@ int main(void)
     struct stat details;
     struct pm3000_acme_state first;
     struct pm3000_acme_state second;
+    struct pm3000_acme_state reader;
     struct pm3000_acme_state uncertain;
     char uncertain_root[] = "build/state-uncertain-XXXXXX";
     char account_url[PM3000_ACME_KID_MAX + 1U];
@@ -97,6 +98,12 @@ int main(void)
         fprintf(stderr, "state lock contract failed\n");
         return 1;
     }
+    if (pm3000_acme_state_open_root(root, &reader) != PM3000_ACME_STATE_OK ||
+        reader.root_fd < 0 || reader.lock_fd >= 0) {
+        fprintf(stderr, "read-only state root open while locked failed\n");
+        return 1;
+    }
+    pm3000_acme_state_close(&reader);
     pm3000_acme_state_close(&first);
     if (pm3000_acme_state_prepare(root, &second) != PM3000_ACME_STATE_OK ||
         read_key(account_path, after, sizeof(after), &after_length) != 0 ||

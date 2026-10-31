@@ -13,6 +13,16 @@ static EVP_PKEY *key_handle(const struct pm3000_acme_key *key)
     return (EVP_PKEY *)key->handle;
 }
 
+int pm3000_acme_crypto_sha256(
+    const unsigned char *input, unsigned int input_length,
+    unsigned char output[PM3000_ACME_SHA256_BYTES])
+{
+    if (input == (const unsigned char *)0 || output == (unsigned char *)0)
+        return PM3000_ACME_CRYPTO_INVALID;
+    return SHA256(input, (unsigned long)input_length, output) == output
+               ? PM3000_ACME_CRYPTO_OK : PM3000_ACME_CRYPTO_OPENSSL;
+}
+
 void pm3000_acme_crypto_key_free(struct pm3000_acme_key *key)
 {
     if (key == (struct pm3000_acme_key *)0) return;

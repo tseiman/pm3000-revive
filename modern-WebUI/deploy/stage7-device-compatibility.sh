@@ -112,11 +112,14 @@ if identity(before) != identity(after) or len(package_bytes) != before.st_size:
 actual = hashlib.sha256(package_bytes).hexdigest()
 if actual != fields[0]:
     raise SystemExit("release package digest mismatch")
+managed_listener_sha256 = "45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f"
 expected_members = {
     "RELEASE_MANIFEST.json": 0o600,
     "RELEASE_SHA256SUMS": 0o600,
+    "apache/listen.conf": 0o644,
     "apache/pm3000-revive.conf": 0o644,
     "bin/pm3000-acme": 0o755,
+    "bin/pm3000-acme-admin": 0o4750,
     "bin/pm3000-atomic-publish": 0o755,
     "bin/pm3000-gsp-session-helper": 0o4750,
     "bin/pm3000-rest": 0o755,
@@ -135,6 +138,9 @@ for member in members:
     if not member.isfile() or member.linkname or member.mode != expected_members[member.name] \
             or member.uid != 0 or member.gid != 0:
         raise SystemExit(f"unsafe release member metadata: {member.name}")
+with tarfile.open(fileobj=io.BytesIO(package_bytes), mode="r:") as archive:
+    if hashlib.sha256(archive.extractfile("apache/listen.conf").read()).hexdigest() != managed_listener_sha256:
+        raise SystemExit("managed listen.conf digest mismatch")
 snapshot_fd = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 try:
     with os.fdopen(snapshot_fd, "wb", closefd=False) as output:
@@ -168,8 +174,10 @@ actual=$(openssl dgst -sha256 "$work/release.tar" | sed 's/^.*= //')
 cat >"$work/expected-members" <<'EOF_MEMBERS'
 RELEASE_MANIFEST.json
 RELEASE_SHA256SUMS
+apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
+bin/pm3000-acme-admin
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -185,10 +193,11 @@ mkdir "$work/release"
 (cd "$work/release" && tar xf "$work/release.tar")
 chmod 755 "$work/release" "$work/release/apache" "$work/release/bin" "$work/release/web"
 chmod 600 "$work/release/RELEASE_MANIFEST.json" "$work/release/RELEASE_SHA256SUMS"
-chmod 644 "$work/release/apache/pm3000-revive.conf" \
+chmod 644 "$work/release/apache/listen.conf" "$work/release/apache/pm3000-revive.conf" \
     "$work/release/web/app.js" "$work/release/web/index.html" "$work/release/web/styles.css"
 chmod 755 "$work/release/bin/pm3000-acme" \
     "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
+chmod 4750 "$work/release/bin/pm3000-acme-admin"
 chmod 4750 "$work/release/bin/pm3000-gsp-session-helper"
 helper=$work/release/bin/pm3000-atomic-publish
 acme=$work/release/bin/pm3000-acme
@@ -196,9 +205,13 @@ rest=$work/release/bin/pm3000-rest
 "$helper" --verify-regular "$helper"
 "$helper" --verify-regular "$acme"
 "$helper" --verify-regular "$rest"
-"$helper" --verify-release "$work/release"
 daemon_uid=$(id -u daemon)
 case "$daemon_uid" in ''|*[!0-9]*) echo "invalid Apache daemon account" >&2; exit 1;; esac
+daemon_gid=$(id -g daemon)
+case "$daemon_gid" in ''|*[!0-9]*) echo "invalid Apache daemon group" >&2; exit 1;; esac
+chown 0:"$daemon_gid" "$work/release/bin/pm3000-acme-admin" \
+    "$work/release/bin/pm3000-gsp-session-helper"
+"$helper" --verify-release "$work/release" "$daemon_gid"
 if [ -e /mnt/hdUser/pm3000-revive/rest ] || [ -L /mnt/hdUser/pm3000-revive/rest ]; then
     "$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/rest 2>/dev/null ||
         "$helper" --verify-private-directory-owner /mnt/hdUser/pm3000-revive/rest "$daemon_uid"
@@ -209,6 +222,15 @@ for token_file in /mnt/hdUser/pm3000-revive/rest/tokens.json /mnt/hdUser/pm3000-
             "$helper" --verify-private-regular-owner "$token_file" "$daemon_uid"
     fi
 done
+if [ -e /mnt/hdUser/pm3000-revive/acme ] || [ -L /mnt/hdUser/pm3000-revive/acme ]; then
+    "$helper" --verify-private-tree /mnt/hdUser/pm3000-revive/acme
+    if [ -e /mnt/hdUser/pm3000-revive/acme/trust ] || [ -L /mnt/hdUser/pm3000-revive/acme/trust ]; then
+        "$helper" --verify-private-directory /mnt/hdUser/pm3000-revive/acme/trust
+    fi
+fi
+if [ -e /mnt/hdUser/pm3000-revive/acme-http-01 ] || [ -L /mnt/hdUser/pm3000-revive/acme-http-01 ]; then
+    "$helper" --verify-public-directory /mnt/hdUser/pm3000-revive/acme-http-01
+fi
 set +e
 LD_BIND_NOW=1 "$acme" renew --invalid >/dev/null 2>&1
 acme_status=$?
