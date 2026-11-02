@@ -245,7 +245,18 @@ The installer creates only missing ACME directories; it never creates or replace
 ACME configuration, hostname, CA selection, account material, keys, certificates,
 or status. WebUI release rollback changes only the release pointer and WebUI Apache
 fragment: persistent ACME state and issued certificates are not rolled back. ACME
-operations do not reload Apache, and no scheduler or cron integration is installed.
+Manual ACME renewal runs the fixed release-owned `pm3000-acme-maintenance force`
+orchestrator through the existing setuid broker. It publishes only a changed,
+validated certificate into root-only `/etc/CA/pm3000-acme`, migrates only the
+three port-443 server certificate directives, syntax-checks, reloads once, and
+rolls back on failed activation health. The scheduler is a closed daily device-local
+hour/minute model exposed only to authorized browser sessions. Its fixed cron entry
+runs `pm3000-acme-maintenance scheduled`, which applies the fixed 2,592,000-second
+`openssl x509 -checkend` gate and emits a closed JSON no-op without renewing or
+reloading Apache when renewal is not due. The installer accepts only the pinned
+firmware `/etc/init.d/busybox-cron`, creates `/etc/cron/crontabs` as root mode `0700`,
+enables the exact S95/K95 startup links, and never disables cron when the ACME
+schedule is disabled because unrelated jobs may share the root crontab.
 The authorized browser WebUI can create a bearer token later if an external REST
 client needs one.
 
@@ -417,12 +428,12 @@ The command revalidates `BACKUP_COMPLETE`, both backup hashes, the format-3
 manifest, its archive binding, and an exact match between the manifest's saved
 SSH target and the requested SSH target. It validates the release sidecar before
 transfer, then reads the package once with no-follow semantics, requires the
-exact ordered twelve-member allowlist with regular non-link members, fixed modes,
+exact ordered thirteen-member allowlist with regular non-link members, fixed modes,
 and root archive ownership, and writes those same bytes to private host storage.
 The uploaded digest binds the remote bytes to that immutable snapshot. It uses legacy `scp -O`
 to copy the package into a
 private `/tmp/pm3000-stage7-compat-*` directory, checks the uploaded SHA-256 with
-OpenSSL, enforces the twelve-member allowlist, normalizes only those fixed members
+OpenSSL, enforces the thirteen-member allowlist, normalizes only those fixed members
 to the installer contract's exact modes, executes the packaged helper's
 regular-file and release-tree checks, runs the exact packaged ACME binary with
 `LD_BIND_NOW=1` through its non-mutating invalid-argument path and requires exit

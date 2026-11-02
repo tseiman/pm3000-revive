@@ -407,6 +407,88 @@ class NativeAdapterTests(unittest.TestCase):
                 self.assertIn(b"Status: 201", result.stdout)
                 self.assertFalse(response["navigation"]["canManageAcme"])
 
+    def test_acme_schedule_projects_default_and_replaces_only_closed_daily_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            default = b'{"managed":false,"enabled":false,"hour":3,"minute":17}\n'
+            helper, log = self.acme_admin_helper(root, [(0, 0, default)])
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"), "PM3000_ACME_ADMIN_HELPER": str(helper)}
+            result = self.run_cgi("GET", "/api/v1/settings/acme/schedule", cookie=cookie, extra_environment=environment)
+            headers, payload = self.cgi_json(result)
+            self.assertIn(b"Status: 200", headers)
+            self.assertEqual({"managed": False, "enabled": False, "hour": 3, "minute": 17,
+                              "renewalWindowSeconds": 2592000, "revision": None}, payload)
+            self.assertEqual([10], [request[4] for request in self.acme_requests(log)])
+
+            revision = '"' + "1" * 64 + '"'
+            (root / "fake-acme-admin.state").unlink()
+            log.unlink()
+            managed = (b'{"managed":true,"enabled":true,"hour":23,"minute":59,"revision":"\\"' +
+                       b"1" * 64 + b'\\""}\n')
+            helper, log = self.acme_admin_helper(root, [(0, 0, b""), (0, 0, managed)])
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/schedule", cookie=cookie,
+                csrf=str(session["csrfToken"]), body=b'{"enabled":true,"hour":23,"minute":59}',
+                content_type="application/json",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper), "HTTP_IF_NONE_MATCH": "*"},
+            )
+            self.assertIn(b"Status: 204", result.stdout, result.stderr)
+            requests = self.acme_requests(log)
+            self.assertEqual([12, 10], [request[4] for request in requests])
+            self.assertEqual(bytes((1, 23, 59)), requests[0][12:])
+
+            for body in (b'{"enabled":true,"hour":24,"minute":0}',
+                         b'{"enabled":true,"hour":0,"minute":60}',
+                         b'{"enabled":1,"hour":0,"minute":0}',
+                         b'{"enabled":false,"hour":0,"minute":0,"cron":"* * * * *"}'):
+                rejected = self.run_cgi(
+                    "PUT", "/api/v1/settings/acme/schedule", cookie=cookie,
+                    csrf=str(session["csrfToken"]), body=body, content_type="application/json",
+                    extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                       "PM3000_ACME_ADMIN_HELPER": str(helper), "HTTP_IF_MATCH": revision},
+                )
+                self.assertIn(b"Status: 400", rejected.stdout)
+
+    def test_acme_schedule_committed_but_uncertain_publication_maps_to_no_retry_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            helper, _log = self.acme_admin_helper(root, [(7, 255, b"")])
+            result = self.run_cgi(
+                "PUT", "/api/v1/settings/acme/schedule", cookie=cookie,
+                csrf=str(session["csrfToken"]),
+                body=b'{"enabled":true,"hour":3,"minute":17}',
+                content_type="application/json",
+                extra_environment={"PM3000_SESSION_DIR": str(root / "sessions"),
+                                   "PM3000_ACME_ADMIN_HELPER": str(helper),
+                                   "HTTP_IF_NONE_MATCH": "*"},
+            )
+            self.assertIn(b"Status: 503", result.stdout)
+            _headers, payload = self.cgi_json(result)
+            self.assertEqual("action_outcome_unknown", payload["code"])
+            self.assertNotEqual("revision_changed", payload["code"])
+
+    def test_acme_schedule_requires_cookie_csrf_permission_and_precondition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cookie, session, _controller, _result = self.login_session(root)
+            body = b'{"enabled":false,"hour":0,"minute":0}'
+            environment = {"PM3000_SESSION_DIR": str(root / "sessions"),
+                           "PM3000_ACME_ADMIN_HELPER": str(root / "must-not-run")}
+            bearer = self.run_cgi("GET", "/api/v1/settings/acme/schedule",
+                                  authorization="Bearer invalid", extra_environment=environment)
+            self.assertIn(b"Status: 401", bearer.stdout)
+            no_csrf = self.run_cgi("PUT", "/api/v1/settings/acme/schedule", cookie=cookie,
+                                   body=body, content_type="application/json",
+                                   extra_environment={**environment, "HTTP_IF_NONE_MATCH": "*"})
+            self.assertIn(b"Status: 403", no_csrf.stdout)
+            no_condition = self.run_cgi("PUT", "/api/v1/settings/acme/schedule", cookie=cookie,
+                                        csrf=str(session["csrfToken"]), body=body,
+                                        content_type="application/json", extra_environment=environment)
+            self.assertIn(b"Status: 428", no_condition.stdout)
+
     def test_acme_get_uses_coherent_broker_snapshot_and_projects_closed_setting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

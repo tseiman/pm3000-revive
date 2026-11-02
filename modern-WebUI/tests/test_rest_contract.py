@@ -44,6 +44,7 @@ class RestV1ContractTests(unittest.TestCase):
                 "/api/v1/settings/acme",
                 "/api/v1/settings/acme/ca",
                 "/api/v1/settings/acme/renew",
+                "/api/v1/settings/acme/schedule",
                 "/api/v1/system/information",
                 "/api/v1/system/usage/memory",
                 "/api/v1/system/usage/flash",
@@ -76,6 +77,7 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/acme"]))
         self.assertEqual({"put"}, set(paths["/api/v1/settings/acme/ca"]))
         self.assertEqual({"post"}, set(paths["/api/v1/settings/acme/renew"]))
+        self.assertEqual({"get", "put"}, set(paths["/api/v1/settings/acme/schedule"]))
         for route in (
             "/api/v1/system/information",
             "/api/v1/system/usage/memory",
@@ -213,10 +215,39 @@ class RestV1ContractTests(unittest.TestCase):
         self.assertEqual(["phase"], renewal["dependentRequired"]["reason"])
         self.assertEqual({"202", "400", "401", "403", "405", "409", "503"}, set(renew["responses"]))
 
+    def test_acme_schedule_is_closed_cookie_only_local_daily_time(self) -> None:
+        route = self.contract["paths"]["/api/v1/settings/acme/schedule"]
+        schemas = self.contract["components"]["schemas"]
+        for operation in route.values():
+            self.assertEqual([{"cookieAuth": []}], operation["security"])
+            self.assertTrue(operation["x-bearer-rejected"])
+            self.assertEqual("pm3000-acme-admin", operation["x-fixed-privileged-broker"])
+            self.assertEqual("device-local-time", operation["x-time-basis"])
+        self.assertTrue(route["put"]["x-csrf-required"])
+        replacement = schemas["AcmeScheduleReplacement"]
+        self.assertFalse(replacement["additionalProperties"])
+        self.assertEqual({"enabled", "hour", "minute"}, set(replacement["required"]))
+        self.assertEqual({"enabled", "hour", "minute"}, set(replacement["properties"]))
+        self.assertEqual((0, 23), (replacement["properties"]["hour"]["minimum"], replacement["properties"]["hour"]["maximum"]))
+        self.assertEqual((0, 59), (replacement["properties"]["minute"]["minimum"], replacement["properties"]["minute"]["maximum"]))
+        setting = schemas["AcmeSchedule"]
+        self.assertFalse(setting["additionalProperties"])
+        self.assertEqual(2592000, setting["properties"]["renewalWindowSeconds"]["const"])
+        self.assertNotIn("cron", json.dumps(route).lower())
+        self.assertNotIn("command", json.dumps(route).lower())
+        self.assertEqual("#/components/headers/StrongETag",
+                         route["get"]["responses"]["200"]["headers"]["ETag"]["$ref"])
+        self.assertEqual("#/components/responses/MethodNotAllowed",
+                         route["get"]["responses"]["405"]["$ref"])
+
     def test_rest_adapter_does_not_link_or_embed_the_acme_client(self) -> None:
         makefile = (ROOT / "native" / "Makefile").read_text()
+        # The CGI adapter must not contain privileged ACME paths. The separate
+        # setuid broker is intentionally the only native component that owns
+        # schedule and cron storage paths.
         native_sources = "\n".join(
             path.read_text() for path in (ROOT / "native").glob("*.c")
+            if path.name != "pm3000-acme-admin.c"
         )
         self.assertNotIn("components/pm3000-acme", makefile)
         self.assertNotIn("components/pm3000-acme", native_sources)

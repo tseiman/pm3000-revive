@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import json
 import socket
 import struct
 import subprocess
@@ -24,6 +25,9 @@ RENEW_ASYNC = 6
 CONFIG_CREATE = 7
 CA_CREATE = 8
 BOOTSTRAP_STATUS = 9
+SCHEDULE_SHOW = 10
+SCHEDULE_REPLACE = 11
+SCHEDULE_CREATE = 12
 ETAG = b'"' + b"a" * 64 + b'"'
 OK = 0
 BAD_REQUEST = 1
@@ -49,9 +53,8 @@ int main(int argc, char **argv, char **envp) {
     unsigned char data[65537]; size_t length = 0; ssize_t amount; int index;
     while (length < sizeof(data) && (amount = read(0, data + length, sizeof(data) - length)) > 0)
         length += (size_t)amount;
-    if (argc == 4 && strcmp(argv[1], "renew") == 0 &&
-        strcmp(argv[2], "--foreground") == 0 &&
-        strcmp(argv[3], "--broker-startup-notify") == 0) {
+    if (argc == 3 && strcmp(argv[1], "force") == 0 &&
+        strcmp(argv[2], "--broker-startup-notify") == 0) {
         FILE *control = fopen("CONTROL_PATH", "rb");
         int startup = control == NULL ? 'A' : fgetc(control);
         if (control != NULL) fclose(control);
@@ -91,11 +94,16 @@ int main(int argc, char **argv, char **envp) {
         wrappers = cls.work / "identity-wrappers.c"
         wrappers.write_text(
             r'''#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
 #include <pwd.h>
+#include <stdio.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 extern int __real_getsockopt(int, int, int, void *, socklen_t *);
+extern int __real_fsync(int);
 uid_t __wrap_getuid(void) { return 1; }
 uid_t __wrap_geteuid(void) { return 0; }
 struct passwd *__wrap_getpwnam(const char *name) {
@@ -108,16 +116,41 @@ int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *len
     if (result == 0 && option == 21) peer->uid = 1;
     return result;
 }
+int __wrap_fsync(int fd) {
+    static unsigned int directory_calls = 0;
+    struct stat value;
+    FILE *control;
+    int fail_at = 0;
+    if (fstat(fd, &value) == 0 && S_ISDIR(value.st_mode)) {
+        ++directory_calls;
+        control = fopen("FSYNC_CONTROL_PATH", "rb");
+        if (control != NULL) { fail_at = fgetc(control) - '0'; fclose(control); }
+        if (fail_at > 0 && directory_calls == (unsigned int)fail_at) {
+            errno = EIO;
+            return -1;
+        }
+    }
+    return __real_fsync(fd);
+}
 ''',
             encoding="utf-8",
         )
+        wrappers.write_text(
+            wrappers.read_text(encoding="utf-8").replace(
+                "FSYNC_CONTROL_PATH", str(cls.work / "fsync-control")
+            ), encoding="utf-8",
+        )
         cls.broker = cls.work / "pm3000-acme-admin"
+        cls.schedule = cls.work / "schedule-v1"
+        cls.crontab = cls.work / "root.crontab"
         subprocess.run(
             ["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic",
              "-DPM3000_TESTING", f'-DPM3000_TEST_EXECUTABLE="{cls.fake}"',
+             f'-DPM3000_SCHEDULE_PATH="{cls.schedule}"',
+             f'-DPM3000_CRONTAB_PATH="{cls.crontab}"',
              str(NATIVE / "pm3000-acme-admin.c"), str(wrappers),
              "-Wl,--wrap=getuid", "-Wl,--wrap=geteuid", "-Wl,--wrap=getpwnam",
-             "-Wl,--wrap=getsockopt", "-o", str(cls.broker)], check=True
+             "-Wl,--wrap=getsockopt", "-Wl,--wrap=fsync", "-o", str(cls.broker)], check=True
         )
 
     @classmethod
@@ -225,6 +258,81 @@ int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *len
         self.assertIn(b"argc=2", output)
         self.assertIn(b"argv1=status input=0", output)
 
+    def test_schedule_preserves_unrelated_cron_and_uses_one_exact_fixed_block(self) -> None:
+        self.schedule.unlink(missing_ok=True)
+        self.crontab.write_bytes(b"# site job\n5 4 * * * /usr/local/site-job --keep='yes'\n")
+        self.crontab.chmod(0o600)
+        status, child, output, exit_status = self.transact(SCHEDULE_SHOW)
+        self.assertEqual((OK, 0, 0), (status, child, exit_status))
+        self.assertEqual({"managed": False, "enabled": False, "hour": 3, "minute": 17},
+                         json.loads(output))
+
+        self.assertEqual((OK, 0, b"", 0),
+                         self.transact(SCHEDULE_CREATE, bytes((1, 23, 59))))
+        expected = (b"# site job\n5 4 * * * /usr/local/site-job --keep='yes'\n"
+                    b"# BEGIN PM3000 ACME SCHEDULE\n"
+                    b"59 23 * * * /mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance scheduled\n"
+                    b"# END PM3000 ACME SCHEDULE\n")
+        self.assertEqual(expected, self.crontab.read_bytes())
+        self.assertEqual(0o600, self.crontab.stat().st_mode & 0o777)
+        self.assertEqual(0o600, self.schedule.stat().st_mode & 0o777)
+
+        status, child, output, exit_status = self.transact(SCHEDULE_SHOW)
+        model = json.loads(output)
+        self.assertEqual((OK, 0, 0, True, 23, 59),
+                         (status, child, exit_status, model["enabled"], model["hour"], model["minute"]))
+        revision = model["revision"].encode("ascii")
+        self.assertEqual((OK, 0, b"", 0),
+                         self.transact(SCHEDULE_REPLACE, revision + bytes((0, 0, 0))))
+        self.assertEqual(b"# site job\n5 4 * * * /usr/local/site-job --keep='yes'\n",
+                         self.crontab.read_bytes())
+
+    def test_schedule_inserts_one_boundary_after_crontab_without_final_newline(self) -> None:
+        self.schedule.unlink(missing_ok=True)
+        original = b"5 4 * * * /usr/local/site-job --keep='yes'"
+        self.crontab.write_bytes(original)
+        self.crontab.chmod(0o600)
+        self.assertEqual((OK, 0, b"", 0),
+                         self.transact(SCHEDULE_CREATE, bytes((1, 3, 17))))
+        expected = (original + b"\n# BEGIN PM3000 ACME SCHEDULE\n"
+                    b"17 3 * * * /mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance scheduled\n"
+                    b"# END PM3000 ACME SCHEDULE\n")
+        self.assertEqual(expected, self.crontab.read_bytes())
+        status, child, output, exit_status = self.transact(SCHEDULE_SHOW)
+        self.assertEqual((OK, 0, 0), (status, child, exit_status))
+        self.assertTrue(json.loads(output)["managed"])
+
+    def test_schedule_parent_fsync_after_rename_is_outcome_unknown(self) -> None:
+        control = self.work / "fsync-control"
+        for fail_at in (b"1", b"2"):
+            with self.subTest(parent_fsync_call=fail_at):
+                self.schedule.unlink(missing_ok=True)
+                self.crontab.write_bytes(b"# unrelated\n")
+                self.crontab.chmod(0o600)
+                control.write_bytes(fail_at)
+                self.assertEqual((OUTCOME_UNKNOWN, 255, b"", 5),
+                                 self.transact(SCHEDULE_CREATE, bytes((1, 3, 17))))
+        control.unlink(missing_ok=True)
+
+    def test_schedule_rejects_stale_revision_and_malformed_or_duplicate_markers(self) -> None:
+        self.schedule.unlink(missing_ok=True)
+        for cron in (
+            b"# BEGIN PM3000 ACME SCHEDULE\n",
+            b"# BEGIN PM3000 ACME SCHEDULE\n# BEGIN PM3000 ACME SCHEDULE\n# END PM3000 ACME SCHEDULE\n",
+        ):
+            self.crontab.write_bytes(cron); self.crontab.chmod(0o600)
+            self.assertEqual((CHILD_FAILED, 5, b"", 5),
+                             self.transact(SCHEDULE_CREATE, bytes((1, 0, 0))))
+            self.assertFalse(self.schedule.exists())
+
+        self.crontab.write_bytes(b"unrelated\n"); self.crontab.chmod(0o600)
+        self.assertEqual((OK, 0, b"", 0),
+                         self.transact(SCHEDULE_CREATE, bytes((1, 0, 0))))
+        before = self.crontab.read_bytes()
+        self.assertEqual((CHILD_FAILED, 5, b"", 5),
+                         self.transact(SCHEDULE_REPLACE, ETAG + bytes((1, 1, 1))))
+        self.assertEqual(before, self.crontab.read_bytes())
+
     def test_renew_returns_only_after_private_startup_acceptance_without_waiting_for_completion(self) -> None:
         started = time.monotonic()
         status, child_status, output, exit_status = self.transact(RENEW_ASYNC)
@@ -276,7 +384,7 @@ int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *len
 
     def test_production_source_has_fixed_authority_and_no_shell_or_environment_path(self) -> None:
         source = (NATIVE / "pm3000-acme-admin.c").read_text(encoding="utf-8")
-        self.assertIn('"/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme"', source)
+        self.assertIn('"/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance"', source)
         self.assertIn('caller_user[] = "daemon"', source)
         self.assertIn("geteuid() != 0U", source)
         self.assertIn("SO_PEERCRED_VALUE 21", source)
@@ -285,7 +393,7 @@ int __wrap_getsockopt(int fd, int level, int option, void *value, socklen_t *len
         self.assertIn("execve(PM3000_ACME_EXECUTABLE, arguments, environment)", source)
         self.assertNotIn("getenv(", source)
         self.assertNotIn("/bin/sh", source)
-        self.assertIn('"renew"', source)
+        self.assertIn('"force"', source)
         self.assertIn('"--broker-startup-notify"', source)
         makefile = (NATIVE / "Makefile").read_text(encoding="utf-8")
         self.assertIn("pm3000-acme-admin-ppc32", makefile)

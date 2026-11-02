@@ -143,10 +143,10 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
     static const char *const apache_files[] = {"listen.conf", "pm3000-revive.conf"};
     static const mode_t apache_modes[] = {0644, 0644};
     static const char *const bin_files[] = {
-        "pm3000-acme", "pm3000-acme-admin", "pm3000-atomic-publish",
+        "pm3000-acme", "pm3000-acme-admin", "pm3000-acme-maintenance", "pm3000-atomic-publish",
         "pm3000-gsp-session-helper", "pm3000-rest"
     };
-    static const mode_t bin_modes[] = {0755, 04750, 0755, 04750, 0755};
+    static const mode_t bin_modes[] = {0755, 04750, 0755, 0755, 04750, 0755};
     static const char *const web_files[] = {"app.js", "index.html", "styles.css"};
     static const mode_t web_modes[] = {0644, 0644, 0644};
     int root_fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
@@ -160,7 +160,7 @@ static int verify_release(const char *path, gid_t expected_helper_group, int ver
             && verify_regular_at(root_fd, "RELEASE_MANIFEST.json", 0600) == 0
             && verify_regular_at(root_fd, "RELEASE_SHA256SUMS", 0600) == 0
             && verify_subdirectory(root_fd, "apache", apache_files, apache_modes, 2) == 0
-            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 5) == 0
+            && verify_subdirectory(root_fd, "bin", bin_files, bin_modes, 6) == 0
             && verify_subdirectory(root_fd, "web", web_files, web_modes, 3) == 0) {
         bin_fd = openat(root_fd, "bin", O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
         if (bin_fd >= 0 && (!verify_helper_group ||
@@ -307,6 +307,40 @@ int main(int argc, char **argv) {
             return 1;
         }
         return close(descriptor) == 0 ? 0 : 1;
+    }
+
+    if (argc == 4 && strcmp(argv[1], "--verify-same-metadata") == 0) {
+        int left_fd = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        int right_fd = open(argv[3], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        struct stat left, right;
+        int result = -1;
+        if (left_fd >= 0 && right_fd >= 0 &&
+                fstat(left_fd, &left) == 0 && fstat(right_fd, &right) == 0 &&
+                S_ISREG(left.st_mode) && S_ISREG(right.st_mode) &&
+                left.st_nlink == 1 && right.st_nlink == 1 &&
+                left.st_uid == right.st_uid && left.st_gid == right.st_gid &&
+                (left.st_mode & 07777) == (right.st_mode & 07777))
+            result = 0;
+        if (left_fd >= 0 && close(left_fd) != 0) result = -1;
+        if (right_fd >= 0 && close(right_fd) != 0) result = -1;
+        if (result != 0) fprintf(stderr, "regular-file metadata mismatch\n");
+        return result == 0 ? 0 : 1;
+    }
+
+    if (argc == 3 && strcmp(argv[1], "--verify-root-executable") == 0) {
+        int file_fd = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+        if (file_fd < 0) {
+            perror("open root executable");
+            return 1;
+        }
+        if (fstat(file_fd, &source) != 0 || !S_ISREG(source.st_mode) ||
+                source.st_nlink != 1 || source.st_uid != 0 || source.st_gid != 0 ||
+                (source.st_mode & 07777) != 0755) {
+            fprintf(stderr, "root executable metadata verification failed\n");
+            close(file_fd);
+            return 1;
+        }
+        return close(file_fd) == 0 ? 0 : 1;
     }
 
     if (argc == 3 && strcmp(argv[1], "--verify-private-directory") == 0) {

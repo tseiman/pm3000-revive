@@ -36,6 +36,7 @@ class LocalInstallerBundleTests(unittest.TestCase):
             ("apache/pm3000-revive.conf", b"apache\n", 0o644),
             ("bin/pm3000-acme", b"accepted", 0o755),
             ("bin/pm3000-acme-admin", b"admin", 0o4750),
+            ("bin/pm3000-acme-maintenance", b"#!/bin/sh\nexit 2\n", 0o755),
             ("bin/pm3000-atomic-publish", b"publish", 0o755),
             ("bin/pm3000-gsp-session-helper", b"session", 0o4750),
             ("bin/pm3000-rest", b"rest", 0o755),
@@ -169,8 +170,8 @@ class LocalInstallerBundleTests(unittest.TestCase):
 
     def test_native_adapter_documents_complete_twelve_member_archive(self):
         documentation = (ROOT / "modern-WebUI/docs/NATIVE-ADAPTER.md").read_text(encoding="utf-8")
-        self.assertIn("complete twelve-member production archive", documentation)
-        self.assertNotIn("complete eleven-member production archive", documentation)
+        self.assertIn("complete thirteen-member production archive", documentation)
+        self.assertNotIn("complete twelve-member production archive", documentation)
 
     def test_builder_creates_closed_relative_self_verifying_zip(self):
         output = self.work / "installer.zip"
@@ -209,6 +210,9 @@ class LocalInstallerBundleTests(unittest.TestCase):
         self.assertIn("bundle.verify.complete=yes", verified.stdout)
         self.assertIn("release_id=test-final", verified.stdout)
         self.assertIn("git_revision=abcdef123456", verified.stdout)
+        readme = (extract / "pm3000-installer/README.md").read_text(encoding="utf-8")
+        self.assertNotIn("No scheduler is included", readme)
+        self.assertIn("scheduler", readme.lower())
 
     def test_verifier_rejects_bundle_member_tampering(self):
         output = self.work / "installer.zip"

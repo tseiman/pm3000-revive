@@ -108,6 +108,7 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
             ("apache/pm3000-revive.conf", b"test\n", 0o644),
             ("bin/pm3000-acme", acme, 0o755),
             ("bin/pm3000-acme-admin", b"broker\n", broker_mode),
+            ("bin/pm3000-acme-maintenance", b"#!/bin/sh\nexit 2\n", 0o755),
             ("bin/pm3000-atomic-publish", helper, 0o755),
             ("bin/pm3000-gsp-session-helper", b"helper\n", 0o4750),
             ("bin/pm3000-rest", rest, 0o755),
@@ -236,8 +237,14 @@ class Stage7DeviceCompatibilityTests(unittest.TestCase):
         self.assertIn('initialize_acme_directory "$root/acme/trust"', installer)
         self.assertIn('initialize_public_directory "$root/acme-http-01"', installer)
         self.assertNotIn('config.json', installer)
-        self.assertNotIn('/mnt/hdUser/pm3000-revive/acme', rollback)
-        self.assertNotIn('crontab', installer + compatibility + rollback)
+        self.assertNotIn('/mnt/hdUser/pm3000-revive/acme/config.json', rollback)
+        self.assertNotIn('/mnt/hdUser/pm3000-revive/acme/trust', rollback)
+        self.assertNotIn('/mnt/hdUser/pm3000-revive/acme/certificate', rollback)
+        self.assertIn('/mnt/hdUser/pm3000-revive/acme/schedule-v1', rollback)
+        self.assertIn('/etc/cron/crontabs', installer)
+        self.assertIn('/usr/sbin/update-rc.d busybox-cron defaults 95', installer)
+        self.assertNotIn('/etc/cron/crontabs', compatibility)
+        self.assertIn('/etc/cron/crontabs/root', rollback)
 
     def test_rejects_backup_from_other_target_before_transport(self):
         result = self.run_compatibility("root@other-pdu")

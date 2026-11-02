@@ -176,6 +176,7 @@ apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
 bin/pm3000-acme-admin
+bin/pm3000-acme-maintenance
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest

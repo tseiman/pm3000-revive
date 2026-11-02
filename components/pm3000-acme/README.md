@@ -37,14 +37,17 @@ Installation creates only missing state/trust/webroot directories and never
 invents configuration, a hostname, or a CA. It never triggers issuance, renewal,
 certificate rollback, or an ACME-specific Apache reload.
 
-The complete operational interface belongs to `pm3000-acme`: configuration
+The complete issuance interface belongs to `pm3000-acme`: configuration
 inspection/replacement, managed CA installation, status, and foreground renewal
 must all be available from the CLI. REST/WebUI invokes the same closed operations
 through the separate `pm3000-acme-admin` fixed-purpose privileged broker, packaged
 as `root:daemon` mode `4750`. The broker executes only the fixed
-`/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme` target; `pm3000-rest`
+release-owned `/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance`
+target in fixed `force` mode; that helper invokes `pm3000-acme`, validates and
+activates changed server certificates, and preserves the renewal startup
+handshake. `pm3000-rest`
 does not link ACME sources or read the private ACME state. No scheduler or cron
-integration is installed.
+integration is installed yet.
 
 ### First-run bootstrap
 

@@ -175,6 +175,23 @@ class AcmeAdminClientTests(unittest.TestCase):
         self.assertIn("PM3000_ACME_ADMIN_CONFIG_WIRE_LIMIT", header)
         self.assertIn("PM3000_ACME_ADMIN_CA_WIRE_LIMIT", header)
 
+    def test_schedule_operations_accept_only_the_closed_three_byte_model(self) -> None:
+        header = (NATIVE / "acme_admin_client.h").read_text(encoding="ascii")
+        self.assertIn("PM3000_ACME_ADMIN_SCHEDULE_SHOW", header)
+        self.assertIn("PM3000_ACME_ADMIN_SCHEDULE_REPLACE", header)
+        self.assertIn("PM3000_ACME_ADMIN_SCHEDULE_CREATE", header)
+        valid_etag = '"' + "a" * 64 + '"'
+        self.assertEqual("0", self.call("helper", 10)["result"])
+        self.assertEqual("0", self.call("helper", 11, valid_etag, "\x01\x17\x3b")["result"])
+        self.assertEqual("0", self.call("helper", 12, None, "\x01\x01\x01")["result"])
+        for opcode, revision, body in (
+            (10, None, "x"), (11, valid_etag, "\x01\x18\x01"),
+            (11, valid_etag, "\x01\x01\x3c"), (11, valid_etag, "\x02\x01\x01"),
+            (12, None, "\x01\x01"), (12, valid_etag, "\x01\x01\x01"),
+        ):
+            with self.subTest(opcode=opcode, body=body):
+                self.assertEqual("1", self.call("helper", opcode, revision, body)["result"])
+
     def test_rejects_invalid_path_opcode_and_body_shape_before_exec(self) -> None:
         valid_etag = '"' + "a" * 64 + '"'
         cases = (("relative", 1, None, None), ("missing", 6, None, "x"),

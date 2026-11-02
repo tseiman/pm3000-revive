@@ -253,6 +253,15 @@
                 <p><span id="acme-renewal-label">Status:</span> <strong id="acme-renewal-status">Unknown</strong></p>
                 <p id="acme-renewal-note" class="panel-status" aria-live="polite"></p>
                 <button id="acme-renew" class="primary-button" type="button" disabled>Start renewal</button>
+                <form id="acme-schedule-form">
+                  <h3 id="acme-schedule-title">Automatic renewal schedule</h3>
+                  <label class="check-row"><input id="acme-schedule-enabled" type="checkbox" disabled><span><strong id="acme-schedule-enabled-label">Enable daily check</strong><small id="acme-schedule-local-time">Runs in device local time.</small></span></label>
+                  <label id="acme-schedule-time-label" for="acme-schedule-time">Daily time (device local time)</label><input id="acme-schedule-time" type="time" step="60" value="03:17" disabled required>
+                  <label id="acme-renewal-window-label" for="acme-renewal-window">Renewal window</label><input id="acme-renewal-window" value="30 days" readonly aria-readonly="true">
+                  <p id="acme-schedule-status" class="panel-status" aria-live="polite">Load the schedule before saving.</p>
+                  <p id="acme-schedule-error" class="form-error" role="alert"></p>
+                  <button id="save-acme-schedule" class="secondary-button" type="submit" disabled>Save schedule</button>
+                </form>
               </section>
             </div>
           </div>

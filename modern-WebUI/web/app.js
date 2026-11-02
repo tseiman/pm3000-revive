@@ -1,4 +1,4 @@
-const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, timeZoneRequest: 0, acmeRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, timeZoneWritePending: false, acmeMutationPending: false, acmeRenewalPending: false, acmeLoaded: false, acmeConfigured: false, acmeCaInstalled: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "", timeZoneRevision: "", acmeRevision: "", acmeRenewalTimer: 0 };
+const state = { session: null, csrf: "", view: "outlets", generation: 0, outletRequest: 0, pduRequest: 0, dsviewRequest: 0, nisRequest: 0, helpLanguageRequest: 0, dataBufferingRequest: 0, applianceLoggingRequest: 0, timeZoneRequest: 0, acmeRequest: 0, acmeScheduleRequest: 0, helpLanguageWritePending: false, dataBufferingWritePending: false, applianceLoggingWritePending: false, timeZoneWritePending: false, acmeMutationPending: false, acmeRenewalPending: false, acmeSchedulePending: false, acmeLoaded: false, acmeConfigured: false, acmeCaInstalled: false, acmeScheduleManaged: false, tokenRequest: 0, sysinfoRequest: 0, memoryRequest: 0, flashRequest: 0, netdevRequest: 0, route4Request: 0, route6Request: 0, serialRequest: 0, outlets: [], pdus: [], tokens: [], inventoryRevision: "", pduInventoryRevision: "", helpLanguageRevision: "", dataBufferingRevision: "", applianceLoggingRevision: "", timeZoneRevision: "", acmeRevision: "", acmeScheduleRevision: "", acmeRenewalTimer: 0 };
 const $ = (id) => document.getElementById(id);
 const powerActionsEnabled = true;
 let transitionTail = Promise.resolve();
@@ -29,6 +29,10 @@ const messages = {
     "acme.upload": "Upload CA bundle", "acme.caEmpty": "Choose a non-empty CA bundle.", "acme.caLarge": "The CA bundle must not exceed 64 KiB.", "acme.caSaved": "Managed CA bundle installed.",
     "acme.renewalTitle": "Renewal", "acme.status": "Status:", "acme.renew": "Start renewal", "acme.started": "Renewal started; completion has not yet been confirmed.",
     "acme.refreshStopped": "Automatic status refresh stopped. Use Reload for the latest status.",
+    "acme.scheduleTitle": "Automatic renewal schedule", "acme.scheduleEnabled": "Enable daily check", "acme.scheduleLocal": "Runs in device local time.",
+    "acme.scheduleTime": "Daily time (device local time)", "acme.window": "Renewal window", "acme.windowValue": "30 days", "acme.scheduleSave": "Save schedule",
+    "acme.scheduleLoad": "Load the schedule before saving.", "acme.scheduleLoaded": "Daily schedule loaded. Time is device local time.", "acme.scheduleSaved": "Renewal schedule saved.",
+    "acme.scheduleStale": "The schedule changed. The latest device schedule has been reloaded; review it before saving again.",
     "acme.wait": "Wait for the ACME operation to finish before signing out.",
     "acme.renewal.never_run": "Never run", "acme.renewal.starting": "Starting", "acme.renewal.running": "Running",
     "acme.renewal.succeeded": "Succeeded", "acme.renewal.failed": "Failed", "acme.renewal.durability_uncertain": "Durability uncertain", "acme.renewal.unknown": "Unknown"
@@ -50,6 +54,10 @@ const messages = {
     "acme.upload": "CA-Bündel hochladen", "acme.caEmpty": "Ein nicht leeres CA-Bündel auswählen.", "acme.caLarge": "Das CA-Bündel darf höchstens 64 KiB groß sein.", "acme.caSaved": "Verwaltetes CA-Bündel installiert.",
     "acme.renewalTitle": "Erneuerung", "acme.status": "Status:", "acme.renew": "Erneuerung starten", "acme.started": "Erneuerung gestartet; der Abschluss ist noch nicht bestätigt.",
     "acme.refreshStopped": "Automatische Statusaktualisierung beendet. Für den aktuellen Status neu laden.",
+    "acme.scheduleTitle": "Zeitplan für automatische Erneuerung", "acme.scheduleEnabled": "Tägliche Prüfung aktivieren", "acme.scheduleLocal": "Ausführung in lokaler Gerätezeit.",
+    "acme.scheduleTime": "Tägliche Uhrzeit (lokale Gerätezeit)", "acme.window": "Erneuerungsfenster", "acme.windowValue": "30 Tage", "acme.scheduleSave": "Zeitplan speichern",
+    "acme.scheduleLoad": "Vor dem Speichern den Zeitplan laden.", "acme.scheduleLoaded": "Täglicher Zeitplan geladen. Die Uhrzeit ist lokale Gerätezeit.", "acme.scheduleSaved": "Erneuerungszeitplan gespeichert.",
+    "acme.scheduleStale": "Der Zeitplan wurde geändert. Der aktuelle Gerätezeitplan wurde neu geladen; vor erneutem Speichern bitte prüfen.",
     "acme.wait": "Vor dem Abmelden das Ende des ACME-Vorgangs abwarten.",
     "acme.renewal.never_run": "Noch nie ausgeführt", "acme.renewal.starting": "Wird gestartet", "acme.renewal.running": "Läuft",
     "acme.renewal.succeeded": "Erfolgreich", "acme.renewal.failed": "Fehlgeschlagen", "acme.renewal.durability_uncertain": "Dauerhaftigkeit ungewiss", "acme.renewal.unknown": "Unbekannt"
@@ -274,7 +282,7 @@ function switchView(view, path = "", label = "") {
   if (view === "data-buffering") loadDataBufferingSetting();
   if (view === "appliance-logging") loadApplianceLoggingSetting();
   if (view === "time-zone") loadTimeZoneSetting();
-  if (view === "acme") loadAcmeSetting();
+  if (view === "acme") { loadAcmeSetting(); loadAcmeSchedule(); }
   if (view === "sysinfo") loadSysinfo();
   if (view === "memory") loadMemory();
   if (view === "flash") loadFlash();
@@ -818,13 +826,70 @@ const acmeTextIds = {
   "acme-directory-label": "acme.directory", "acme-dns-label": "acme.dns", "acme-dns-help": "acme.dnsHelp",
   "save-acme": "acme.save", "acme-ca-title": "acme.caTitle", "acme-ca-path-label": "acme.caPath",
   "acme-ca-upload-label": "acme.caUpload", "acme-ca-help": "acme.caHelp", "upload-acme-ca": "acme.upload",
-  "acme-renewal-title": "acme.renewalTitle", "acme-renewal-label": "acme.status", "acme-renew": "acme.renew"
+  "acme-renewal-title": "acme.renewalTitle", "acme-renewal-label": "acme.status", "acme-renew": "acme.renew",
+  "acme-schedule-title": "acme.scheduleTitle", "acme-schedule-enabled-label": "acme.scheduleEnabled", "acme-schedule-local-time": "acme.scheduleLocal",
+  "acme-schedule-time-label": "acme.scheduleTime", "acme-renewal-window-label": "acme.window", "acme-renewal-window": "acme.windowValue", "save-acme-schedule": "acme.scheduleSave"
 };
 for (const [id, key] of Object.entries(acmeTextIds)) setText(id, t(key));
 setText("acme-status", t("acme.loadFirst"));
 setText("acme-renewal-status", t("acme.renewal.unknown"));
+setText("acme-schedule-status", t("acme.scheduleLoad"));
 
-function acmeOperationPending() { return state.acmeMutationPending || state.acmeRenewalPending; }
+function setAcmeScheduleLoaded(loaded) {
+  const disabled = !loaded || state.acmeSchedulePending;
+  $("acme-schedule-enabled").disabled = disabled; $("acme-schedule-time").disabled = disabled; $("save-acme-schedule").disabled = disabled;
+  if (!loaded) { state.acmeScheduleRevision = ""; state.acmeScheduleManaged = false; }
+}
+
+async function loadAcmeSchedule(writeReadback = false) {
+  if (!state.session || !state.session.navigation.canManageAcme || (state.acmeSchedulePending && !writeReadback)) return false;
+  const request = ++state.acmeScheduleRequest;
+  setAcmeScheduleLoaded(false); setText("acme-schedule-error", ""); setText("acme-schedule-status", t("acme.scheduleLoad"));
+  try {
+    const payload = await api("/api/v1/settings/acme/schedule");
+    const keys = payload && typeof payload === "object" ? Object.keys(payload).sort().join(",") : "";
+    if (request !== state.acmeScheduleRequest) return false;
+    if (keys !== "enabled,hour,managed,minute,renewalWindowSeconds,revision" || typeof payload.managed !== "boolean" || typeof payload.enabled !== "boolean" ||
+        !Number.isInteger(payload.hour) || payload.hour < 0 || payload.hour > 23 || !Number.isInteger(payload.minute) || payload.minute < 0 || payload.minute > 59 ||
+        payload.renewalWindowSeconds !== 2592000 || (payload.managed ? !strongRevision(payload.revision) : payload.revision !== null)) throw new Error(t("acme.invalidResponse"));
+    state.acmeScheduleManaged = payload.managed; state.acmeScheduleRevision = payload.revision || "";
+    $("acme-schedule-enabled").checked = payload.enabled;
+    $("acme-schedule-time").value = `${String(payload.hour).padStart(2, "0")}:${String(payload.minute).padStart(2, "0")}`;
+    setAcmeScheduleLoaded(true); setText("acme-schedule-status", t("acme.scheduleLoaded")); return true;
+  } catch (error) {
+    if (request === state.acmeScheduleRequest) { setAcmeScheduleLoaded(false); if (state.session) setText("acme-schedule-error", error.message); }
+    return false;
+  }
+}
+
+$("acme-schedule-form").addEventListener("submit", async (event) => {
+  event.preventDefault(); if ($("save-acme-schedule").disabled || state.acmeSchedulePending) return;
+  const match = /^(\d{2}):(\d{2})$/u.exec($("acme-schedule-time").value);
+  if (!match) { setText("acme-schedule-error", t("acme.invalidResponse")); return; }
+  const hour = Number(match[1]); const minute = Number(match[2]); const generation = state.generation;
+  if (hour > 23 || minute > 59) { setText("acme-schedule-error", t("acme.invalidResponse")); return; }
+  const headers = state.acmeScheduleManaged ? { "If-Match": state.acmeScheduleRevision } : { "If-None-Match": "*" };
+  state.acmeSchedulePending = true; setAcmeScheduleLoaded(true); $("disconnect").disabled = true; setText("acme-schedule-error", "");
+  let restoreLoaded = false;
+  try {
+    await api("/api/v1/settings/acme/schedule", { method: "PUT", headers, expectedStatus: 204, body: JSON.stringify({ enabled: $("acme-schedule-enabled").checked, hour, minute }) });
+    if (generation !== state.generation) return;
+    restoreLoaded = await loadAcmeSchedule(true); if (restoreLoaded && generation === state.generation) toast(t("acme.scheduleSaved"));
+  } catch (error) {
+    if (generation === state.generation && state.session) {
+      if (error.status === 412) {
+        restoreLoaded = await loadAcmeSchedule(true);
+        if (restoreLoaded) setText("acme-schedule-error", t("acme.scheduleStale"));
+      } else {
+        setAcmeScheduleLoaded(false); setText("acme-schedule-error", error.message);
+      }
+    }
+  } finally {
+    if (generation === state.generation) { state.acmeSchedulePending = false; setAcmeScheduleLoaded(restoreLoaded); if (state.session) $("disconnect").disabled = false; }
+  }
+});
+
+function acmeOperationPending() { return state.acmeMutationPending || state.acmeRenewalPending || state.acmeSchedulePending; }
 
 function setAcmeLoaded(loaded, preserveDraft = false) {
   state.acmeLoaded = loaded;
@@ -842,9 +907,10 @@ function setAcmeLoaded(loaded, preserveDraft = false) {
 }
 
 function clearAcmeState() {
-  state.acmeRequest += 1; state.acmeRevision = ""; state.acmeMutationPending = false; state.acmeRenewalPending = false;
+  state.acmeRequest += 1; state.acmeScheduleRequest += 1; state.acmeRevision = ""; state.acmeScheduleRevision = ""; state.acmeMutationPending = false; state.acmeRenewalPending = false; state.acmeSchedulePending = false;
   if (state.acmeRenewalTimer) window.clearTimeout(state.acmeRenewalTimer); state.acmeRenewalTimer = 0;
   $("acme-ca-form").reset(); setAcmeLoaded(false); $("reload-acme").disabled = true;
+  $("acme-schedule-form").reset(); $("acme-schedule-time").value = "03:17"; setAcmeScheduleLoaded(false);
   setText("acme-status", t("acme.loadFirst")); setText("acme-error", ""); setText("acme-renewal-note", "");
 }
 
@@ -995,7 +1061,7 @@ $("acme-renew").addEventListener("click", async () => {
   }
 });
 
-$("reload-acme").addEventListener("click", () => loadAcmeSetting());
+$("reload-acme").addEventListener("click", () => { loadAcmeSetting(); loadAcmeSchedule(); });
 
 $("password-change-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1049,7 +1115,7 @@ $("connect-form").addEventListener("submit", (event) => {
 
 $("disconnect").addEventListener("click", () => {
   if (tokenIssuancePending) { toast("Wait for token creation to finish before signing out."); return; }
-  if (state.acmeMutationPending || state.acmeRenewalPending) { toast(t("acme.wait")); return; }
+  if (state.acmeMutationPending || state.acmeRenewalPending || state.acmeSchedulePending) { toast(t("acme.wait")); return; }
   if (state.helpLanguageWritePending || state.dataBufferingWritePending || state.applianceLoggingWritePending || state.timeZoneWritePending) { toast("Wait for the settings save to finish before signing out."); return; }
   if (bootstrapPending || logoutPending || loginPending || !state.session) return;
   logoutPending = true; setLoginDisabled(true); serializeTransition(logoutTransition);

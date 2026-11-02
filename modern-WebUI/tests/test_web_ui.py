@@ -401,6 +401,20 @@ class WebUiTests(unittest.TestCase):
             self.assertNotIn("digest", token)
             self.assertNotIn("token", token)
 
+    def test_acme_schedule_ui_is_closed_localized_and_revision_safe(self) -> None:
+        self.assertIn('id="acme-schedule-enabled" type="checkbox"', self.html)
+        self.assertIn('id="acme-schedule-time" type="time" step="60" value="03:17"', self.html)
+        self.assertIn('id="acme-renewal-window" value="30 days" readonly', self.html)
+        self.assertNotRegex(self.html, r'acme[^>]*(cron|command|hook|frequency)')
+        self.assertIn('"/api/v1/settings/acme/schedule"', self.javascript)
+        self.assertIn('{ "If-None-Match": "*" }', self.javascript)
+        self.assertIn('{ "If-Match": state.acmeScheduleRevision }', self.javascript)
+        self.assertIn('error.status === 412', self.javascript)
+        self.assertIn('restoreLoaded = await loadAcmeSchedule(true)', self.javascript)
+        self.assertIn('payload.renewalWindowSeconds !== 2592000', self.javascript)
+        self.assertIn('Runs in device local time.', self.javascript)
+        self.assertIn('Ausführung in lokaler Gerätezeit.', self.javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

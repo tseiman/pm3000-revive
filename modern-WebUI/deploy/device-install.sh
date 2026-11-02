@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/listen.conf|apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/listen.conf|apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-acme-maintenance|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,7 +34,7 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 10 ]
+    [ "$_sum_count" -eq 11 ]
 }
 
 # BEGIN DISK PREFLIGHT TEST FUNCTIONS
@@ -122,7 +122,7 @@ extract_release_archive()
         return 1
     fi
     for extracted_member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf \
-        bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+        bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-acme-maintenance bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
         web/app.js web/index.html web/styles.css; do
         [ -f "$_extract_root/$extracted_member" ] && [ ! -L "$_extract_root/$extracted_member" ] || {
             echo "release archive extraction incomplete: $extracted_member" >&2
@@ -170,6 +170,11 @@ config=$config_dir/pm3000-revive.conf
 listener=$config_dir/listen.conf
 vendor_listener_sha256=480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a6ab5835
 managed_listener_sha256=45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f
+busybox_cron_sha256=5a6e086a544630e10a916361b956a53eb030253d72e206cc1ed1f4d6eb926e65
+cron_init=/etc/init.d/busybox-cron
+cron_spool=/etc/cron/crontabs
+schedule_state_path=$root/acme/schedule-v1
+crontab_path=$cron_spool/root
 work=/tmp/stage6-install-$$
 for parent in /mnt /mnt/hdUser "$root" "$base" "$releases" /etc /etc/apache2 "$config_dir"; do
     [ ! -L "$parent" ] || { echo "unsafe parent symlink: $parent" >&2; exit 1; }
@@ -204,6 +209,7 @@ apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
 bin/pm3000-acme-admin
+bin/pm3000-acme-maintenance
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -225,13 +231,27 @@ if [ -L "$base/current" ]; then
 fi
 old_config=absent
 if [ -f "$config" ]; then cp -p "$config" "$work/old-config"; old_config=file; fi
+old_schedule=absent
+old_crontab=absent
 cp -p "$listener" "$work/old-listen.conf"
 created_release=no
 committed=no
 publish_ambiguous=no
+cron_spool_created=no
+cron_links_created=no
 rollback_failed_install()
 {
     [ "$committed" = yes ] || return 0
+    if [ "$cron_links_created" = yes ]; then
+        for _cron_link in /etc/rc0.d/K95busybox-cron /etc/rc1.d/K95busybox-cron \
+            /etc/rc2.d/S95busybox-cron /etc/rc3.d/S95busybox-cron \
+            /etc/rc4.d/S95busybox-cron /etc/rc5.d/S95busybox-cron \
+            /etc/rc6.d/K95busybox-cron; do
+            [ -L "$_cron_link" ] && [ "$(readlink "$_cron_link")" = ../init.d/busybox-cron ] || return 1
+            rm -f "$_cron_link" || return 1
+        done
+    fi
+
     if [ "$old_config" = file ]; then
         cp -p "$work/old-config" "$config_dir/.pm3000-revive.conf.stage6-tmp"
         "$atomic_helper" "$config_dir" .pm3000-revive.conf.stage6-tmp pm3000-revive.conf regular || return 1
@@ -247,6 +267,20 @@ rollback_failed_install()
         ln -s "$old_current" "$base/.current.stage6-tmp"
         "$atomic_helper" "$base" .current.stage6-tmp current symlink || return 1
     fi
+    if [ "$old_schedule" = file ]; then
+        cp -p "$work/old-schedule" "$root/acme/.schedule-v1.stage6-tmp" || return 1
+        "$atomic_helper" "$root/acme" .schedule-v1.stage6-tmp schedule-v1 regular || return 1
+    else
+        rm -f "$schedule_state_path" || return 1
+    fi
+    if [ "$old_crontab" = file ]; then
+        cp -p "$work/old-crontab" "$cron_spool/.root.stage6-tmp" || return 1
+        "$atomic_helper" "$cron_spool" .root.stage6-tmp root regular || return 1
+    else
+        rm -f "$crontab_path" || return 1
+    fi
+    "$cron_init" reload >/dev/null 2>&1 || return 1
+    if [ "$cron_spool_created" = yes ]; then rmdir "$cron_spool" || return 1; fi
     if [ "$created_release" = yes ] && [ -d "$release" ] && [ ! -L "$release" ]; then rm -rf "$release"; fi
     /usr/sbin/httpd -t -D SSL -f /etc/apache2/httpd.conf >/dev/null 2>&1 &&
         /etc/init.d/apache2 reload >/dev/null 2>&1 || return 1
@@ -280,6 +314,22 @@ atomic_helper=$work/pm3000-atomic-publish
 cp "$packaged_helper" "$atomic_helper"
 chmod 700 "$atomic_helper"
 "$atomic_helper" --verify-regular "$atomic_helper" || { echo "unsafe private atomic helper" >&2; exit 1; }
+if [ -e "$schedule_state_path" ] || [ -L "$schedule_state_path" ]; then
+    "$atomic_helper" --verify-private-regular "$schedule_state_path" || { echo "unsafe existing schedule state" >&2; exit 1; }
+    cp -p "$schedule_state_path" "$work/old-schedule"
+    old_schedule=file
+fi
+if [ -e "$crontab_path" ] || [ -L "$crontab_path" ]; then
+    "$atomic_helper" --verify-private-regular "$crontab_path" || { echo "unsafe existing root crontab" >&2; exit 1; }
+    cp -p "$crontab_path" "$work/old-crontab"
+    old_crontab=file
+fi
+[ -f "$cron_init" ] && [ ! -L "$cron_init" ] || { echo "unsafe BusyBox cron init script" >&2; exit 1; }
+"$atomic_helper" --verify-root-executable /etc/init.d/busybox-cron || {
+    echo "BusyBox cron init-script metadata mismatch" >&2; exit 1;
+}
+cron_init_actual=$(sha256_file "$cron_init") || { echo "BusyBox cron init-script digest unavailable" >&2; exit 1; }
+[ "$cron_init_actual" = "$busybox_cron_sha256" ] || { echo "BusyBox cron init-script digest mismatch" >&2; exit 1; }
 "$atomic_helper" --verify-apache-listener "$listener" 0 "$live_listener_state" || {
     echo "unsafe live Apache listen.conf owner or mode" >&2; exit 1;
 }
@@ -328,6 +378,16 @@ initialize_acme_directory()
     fi
     "$atomic_helper" --verify-private-directory "$_acme_directory"
 }
+initialize_root_directory()
+{
+    _root_directory=$1
+    [ ! -L "$_root_directory" ] || return 1
+    if [ ! -e "$_root_directory" ]; then
+        mkdir -m 700 "$_root_directory" || return 1
+        cron_spool_created=yes
+    fi
+    "$atomic_helper" --verify-private-directory "$_root_directory"
+}
 initialize_public_directory()
 {
     _public_directory=$1
@@ -359,7 +419,7 @@ initialize_acme_directory "$root/acme/trust" || { echo "unsafe ACME trust direct
 "$atomic_helper" --verify-private-tree "$root/acme" || { echo "unsafe ACME private state" >&2; exit 1; }
 initialize_public_directory "$root/acme-http-01" || { echo "unsafe ACME challenge webroot" >&2; exit 1; }
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf \
-    bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
+    bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-acme-maintenance bin/pm3000-atomic-publish bin/pm3000-rest bin/pm3000-gsp-session-helper \
     web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$tmp/$member" || {
         echo "unsafe extracted release member: $member" >&2
@@ -384,6 +444,7 @@ chmod 755 "$tmp" "$tmp/apache" "$tmp/bin" "$tmp/web"
 chmod 755 "$tmp/bin/pm3000-acme" "$tmp/bin/pm3000-atomic-publish" "$tmp/bin/pm3000-rest"
 chown 0:"$daemon_gid" "$tmp/bin/pm3000-acme-admin"
 chmod 4750 "$tmp/bin/pm3000-acme-admin"
+chmod 755 "$tmp/bin/pm3000-acme-maintenance"
 chown 0:"$daemon_gid" "$tmp/bin/pm3000-gsp-session-helper"
 chmod 4750 "$tmp/bin/pm3000-gsp-session-helper"
 chmod 600 "$tmp/RELEASE_MANIFEST.json" "$tmp/RELEASE_SHA256SUMS"
@@ -432,6 +493,36 @@ chmod 644 "$config_dir/.pm3000-revive.conf.stage6-tmp"
 cp "$release/apache/listen.conf" "$config_dir/.listen.conf.stage6-tmp"
 chmod 644 "$config_dir/.listen.conf.stage6-tmp"
 "$atomic_helper" "$config_dir" .listen.conf.stage6-tmp listen.conf regular
+initialize_root_directory /etc/cron/crontabs || { echo "unsafe BusyBox cron spool" >&2; exit 1; }
+cron_link_count=0
+for cron_link in /etc/rc0.d/K95busybox-cron /etc/rc1.d/K95busybox-cron \
+    /etc/rc2.d/S95busybox-cron /etc/rc3.d/S95busybox-cron \
+    /etc/rc4.d/S95busybox-cron /etc/rc5.d/S95busybox-cron \
+    /etc/rc6.d/K95busybox-cron; do
+    if [ -e "$cron_link" ] || [ -L "$cron_link" ]; then
+        [ -L "$cron_link" ] && [ "$(readlink "$cron_link")" = ../init.d/busybox-cron ] || {
+            echo "unexpected BusyBox cron startup link" >&2; exit 1;
+        }
+        cron_link_count=$((cron_link_count + 1))
+    fi
+done
+case "$cron_link_count" in
+    0) /usr/sbin/update-rc.d busybox-cron defaults 95; cron_links_created=yes; cron_action=start;;
+    7) cron_action=reload;;
+    *) echo "incomplete BusyBox cron startup integration" >&2; exit 1;;
+esac
+for cron_link in /etc/rc0.d/K95busybox-cron /etc/rc1.d/K95busybox-cron \
+    /etc/rc2.d/S95busybox-cron /etc/rc3.d/S95busybox-cron \
+    /etc/rc4.d/S95busybox-cron /etc/rc5.d/S95busybox-cron \
+    /etc/rc6.d/K95busybox-cron; do
+    [ -L "$cron_link" ] && [ "$(readlink "$cron_link")" = ../init.d/busybox-cron ] || {
+        echo "BusyBox cron startup integration failed" >&2; exit 1;
+    }
+done
+case "$cron_action" in
+    start) /etc/init.d/busybox-cron start;;
+    reload) /etc/init.d/busybox-cron reload;;
+esac
 /usr/sbin/httpd -t -D SSL -f /etc/apache2/httpd.conf
 /etc/init.d/apache2 reload
 health=$(REQUEST_METHOD=GET PATH_INFO=/health SCRIPT_NAME=/api/v1 HTTPS=on \

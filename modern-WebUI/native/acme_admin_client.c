@@ -52,8 +52,12 @@ static int valid_request(unsigned int opcode, const unsigned char *body,
         opcode == PM3000_ACME_ADMIN_STATUS ||
         opcode == PM3000_ACME_ADMIN_CONFIG_REVISION ||
         opcode == PM3000_ACME_ADMIN_RENEW_ASYNC ||
-        opcode == PM3000_ACME_ADMIN_BOOTSTRAP_STATUS)
+        opcode == PM3000_ACME_ADMIN_BOOTSTRAP_STATUS ||
+        opcode == PM3000_ACME_ADMIN_SCHEDULE_SHOW)
         return revision == NULL && body_length == 0U;
+    if (opcode == PM3000_ACME_ADMIN_SCHEDULE_CREATE)
+        return revision == NULL && body_length == 3U &&
+               body[0] <= 1U && body[1] <= 23U && body[2] <= 59U;
     if (opcode == PM3000_ACME_ADMIN_CONFIG_CREATE)
         return revision == NULL && body_length > 0U &&
                body_length <= PM3000_ACME_ADMIN_CONFIG_LIMIT;
@@ -72,6 +76,9 @@ static int valid_request(unsigned int opcode, const unsigned char *body,
         return body_length > 0U && body_length <= PM3000_ACME_ADMIN_CONFIG_LIMIT;
     if (opcode == PM3000_ACME_ADMIN_CA_INSTALL)
         return body_length > 0U && body_length <= PM3000_ACME_ADMIN_CA_LIMIT;
+    if (opcode == PM3000_ACME_ADMIN_SCHEDULE_REPLACE)
+        return body_length == 3U && body[0] <= 1U &&
+               body[1] <= 23U && body[2] <= 59U;
     return 0;
 }
 
@@ -81,7 +88,9 @@ static int is_mutation(unsigned int opcode)
            opcode == PM3000_ACME_ADMIN_CA_INSTALL ||
            opcode == PM3000_ACME_ADMIN_RENEW_ASYNC ||
            opcode == PM3000_ACME_ADMIN_CONFIG_CREATE ||
-           opcode == PM3000_ACME_ADMIN_CA_CREATE;
+           opcode == PM3000_ACME_ADMIN_CA_CREATE ||
+           opcode == PM3000_ACME_ADMIN_SCHEDULE_REPLACE ||
+           opcode == PM3000_ACME_ADMIN_SCHEDULE_CREATE;
 }
 
 static long long monotonic_milliseconds(void)
@@ -321,7 +330,9 @@ enum pm3000_acme_admin_result pm3000_acme_admin_call(
     if ((response_code == RESPONSE_BUSY ||
          response_code == RESPONSE_STARTUP_FAILED ||
          response_code == RESPONSE_OUTCOME_UNKNOWN) &&
-        opcode != PM3000_ACME_ADMIN_RENEW_ASYNC)
+        opcode != PM3000_ACME_ADMIN_RENEW_ASYNC &&
+        opcode != PM3000_ACME_ADMIN_SCHEDULE_REPLACE &&
+        opcode != PM3000_ACME_ADMIN_SCHEDULE_CREATE)
         goto protocol_failure;
     if (!response_is_consistent(response_code, response->child_status,
                                 response->output_length))

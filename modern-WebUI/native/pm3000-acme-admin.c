@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 #include <unistd.h>
 
 #ifndef PM3000_TESTING
-#define PM3000_ACME_EXECUTABLE "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme"
+#define PM3000_ACME_EXECUTABLE "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance"
 #else
 #ifndef PM3000_TEST_EXECUTABLE
 #error PM3000_TEST_EXECUTABLE must be a fixed compile-time path
@@ -47,6 +48,21 @@
 #define OP_CONFIG_CREATE 7U
 #define OP_CA_CREATE 8U
 #define OP_BOOTSTRAP_STATUS 9U
+#define OP_SCHEDULE_SHOW 10U
+#define OP_SCHEDULE_REPLACE 11U
+#define OP_SCHEDULE_CREATE 12U
+
+#ifndef PM3000_SCHEDULE_PATH
+#define PM3000_SCHEDULE_PATH "/mnt/hdUser/pm3000-revive/acme/schedule-v1"
+#endif
+#ifndef PM3000_CRONTAB_PATH
+#define PM3000_CRONTAB_PATH "/etc/cron/crontabs/root"
+#endif
+#define SCHEDULE_BEGIN "# BEGIN PM3000 ACME SCHEDULE\n"
+#define SCHEDULE_END "# END PM3000 ACME SCHEDULE\n"
+#define SCHEDULE_COMMAND "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance scheduled"
+#define CRON_INIT "/etc/init.d/busybox-cron"
+#define CRONTAB_LIMIT 65536U
 
 #define RESPONSE_OK 0U
 #define RESPONSE_BAD_REQUEST 1U
@@ -192,10 +208,9 @@ static int request_shape(unsigned int opcode, uint32_t length,
         return 1;
     }
     if (opcode == OP_RENEW_ASYNC && length == 0U) {
-        arguments[1] = (char *)"renew";
-        arguments[2] = (char *)"--foreground";
-        arguments[3] = (char *)"--broker-startup-notify";
-        arguments[4] = NULL;
+        arguments[1] = (char *)"force";
+        arguments[2] = (char *)"--broker-startup-notify";
+        arguments[3] = NULL;
         return 1;
     }
     if (opcode == OP_CONFIG_CREATE && length > 0U && length <= CONFIG_LIMIT) {
@@ -220,7 +235,272 @@ static int request_shape(unsigned int opcode, uint32_t length,
         arguments[3] = NULL;
         return 1;
     }
+    if (opcode == OP_SCHEDULE_SHOW && length == 0U) return 1;
+    if (opcode == OP_SCHEDULE_REPLACE && length == ETAG_LENGTH + 3U) return 1;
+    if (opcode == OP_SCHEDULE_CREATE && length == 3U) return 1;
     return 0;
+}
+
+static int safe_regular(int fd, mode_t mode)
+{
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1U)
+        return 0;
+#ifndef PM3000_TESTING
+    if (st.st_uid != 0U || st.st_gid != 0U) return 0;
+#endif
+    return (st.st_mode & 0777U) == mode;
+}
+
+static int lock_schedule(void)
+{
+    char path[512]; struct flock lock; int fd; int amount;
+    amount = snprintf(path, sizeof(path), "%s.lock", PM3000_SCHEDULE_PATH);
+    if (amount < 0 || (size_t)amount >= sizeof(path)) return -1;
+    fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, 0600U);
+    if (fd < 0) return -1;
+#ifndef PM3000_TESTING
+    if (fchown(fd, 0U, 0U) != 0) { (void)close(fd); return -1; }
+#endif
+    if (fchmod(fd, 0600U) != 0 || !safe_regular(fd, 0600U)) {
+        (void)close(fd); return -1;
+    }
+    memset(&lock, 0, sizeof(lock)); lock.l_type = F_WRLCK; lock.l_whence = SEEK_SET;
+    while (fcntl(fd, F_SETLKW, &lock) != 0) {
+        if (errno != EINTR) { (void)close(fd); return -1; }
+    }
+    return fd;
+}
+
+static void schedule_etag(const unsigned char value[3], char output[67])
+{
+    static const char hex[] = "0123456789abcdef";
+    size_t i;
+    output[0] = '"';
+    for (i = 0U; i < 32U; ++i) {
+        unsigned char byte = i < 3U ? value[i] : (unsigned char)(0xa5U ^ i);
+        output[1U + i * 2U] = hex[byte >> 4];
+        output[2U + i * 2U] = hex[byte & 15U];
+    }
+    output[65] = '"'; output[66] = '\0';
+}
+
+/* 0=managed, 1=absent, -1=unsafe/malformed. */
+static int read_schedule(unsigned char value[3])
+{
+    int fd = open(PM3000_SCHEDULE_PATH, O_RDONLY | O_NOFOLLOW);
+    unsigned char data[4];
+    ssize_t amount;
+    if (fd < 0) return errno == ENOENT ? 1 : -1;
+    if (!safe_regular(fd, 0600U)) { (void)close(fd); return -1; }
+    amount = read(fd, data, sizeof(data));
+    if (amount != 3 || read(fd, data + 3, 1U) != 0) { (void)close(fd); return -1; }
+    (void)close(fd);
+    if (data[0] > 1U || data[1] > 23U || data[2] > 59U) return -1;
+    memcpy(value, data, 3U);
+    return 0;
+}
+
+static int read_crontab(unsigned char **data, size_t *length)
+{
+    int fd = open(PM3000_CRONTAB_PATH, O_RDONLY | O_NOFOLLOW);
+    unsigned char *buffer;
+    size_t used = 0U;
+    if (fd < 0) {
+        if (errno == ENOENT) { *data = NULL; *length = 0U; return 0; }
+        return -1;
+    }
+    if (!safe_regular(fd, 0600U)) { (void)close(fd); return -1; }
+    buffer = malloc(CRONTAB_LIMIT + 1U);
+    if (buffer == NULL) { (void)close(fd); return -1; }
+    while (used <= CRONTAB_LIMIT) {
+        ssize_t amount = read(fd, buffer + used, CRONTAB_LIMIT + 1U - used);
+        if (amount < 0 && errno == EINTR) continue;
+        if (amount < 0) { free(buffer); (void)close(fd); return -1; }
+        if (amount == 0) break;
+        used += (size_t)amount;
+    }
+    (void)close(fd);
+    if (used > CRONTAB_LIMIT) { free(buffer); return -1; }
+    *data = buffer; *length = used; return 0;
+}
+
+static int find_managed_block(const unsigned char *data, size_t length,
+                              size_t *start, size_t *end)
+{
+    const char *begin = SCHEDULE_BEGIN, *finish = SCHEDULE_END;
+    size_t blen = strlen(begin), elen = strlen(finish), i;
+    unsigned int begins = 0U, ends = 0U;
+    size_t bpos = 0U, epos = 0U;
+    for (i = 0U; i < length; ++i) {
+        if ((i == 0U || data[i - 1U] == '\n') && i + blen <= length &&
+            memcmp(data + i, begin, blen) == 0) { ++begins; bpos = i; }
+        if ((i == 0U || data[i - 1U] == '\n') && i + elen <= length &&
+            memcmp(data + i, finish, elen) == 0) { ++ends; epos = i + elen; }
+    }
+    if (begins == 0U && ends == 0U) return 0;
+    if (begins != 1U || ends != 1U || bpos >= epos) return -1;
+    *start = bpos; *end = epos; return 1;
+}
+
+static int exact_existing_block(const unsigned char *data, size_t start, size_t end,
+                                const unsigned char current[3])
+{
+    char expected[256]; int amount;
+    if (!current[0]) return 0;
+    amount = snprintf(expected, sizeof(expected), SCHEDULE_BEGIN "%u %u * * * "
+                      SCHEDULE_COMMAND "\n" SCHEDULE_END,
+                      (unsigned int)current[2], (unsigned int)current[1]);
+    return amount > 0 && (size_t)amount == end - start &&
+           memcmp(data + start, expected, (size_t)amount) == 0;
+}
+
+static int fsync_parent(const char *path)
+{
+    char parent[512]; char *slash; int descriptor; int result;
+    if (strlen(path) >= sizeof(parent)) return -1;
+    strcpy(parent, path); slash = strrchr(parent, '/');
+    if (slash == NULL || slash == parent) return -1;
+    *slash = '\0';
+    descriptor = open(parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (descriptor < 0) return -1;
+    result = fsync(descriptor);
+    if (close(descriptor) != 0) result = -1;
+    return result;
+}
+
+static int publish_file(const char *path, const unsigned char *data, size_t length)
+{
+    char temporary[512]; int fd; size_t used = 0U;
+    int amount = snprintf(temporary, sizeof(temporary), "%s.tmp.%ld", path, (long)getpid());
+    if (amount < 0 || (size_t)amount >= sizeof(temporary)) return -1;
+    fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600U);
+    if (fd < 0) return -1;
+#ifndef PM3000_TESTING
+    if (fchown(fd, 0U, 0U) != 0) { (void)close(fd); (void)unlink(temporary); return -1; }
+#endif
+    if (fchmod(fd, 0600U) != 0) { (void)close(fd); (void)unlink(temporary); return -1; }
+    while (used < length) {
+        ssize_t n = write(fd, data + used, length - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { (void)close(fd); (void)unlink(temporary); return -1; }
+        used += (size_t)n;
+    }
+    if (fsync(fd) != 0 || close(fd) != 0 || rename(temporary, path) != 0) {
+        (void)unlink(temporary); return -1;
+    }
+    /* rename committed the visible bytes; a later parent fsync failure is
+     * durability-uncertain, not a safe precommit failure. */
+    return fsync_parent(path) == 0 ? 0 : 1;
+}
+
+static int schedule_show(unsigned char *output, size_t *output_length)
+{
+    unsigned char value[3] = {0U, 3U, 17U};
+    unsigned char *cron = NULL; size_t cron_length = 0U, start = 0U, end = 0U;
+    char etag[67]; int managed = read_schedule(value), block, amount;
+    if (managed < 0 || read_crontab(&cron, &cron_length) != 0) return RESPONSE_CHILD_FAILED;
+    block = find_managed_block(cron, cron_length, &start, &end);
+    if (block < 0 || (managed == 1 && block != 0) ||
+        (managed == 0 && ((value[0] && (block != 1 || !exact_existing_block(cron, start, end, value))) ||
+                          (!value[0] && block != 0)))) {
+        free(cron); return RESPONSE_CHILD_FAILED;
+    }
+    free(cron);
+    if (managed == 1) {
+        amount = snprintf((char *)output, OUTPUT_LIMIT,
+                          "{\"managed\":false,\"enabled\":false,\"hour\":3,\"minute\":17}\n");
+    } else {
+        schedule_etag(value, etag);
+        amount = snprintf((char *)output, OUTPUT_LIMIT,
+                          "{\"managed\":true,\"enabled\":%s,\"hour\":%u,\"minute\":%u,\"revision\":\"\\\"%.64s\\\"\"}\n",
+                          value[0] ? "true" : "false", (unsigned int)value[1],
+                          (unsigned int)value[2], etag + 1);
+    }
+    if (amount < 0 || (size_t)amount >= OUTPUT_LIMIT) return RESPONSE_OUTPUT_TOO_LARGE;
+    *output_length = (size_t)amount; return RESPONSE_OK;
+}
+
+static int remove_published(const char *path)
+{
+    if (unlink(path) != 0 && errno != ENOENT) return -1;
+    return fsync_parent(path);
+}
+
+static int reload_cron(void)
+{
+#ifndef PM3000_TESTING
+    pid_t child, waited; int status; char *const arguments[] = {(char *)CRON_INIT, (char *)"reload", NULL};
+    char *const environment[] = {NULL};
+    child = fork();
+    if (child < 0) return -1;
+    if (child == 0) {
+        close_inherited_descriptors();
+        execve(CRON_INIT, arguments, environment);
+        _exit(127);
+    }
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+#else
+    return 0;
+#endif
+}
+
+static int schedule_replace(const unsigned char desired[3], const char *revision,
+                            int creating)
+{
+    unsigned char current[3], *cron = NULL, *next = NULL;
+    size_t cron_length = 0U, start = 0U, end = 0U, prefix, suffix;
+    size_t block_length = 0U, boundary_length = 0U;
+    char expected[67], block[256]; int state = read_schedule(current), found, amount;
+    if (desired[0] > 1U || desired[1] > 23U || desired[2] > 59U) return RESPONSE_BAD_REQUEST;
+    if ((creating && state != 1) || (!creating && state != 0)) return RESPONSE_CHILD_FAILED;
+    if (!creating) { schedule_etag(current, expected); if (strcmp(expected, revision) != 0) return RESPONSE_CHILD_FAILED; }
+    if (read_crontab(&cron, &cron_length) != 0) return RESPONSE_CHILD_FAILED;
+    found = find_managed_block(cron, cron_length, &start, &end);
+    if (found < 0 || (state == 1 && found != 0) ||
+        (state == 0 && ((current[0] && (found != 1 || !exact_existing_block(cron, start, end, current))) ||
+                        (!current[0] && found != 0)))) { free(cron); return RESPONSE_CHILD_FAILED; }
+    if (found == 0) start = end = cron_length;
+    if (desired[0]) {
+        amount = snprintf(block, sizeof(block), SCHEDULE_BEGIN "%u %u * * * "
+                          SCHEDULE_COMMAND "\n" SCHEDULE_END,
+                          (unsigned int)desired[2], (unsigned int)desired[1]);
+        if (amount < 0 || (size_t)amount >= sizeof(block)) { free(cron); return RESPONSE_CHILD_FAILED; }
+        block_length = (size_t)amount;
+    }
+    prefix = start; suffix = cron_length - end;
+    if (found == 0 && block_length != 0U && prefix != 0U && cron[prefix - 1U] != '\n')
+        boundary_length = 1U;
+    next = malloc(prefix + boundary_length + block_length + suffix + 1U);
+    if (next == NULL) { free(cron); return RESPONSE_CHILD_FAILED; }
+    if (prefix) memcpy(next, cron, prefix);
+    if (boundary_length) next[prefix] = '\n';
+    if (block_length) memcpy(next + prefix + boundary_length, block, block_length);
+    if (suffix) memcpy(next + prefix + boundary_length + block_length, cron + end, suffix);
+    {
+        int published = publish_file(PM3000_CRONTAB_PATH, next,
+                                     prefix + boundary_length + block_length + suffix);
+        if (published != 0) {
+            free(next); free(cron);
+            return published > 0 ? RESPONSE_OUTCOME_UNKNOWN : RESPONSE_CHILD_FAILED;
+        }
+    }
+    free(next);
+    {
+        int published = publish_file(PM3000_SCHEDULE_PATH, desired, 3U);
+        if (published != 0) {
+            int restored;
+            if (published > 0) { free(cron); return RESPONSE_OUTCOME_UNKNOWN; }
+            restored = cron == NULL
+                ? remove_published(PM3000_CRONTAB_PATH)
+                : publish_file(PM3000_CRONTAB_PATH, cron, cron_length);
+            free(cron);
+            return restored == 0 ? RESPONSE_CHILD_FAILED : RESPONSE_OUTCOME_UNKNOWN;
+        }
+    }
+    free(cron);
+    return reload_cron() == 0 ? RESPONSE_OK : RESPONSE_OUTCOME_UNKNOWN;
 }
 
 static long long monotonic_milliseconds(void)
@@ -304,7 +584,8 @@ static int extract_etag(unsigned int opcode, const unsigned char *input,
                         uint32_t input_length, char etag[ETAG_LENGTH + 1U])
 {
     size_t index;
-    if (opcode != OP_CONFIG_REPLACE && opcode != OP_CA_INSTALL) return 1;
+    if (opcode != OP_CONFIG_REPLACE && opcode != OP_CA_INSTALL &&
+        opcode != OP_SCHEDULE_REPLACE) return 1;
     if (input_length <= ETAG_LENGTH || input[0] != '"' ||
         input[ETAG_LENGTH - 1U] != '"')
         return 0;
@@ -408,6 +689,7 @@ int main(int argc, char **argv)
     unsigned int child_status = 255U;
     size_t output_length = 0U;
     int response;
+    int schedule_lock = -1;
     char etag[ETAG_LENGTH + 1U];
     char *arguments[7] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL};
     (void)argv;
@@ -443,12 +725,30 @@ int main(int argc, char **argv)
         (void)send_response(RESPONSE_BAD_REQUEST, 255U, NULL, 0U);
         return 3;
     }
-    if (opcode == OP_CONFIG_REPLACE || opcode == OP_CA_INSTALL) {
+    if (opcode == OP_CONFIG_REPLACE || opcode == OP_CA_INSTALL ||
+        opcode == OP_SCHEDULE_REPLACE) {
         arguments[5] = etag;
         input_length -= ETAG_LENGTH;
         memmove(input, input + ETAG_LENGTH, input_length);
     }
-    if (opcode == OP_RENEW_ASYNC) {
+    if (opcode == OP_SCHEDULE_SHOW || opcode == OP_SCHEDULE_REPLACE ||
+        opcode == OP_SCHEDULE_CREATE) {
+        schedule_lock = lock_schedule();
+        if (schedule_lock < 0) {
+            response = RESPONSE_CHILD_FAILED;
+            child_status = 5U;
+        } else if (opcode == OP_SCHEDULE_SHOW) {
+            response = schedule_show(output, &output_length);
+            child_status = response == RESPONSE_OK ? 0U : 5U;
+        } else {
+            response = schedule_replace(input,
+                                        opcode == OP_SCHEDULE_REPLACE ? etag : NULL,
+                                        opcode == OP_SCHEDULE_CREATE);
+            child_status = response == RESPONSE_OK ? 0U :
+                           response == RESPONSE_OUTCOME_UNKNOWN ? 255U : 5U;
+        }
+        if (schedule_lock >= 0) (void)close(schedule_lock);
+    } else if (opcode == OP_RENEW_ASYNC) {
         response = run_async_renew(arguments);
         child_status = response == RESPONSE_OK ? 0U : 255U;
     } else {

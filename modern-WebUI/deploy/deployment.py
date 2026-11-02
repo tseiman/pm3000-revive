@@ -23,7 +23,7 @@ class DeploymentError(RuntimeError):
     pass
 
 
-MAX_RELEASE_REGULAR_BYTES = 640 * 1024
+MAX_RELEASE_REGULAR_BYTES = 704 * 1024
 VENDOR_LISTEN_SHA256 = "480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a6ab5835"
 MANAGED_LISTEN_SHA256 = "45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f"
 
@@ -87,6 +87,7 @@ def build_release(source_root: Path | str, output: Path | str, release_id: str,
     sources["bin/pm3000-acme"] = (Path(acme_binary) if acme_binary is not None else
                                     source.parent / "components" / "pm3000-acme" / "build" / "pm3000-acme")
     sources["bin/pm3000-acme-admin"] = source / "native" / "build" / "pm3000-acme-admin-ppc32"
+    sources["bin/pm3000-acme-maintenance"] = source / "deploy" / "pm3000-acme-maintenance.sh"
     sources["bin/pm3000-rest"] = source / "native" / "build" / "pm3000-rest-ppc32"
     sources["bin/pm3000-gsp-session-helper"] = source / "native" / "build" / "pm3000-gsp-session-helper-ppc32"
     sources["bin/pm3000-atomic-publish"] = source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
@@ -168,17 +169,22 @@ RELEASES = "/mnt/hdUser/pm3000-revive/webui/releases"
 APACHE_CONFIG = "/etc/apache2/conf.d/pm3000-revive.conf"
 APACHE_LISTEN_CONFIG = "/etc/apache2/conf.d/listen.conf"
 ACTIVE_TRANSACTION = "/mnt/hdUser/pm3000-revive/deploy/ACTIVE_TRANSACTION.json"
+ACME_SCHEDULE = "/mnt/hdUser/pm3000-revive/acme/schedule-v1"
+ROOT_CRONTAB = "/etc/cron/crontabs/root"
 BACKUP_ROOTS = (
     "/mnt/hdUser/pm3000-revive/webui",
     "/mnt/hdUser/pm3000-revive/rest",
     "/mnt/hdUser/pm3000-revive/deploy",
     APACHE_CONFIG,
     APACHE_LISTEN_CONFIG,
+    ACME_SCHEDULE,
+    ROOT_CRONTAB,
     "/etc/pm3000-rest",
 )
 INVENTORY_PARENTS = (
     "/mnt", "/mnt/hdUser", "/mnt/hdUser/pm3000-revive",
-    "/etc", "/etc/apache2", "/etc/apache2/conf.d",
+    "/mnt/hdUser/pm3000-revive/acme",
+    "/etc", "/etc/apache2", "/etc/apache2/conf.d", "/etc/cron", "/etc/cron/crontabs",
 )
 
 
@@ -428,7 +434,7 @@ def _read_release_snapshot(package: Path) -> tuple[dict, dict[str, bytes], bytes
             raise DeploymentError("invalid release manifest schema")
         required_payloads = {
             "apache/listen.conf", "apache/pm3000-revive.conf", "bin/pm3000-acme",
-            "bin/pm3000-acme-admin",
+            "bin/pm3000-acme-admin", "bin/pm3000-acme-maintenance",
             "bin/pm3000-atomic-publish",
             "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
             "web/app.js", "web/index.html", "web/styles.css",
@@ -706,6 +712,23 @@ def _restore_transaction(root: Path, manifest: dict, payloads: dict[str, bytes],
                 pass
             _fsync_file(config)
             _fsync_dir(config.parent)
+    for state_name in (ACME_SCHEDULE, ROOT_CRONTAB):
+        state_path = _device_path(root, state_name)
+        old_state = entries[state_name]
+        if old_state["type"] == "absent":
+            if state_path.exists() or state_path.is_symlink():
+                state_path.unlink()
+                _fsync_dir(state_path.parent)
+        elif old_state["type"] == "file":
+            _atomic_bytes(state_path, payloads[state_name], old_state["mode"])
+            try:
+                os.chown(state_path, old_state["uid"], old_state["gid"])
+            except PermissionError:
+                pass
+            _fsync_file(state_path)
+            _fsync_dir(state_path.parent)
+        else:
+            raise DeploymentError(f"unsupported saved scheduler state: {state_name}")
     active = _device_path(root, ACTIVE_TRANSACTION)
     old_active = entries[ACTIVE_TRANSACTION]
     if old_active["type"] == "absent":
@@ -774,7 +797,8 @@ def _verify_deployed_state(root: Path, state: dict) -> None:
 
 def _verify_restored_state(root: Path, manifest: dict, state: dict) -> None:
     entries = {entry["path"]: entry for entry in manifest["entries"]}
-    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION):
+    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION,
+                 ACME_SCHEDULE, ROOT_CRONTAB):
         expected = entries[name]
         actual = _entry(root, name)
         keys = {"path", "type", "mode", "uid", "gid"}
@@ -807,7 +831,8 @@ def _entries_match(actual: dict, expected: dict) -> bool:
 def _verify_resumable_rollback_state(root: Path, manifest: dict, state: dict,
                                      deployment_complete: dict) -> None:
     entries = {entry["path"]: entry for entry in manifest["entries"]}
-    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION):
+    for name in (CURRENT, APACHE_CONFIG, APACHE_LISTEN_CONFIG, ACTIVE_TRANSACTION,
+                 ACME_SCHEDULE, ROOT_CRONTAB):
         actual = _entry(root, name)
         if _entries_match(actual, entries[name]):
             continue

@@ -22,6 +22,7 @@ RELEASE_NAMES = [
     "apache/pm3000-revive.conf",
     "bin/pm3000-acme",
     "bin/pm3000-acme-admin",
+    "bin/pm3000-acme-maintenance",
     "bin/pm3000-atomic-publish",
     "bin/pm3000-gsp-session-helper",
     "bin/pm3000-rest",
@@ -29,7 +30,7 @@ RELEASE_NAMES = [
     "web/index.html",
     "web/styles.css",
 ]
-RELEASE_MODES = [0o600, 0o600, 0o644, 0o644, 0o755, 0o4750, 0o755, 0o4750, 0o755, 0o644, 0o644, 0o644]
+RELEASE_MODES = [0o600, 0o600, 0o644, 0o644, 0o755, 0o4750, 0o755, 0o755, 0o4750, 0o755, 0o644, 0o644, 0o644]
 SCRIPT_NAMES = [
     "device-install.sh",
     "device-rollback.sh",
@@ -149,7 +150,7 @@ try:
             blobs[member.name] = archive.extractfile(member).read()
 except (OSError, tarfile.TarError) as exc: fail(f"invalid release archive: {{exc}}")
 sums = blobs["RELEASE_SHA256SUMS"].decode("ascii").splitlines()
-if len(sums) != 10: fail("release checksum count mismatch")
+if len(sums) != 11: fail("release checksum count mismatch")
 for line, name in zip(sums, TAR_NAMES[2:]):
     if line != f"{{digest(blobs[name])}}  {{name}}": fail(f"release checksum mismatch: {{name}}")
 if digest(blobs["bin/pm3000-acme"]) != ACME_SHA256: fail("accepted ACME hash mismatch")
@@ -177,7 +178,8 @@ def readme(release_name, release_id, release_sha, accepted_sha):
 This bundle is relative-path and works with Python 3, Bash, OpenSSH, and tar on
 macOS or Linux. It does not install anything merely by being unpacked or verified.
 The packaged ACME CLI is the physically accepted production binary, SHA-256
-`{accepted_sha}`. No scheduler is included.
+`{accepted_sha}`. The release includes the fixed daily scheduler broker; no
+schedule is created until an authorized operator saves one through the WebUI.
 
 ## 1. Verify after extracting the ZIP
 

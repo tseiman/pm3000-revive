@@ -120,6 +120,7 @@ expected_members = {
     "apache/pm3000-revive.conf": 0o644,
     "bin/pm3000-acme": 0o755,
     "bin/pm3000-acme-admin": 0o4750,
+    "bin/pm3000-acme-maintenance": 0o755,
     "bin/pm3000-atomic-publish": 0o755,
     "bin/pm3000-gsp-session-helper": 0o4750,
     "bin/pm3000-rest": 0o755,
@@ -178,6 +179,7 @@ apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
 bin/pm3000-acme-admin
+bin/pm3000-acme-maintenance
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -198,6 +200,7 @@ chmod 644 "$work/release/apache/listen.conf" "$work/release/apache/pm3000-revive
 chmod 755 "$work/release/bin/pm3000-acme" \
     "$work/release/bin/pm3000-atomic-publish" "$work/release/bin/pm3000-rest"
 chmod 4750 "$work/release/bin/pm3000-acme-admin"
+chmod 755 "$work/release/bin/pm3000-acme-maintenance"
 chmod 4750 "$work/release/bin/pm3000-gsp-session-helper"
 helper=$work/release/bin/pm3000-atomic-publish
 acme=$work/release/bin/pm3000-acme

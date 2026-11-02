@@ -390,6 +390,84 @@ static int parse_boolean_setting_request(const unsigned char *body, size_t lengt
     return 0;
 }
 
+struct schedule_model {
+    int managed;
+    int enabled;
+    unsigned int hour;
+    unsigned int minute;
+    char revision[67];
+};
+
+static int json_boolean(struct json_cursor *cursor, int *value) {
+    json_space(cursor);
+    if (cursor->offset + 4U <= cursor->length &&
+        memcmp(cursor->data + cursor->offset, "true", 4U) == 0) {
+        cursor->offset += 4U; *value = 1; return 0;
+    }
+    if (cursor->offset + 5U <= cursor->length &&
+        memcmp(cursor->data + cursor->offset, "false", 5U) == 0) {
+        cursor->offset += 5U; *value = 0; return 0;
+    }
+    return -1;
+}
+
+static int json_small_uint(struct json_cursor *cursor, unsigned int maximum,
+                           unsigned int *value) {
+    unsigned int parsed = 0U; size_t start;
+    json_space(cursor); start = cursor->offset;
+    if (start >= cursor->length || cursor->data[start] < '0' ||
+        cursor->data[start] > '9') return -1;
+    if (cursor->data[start] == '0' && start + 1U < cursor->length &&
+        cursor->data[start + 1U] >= '0' && cursor->data[start + 1U] <= '9') return -1;
+    while (cursor->offset < cursor->length &&
+           cursor->data[cursor->offset] >= '0' && cursor->data[cursor->offset] <= '9') {
+        parsed = parsed * 10U + (unsigned int)(cursor->data[cursor->offset++] - '0');
+        if (parsed > maximum) return -1;
+    }
+    *value = parsed; return 0;
+}
+
+static int parse_schedule_object(const unsigned char *body, size_t length,
+                                 int broker_response, struct schedule_model *model) {
+    struct json_cursor cursor = {body, length, 0U};
+    unsigned int seen = 0U; int first = 1;
+    memset(model, 0, sizeof(*model));
+    if (!broker_response) model->managed = 1;
+    if (length == 0U || json_character(&cursor, '{') != 0) return -1;
+    for (;;) {
+        char key[32]; unsigned int bit;
+        json_space(&cursor);
+        if (cursor.offset < cursor.length && cursor.data[cursor.offset] == '}') {
+            ++cursor.offset; break;
+        }
+        if (!first && json_character(&cursor, ',') != 0) return -1;
+        first = 0; json_space(&cursor);
+        if (json_ascii_string(&cursor, key, sizeof(key)) != 0 ||
+            json_character(&cursor, ':') != 0) return -1;
+        if (strcmp(key, "managed") == 0) {
+            bit = 1U; if (!broker_response || (seen & bit) || json_boolean(&cursor, &model->managed) != 0) return -1;
+        } else if (strcmp(key, "enabled") == 0) {
+            bit = 2U; if ((seen & bit) || json_boolean(&cursor, &model->enabled) != 0) return -1;
+        } else if (strcmp(key, "hour") == 0) {
+            bit = 4U; if ((seen & bit) || json_small_uint(&cursor, 23U, &model->hour) != 0) return -1;
+        } else if (strcmp(key, "minute") == 0) {
+            bit = 8U; if ((seen & bit) || json_small_uint(&cursor, 59U, &model->minute) != 0) return -1;
+        } else if (strcmp(key, "revision") == 0) {
+            bit = 16U; if (!broker_response || (seen & bit)) return -1;
+            json_space(&cursor);
+            if (json_ascii_string(&cursor, model->revision, sizeof(model->revision)) != 0 ||
+                !pm3000_acme_valid_etag(model->revision)) return -1;
+        } else return -1;
+        seen |= bit;
+    }
+    json_space(&cursor);
+    if (cursor.offset != cursor.length) return -1;
+    if (!broker_response) return seen == (2U | 4U | 8U) ? 0 : -1;
+    if ((seen & 15U) != 15U) return -1;
+    if (model->managed) return seen == 31U ? 0 : -1;
+    return seen == 15U && !model->enabled && model->hour == 3U && model->minute == 17U ? 0 : -1;
+}
+
 struct json_string_field {
     const char *key;
     char *value;
@@ -1238,6 +1316,71 @@ static int write_acme_setting(const struct pm3000_acme_setting *setting,
     return ferror(stdout) ? 1 : 0;
 }
 
+static int run_acme_schedule_route(const char *method, const pm3000_session *session) {
+    const char *helper = acme_admin_helper_path();
+    struct pm3000_acme_admin_response response;
+    enum pm3000_acme_admin_result result;
+    struct schedule_model model;
+    if (strcmp(method, "GET") == 0) {
+        result = pm3000_acme_admin_call(helper, PM3000_ACME_ADMIN_SCHEDULE_SHOW,
+                                        NULL, NULL, 0U, &response);
+        if (result != PM3000_ACME_ADMIN_SUCCESS) return acme_backend_error(result, 0);
+        if (parse_schedule_object(response.output, response.output_length, 1, &model) != 0)
+            return acme_backend_error(PM3000_ACME_ADMIN_PROTOCOL_ERROR, 0);
+        if (model.managed) cgi_settings_headers(model.revision); else cgi_headers(200U, "OK");
+        printf("{\"managed\":%s,\"enabled\":%s,\"hour\":%u,\"minute\":%u,"
+               "\"renewalWindowSeconds\":2592000,\"revision\":",
+               model.managed ? "true" : "false", model.enabled ? "true" : "false",
+               model.hour, model.minute);
+        if (model.managed) {
+            if (write_json_ascii_string(stdout, model.revision) != 0) return 1;
+        } else fputs("null", stdout);
+        fputs("}\n", stdout);
+        return ferror(stdout) ? 1 : 0;
+    }
+    if (strcmp(method, "PUT") != 0)
+        return cgi_error(405U, "Method Not Allowed", "method_not_allowed", "Method not allowed.");
+    if (!pm3000_session_csrf_matches(session, getenv("HTTP_X_CSRF_TOKEN")))
+        return cgi_error(403U, "Forbidden", "csrf_rejected", "CSRF token rejected.");
+    {
+        const char *if_match = getenv("HTTP_IF_MATCH");
+        const char *if_none_match = getenv("HTTP_IF_NONE_MATCH");
+        int creating = if_none_match != NULL && if_none_match[0] != '\0';
+        unsigned char body[257], wire[3]; size_t body_length = 0U;
+        int body_result;
+        if (creating && if_match != NULL && if_match[0] != '\0')
+            return cgi_error(400U, "Bad Request", "bad_request", "Preconditions cannot be combined.");
+        if (creating && strcmp(if_none_match, "*") != 0)
+            return cgi_error(400U, "Bad Request", "bad_request", "If-None-Match must be *.");
+        if (!creating && (if_match == NULL || if_match[0] == '\0'))
+            return cgi_error(428U, "Precondition Required", "precondition_required", "A strong schedule precondition is required.");
+        if (!creating && !pm3000_acme_valid_etag(if_match))
+            return cgi_error(400U, "Bad Request", "bad_request", "If-Match is invalid.");
+        body_result = read_json_body(body, 256U, &body_length);
+        if (body_result == 415) return cgi_error(415U, "Unsupported Media Type", "unsupported_media_type", "Content-Type must be application/json without content encoding.");
+        if (body_result == 413) return cgi_error(413U, "Payload Too Large", "payload_too_large", "The schedule request is too large.");
+        if (body_result != 0 || parse_schedule_object(body, body_length, 0, &model) != 0)
+            return cgi_error(400U, "Bad Request", "bad_request", "Expected exactly enabled, hour, and minute.");
+        wire[0] = (unsigned char)model.enabled; wire[1] = (unsigned char)model.hour; wire[2] = (unsigned char)model.minute;
+        result = pm3000_acme_admin_call(helper,
+                                        creating ? PM3000_ACME_ADMIN_SCHEDULE_CREATE : PM3000_ACME_ADMIN_SCHEDULE_REPLACE,
+                                        creating ? NULL : if_match, wire, sizeof(wire), &response);
+        if (result == PM3000_ACME_ADMIN_CHILD_FAILED)
+            return cgi_error(412U, "Precondition Failed", "revision_changed", "The schedule changed or is malformed; reload it before saving.");
+        if (result != PM3000_ACME_ADMIN_SUCCESS) return acme_backend_error(result, 1);
+        if (response.output_length != 0U) return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+        result = pm3000_acme_admin_call(helper, PM3000_ACME_ADMIN_SCHEDULE_SHOW,
+                                        NULL, NULL, 0U, &response);
+        if (result != PM3000_ACME_ADMIN_SUCCESS ||
+            parse_schedule_object(response.output, response.output_length, 1, &model) != 0 ||
+            !model.managed || model.enabled != (int)wire[0] ||
+            model.hour != wire[1] || model.minute != wire[2])
+            return acme_backend_error(PM3000_ACME_ADMIN_OUTCOME_UNKNOWN, 1);
+    }
+    cgi_headers(204U, "No Content");
+    return ferror(stdout) ? 1 : 0;
+}
+
 static int run_acme_setting_route(const char *method, const char *path,
                                   const pm3000_session *session) {
     const char *helper = acme_admin_helper_path();
@@ -1508,7 +1651,8 @@ static int run_cgi(void) {
     if (method != NULL && path != NULL &&
         (strcmp(path, "/api/v1/settings/acme") == 0 ||
          strcmp(path, "/api/v1/settings/acme/ca") == 0 ||
-         strcmp(path, "/api/v1/settings/acme/renew") == 0)) {
+         strcmp(path, "/api/v1/settings/acme/renew") == 0 ||
+         strcmp(path, "/api/v1/settings/acme/schedule") == 0)) {
         if (!browser_session_authorization(getenv("HTTP_AUTHORIZATION")))
             return cgi_error(401U, "Unauthorized", "unauthorized",
                              "Bearer authentication is not accepted for ACME administration.");
@@ -1520,6 +1664,8 @@ static int run_cgi(void) {
         if (!gui_session.can_manage_acme)
             return cgi_error(403U, "Forbidden", "forbidden",
                              "ACME administration is not permitted.");
+        if (strcmp(path, "/api/v1/settings/acme/schedule") == 0)
+            return run_acme_schedule_route(method, &gui_session);
         return run_acme_setting_route(method, path, &gui_session);
     }
     if (method != NULL && path != NULL &&

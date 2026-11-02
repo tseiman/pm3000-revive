@@ -26,7 +26,7 @@ verify_release_sums()
         case "$_sum_expected" in *[!0-9a-f]*|'') return 1;; esac
         [ "${#_sum_expected}" -eq 64 ] || return 1
         case "$_sum_path" in
-            apache/listen.conf|apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
+            apache/listen.conf|apache/pm3000-revive.conf|bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-acme-maintenance|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest|web/app.js|web/index.html|web/styles.css) :;;
             *) return 1;;
         esac
         [ -f "$_sum_root/$_sum_path" ] && [ ! -L "$_sum_root/$_sum_path" ] || return 1
@@ -34,7 +34,7 @@ verify_release_sums()
         [ "$_sum_actual" = "$_sum_expected" ] || return 1
         _sum_count=$((_sum_count + 1))
     done <"$_sum_list"
-    [ "$_sum_count" -eq 10 ]
+    [ "$_sum_count" -eq 11 ]
 }
 
 [ "$#" -eq 4 ] || {
@@ -59,10 +59,14 @@ release=$base/releases/$release_id
 config_dir=/etc/apache2/conf.d
 config=$config_dir/pm3000-revive.conf
 listener=$config_dir/listen.conf
+schedule_state_path=/mnt/hdUser/pm3000-revive/acme/schedule-v1
+crontab_path=/etc/cron/crontabs/root
+cron_init=/etc/init.d/busybox-cron
 managed_listener_sha256=45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f
 vendor_listener_sha256=480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a6ab5835
 work=/tmp/stage6-rollback-$$
-for parent in /mnt /mnt/hdUser /mnt/hdUser/pm3000-revive "$base" "$base/releases" /etc /etc/apache2 "$config_dir"; do
+for parent in /mnt /mnt/hdUser /mnt/hdUser/pm3000-revive "$base" "$base/releases" \
+    /mnt/hdUser/pm3000-revive/acme /etc /etc/apache2 "$config_dir" /etc/cron /etc/cron/crontabs; do
     [ -d "$parent" ] && [ ! -L "$parent" ] || { echo "unsafe rollback parent: $parent" >&2; exit 1; }
 done
 mkdir -m 700 "$work"
@@ -100,6 +104,7 @@ apache/listen.conf
 apache/pm3000-revive.conf
 bin/pm3000-acme
 bin/pm3000-acme-admin
+bin/pm3000-acme-maintenance
 bin/pm3000-atomic-publish
 bin/pm3000-gsp-session-helper
 bin/pm3000-rest
@@ -121,7 +126,7 @@ chmod 700 "$atomic_helper"
     echo "unsafe live Apache listen.conf owner or mode" >&2; exit 1;
 }
 for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf \
-    bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest \
+    bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-acme-maintenance bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest \
     web/app.js web/index.html web/styles.css; do
     "$atomic_helper" --verify-regular "$package_tree/$member" || {
         echo "unsafe packaged release member: $member" >&2
@@ -156,12 +161,20 @@ esac
 cp -p "$restore_dir/listen.conf" "$config_dir/.listen.conf.stage6-tmp"
 [ -f "$restore_dir/config.state" ] && [ ! -L "$restore_dir/config.state" ] || { echo "config state missing" >&2; exit 1; }
 [ -f "$restore_dir/current.state" ] && [ ! -L "$restore_dir/current.state" ] || { echo "current state missing" >&2; exit 1; }
+[ -f "$restore_dir/schedule.state" ] && [ ! -L "$restore_dir/schedule.state" ] || { echo "schedule state missing" >&2; exit 1; }
+[ -f "$restore_dir/crontab.state" ] && [ ! -L "$restore_dir/crontab.state" ] || { echo "crontab state missing" >&2; exit 1; }
 "$atomic_helper" --verify-regular "$restore_dir/config.state" || exit 1
 "$atomic_helper" --verify-regular "$restore_dir/current.state" || exit 1
+"$atomic_helper" --verify-regular "$restore_dir/schedule.state" || exit 1
+"$atomic_helper" --verify-regular "$restore_dir/crontab.state" || exit 1
 [ "$(wc -l <"$restore_dir/config.state")" -eq 1 ] || { echo "invalid config state" >&2; exit 1; }
 [ "$(wc -l <"$restore_dir/current.state")" -eq 1 ] || { echo "invalid current state" >&2; exit 1; }
+[ "$(wc -l <"$restore_dir/schedule.state")" -eq 1 ] || { echo "invalid schedule state" >&2; exit 1; }
+[ "$(wc -l <"$restore_dir/crontab.state")" -eq 1 ] || { echo "invalid crontab state" >&2; exit 1; }
 config_state=$(sed -n '1p' "$restore_dir/config.state")
 current_state=$(sed -n '1p' "$restore_dir/current.state")
+schedule_state=$(sed -n '1p' "$restore_dir/schedule.state")
+crontab_state=$(sed -n '1p' "$restore_dir/crontab.state")
 case "$config_state" in
     absent) : ;;
     file)
@@ -183,6 +196,29 @@ case "$current_state" in
         ;;
     *) echo "unsafe current state" >&2; exit 1 ;;
 esac
+case "$schedule_state" in
+    absent) : ;;
+    file)
+        "$atomic_helper" --verify-private-regular "$restore_dir/schedule-v1" || exit 1
+        cp -p "$restore_dir/schedule-v1" /mnt/hdUser/pm3000-revive/acme/.schedule-v1.stage6-tmp
+        ;;
+    *) echo "unsafe schedule state" >&2; exit 1 ;;
+esac
+case "$crontab_state" in
+    absent) : ;;
+    file)
+        "$atomic_helper" --verify-private-regular "$restore_dir/root.crontab" || exit 1
+        cp -p "$restore_dir/root.crontab" /etc/cron/crontabs/.root.stage6-tmp
+        ;;
+    *) echo "unsafe crontab state" >&2; exit 1 ;;
+esac
+for live_scheduler_path in "$schedule_state_path" "$crontab_path"; do
+    if [ -e "$live_scheduler_path" ] || [ -L "$live_scheduler_path" ]; then
+        "$atomic_helper" --verify-private-regular "$live_scheduler_path" || {
+            echo "unsafe live scheduler state" >&2; exit 1;
+        }
+    fi
+done
 # The host must already have verified that live managed paths equal the selected
 # transaction post-state. Publish only the pre-staged fixed destinations here.
 if [ "$config_state" = file ]; then
@@ -196,6 +232,17 @@ else
     "$atomic_helper" "$base" .current.stage6-tmp current symlink
 fi
 "$atomic_helper" "$config_dir" .listen.conf.stage6-tmp listen.conf regular
+if [ "$schedule_state" = file ]; then
+    "$atomic_helper" /mnt/hdUser/pm3000-revive/acme .schedule-v1.stage6-tmp schedule-v1 regular
+else
+    rm -f "$schedule_state_path"
+fi
+if [ "$crontab_state" = file ]; then
+    "$atomic_helper" /etc/cron/crontabs .root.stage6-tmp root regular
+else
+    rm -f "$crontab_path"
+fi
 /usr/sbin/httpd -t -D SSL -f /etc/apache2/httpd.conf
 /etc/init.d/apache2 reload
+"$cron_init" reload
 # Release deletion is intentionally host-mediated after hash/drift verification.

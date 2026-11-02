@@ -67,7 +67,7 @@ class DeviceInstallDiskPreflightTests(unittest.TestCase):
             'mkdir -p RELEASE_MANIFEST.json.d apache bin web\n'
             'rm -rf RELEASE_MANIFEST.json.d\n'
             'for member in RELEASE_MANIFEST.json RELEASE_SHA256SUMS apache/listen.conf apache/pm3000-revive.conf '
-            'bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
+            'bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-acme-maintenance bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest '
             'web/app.js web/index.html web/styles.css; do\n'
             '  [ "${FAKE_TAR_MODE:-complete}:$member" = incomplete:web/styles.css ] || : >"$member"\n'
             'done\n',
@@ -194,6 +194,9 @@ class PackagingTests(unittest.TestCase):
         acme_admin = self.source / "native" / "build" / "pm3000-acme-admin-ppc32"
         acme_admin.write_bytes(b"ELF-acme-admin-test")
         acme_admin.chmod(0o755)
+        maintenance = self.source / "deploy" / "pm3000-acme-maintenance.sh"
+        maintenance.write_bytes(b"#!/bin/sh\nexit 2\n")
+        maintenance.chmod(0o755)
         helper = self.source / "deploy" / "build" / "pm3000-atomic-publish-ppc32"
         helper.write_bytes(b"ELF-helper-test")
         helper.chmod(0o755)
@@ -232,6 +235,7 @@ class PackagingTests(unittest.TestCase):
                     "apache/pm3000-revive.conf",
                     "bin/pm3000-acme",
                     "bin/pm3000-acme-admin",
+                    "bin/pm3000-acme-maintenance",
                     "bin/pm3000-atomic-publish",
                     "bin/pm3000-gsp-session-helper",
                     "bin/pm3000-rest",
@@ -245,6 +249,7 @@ class PackagingTests(unittest.TestCase):
             modes = {entry["path"]: entry["mode"] for entry in manifest["files"]}
             self.assertEqual(0o755, modes["bin/pm3000-acme"])
             self.assertEqual(0o4750, modes["bin/pm3000-acme-admin"])
+            self.assertEqual(0o755, modes["bin/pm3000-acme-maintenance"])
             self.assertEqual(0o4750, modes["bin/pm3000-gsp-session-helper"])
             listener = archive.extractfile("apache/listen.conf").read()
             challenge = b"\tRewriteRule ^/?\\.well-known/acme-challenge/ - [L]\n"
@@ -307,15 +312,15 @@ class PackagingTests(unittest.TestCase):
         helper = load_helper()
         output = self.work / "oversized-release.tar"
         binary = self.source / "native" / "build" / "pm3000-rest-ppc32"
-        binary.write_bytes(b"X" * (640 * 1024))
-        with self.assertRaisesRegex(helper.DeploymentError, "640 KiB"):
+        binary.write_bytes(b"X" * (704 * 1024))
+        with self.assertRaisesRegex(helper.DeploymentError, "704 KiB"):
             helper.build_release(self.source, output, "r1", "abcdef123456")
         self.assertFalse(output.exists())
 
-    def test_deployment_documentation_matches_twelve_member_archive(self):
+    def test_deployment_documentation_matches_thirteen_member_archive(self):
         readme = (DEPLOY / "README.md").read_text(encoding="utf-8")
-        self.assertEqual(2, readme.count("twelve-member allowlist"))
-        self.assertNotIn("eleven-member allowlist", readme)
+        self.assertEqual(2, readme.count("thirteen-member allowlist"))
+        self.assertNotIn("twelve-member allowlist", readme)
 
 
 class DeploymentSimulationTests(unittest.TestCase):
@@ -378,6 +383,7 @@ class DeploymentSimulationTests(unittest.TestCase):
         (source / "native/build/pm3000-acme-admin-ppc32").write_bytes(
             b"acme-admin-" + release_id.encode()
         )
+        (source / "deploy/pm3000-acme-maintenance.sh").write_bytes(b"#!/bin/sh\nexit 2\n")
         (source / "deploy/build/pm3000-atomic-publish-ppc32").write_bytes(b"helper-" + release_id.encode())
         acme = source.parent / "components/pm3000-acme/build/pm3000-acme"
         acme.parent.mkdir(parents=True, exist_ok=True)
@@ -697,6 +703,26 @@ class DeploymentSimulationTests(unittest.TestCase):
         self.assertEqual(self.token.read_bytes(), self.original_token)
         self.assertTrue(Path(second["backup_dir"], "BACKUP_COMPLETE").exists())
 
+    def test_rollback_restores_absent_schedule_and_exact_unrelated_root_crontab(self):
+        cron = self.root / "etc/cron/crontabs/root"
+        cron.parent.mkdir(parents=True)
+        original = b"5 4 * * * /usr/local/site-job --keep='yes'"
+        cron.write_bytes(original)
+        cron.chmod(0o600)
+        result = self.deploy()
+        schedule = self.root / "mnt/hdUser/pm3000-revive/acme/schedule-v1"
+        schedule.parent.mkdir(parents=True, exist_ok=True)
+        schedule.write_bytes(bytes((1, 3, 17)))
+        schedule.chmod(0o600)
+        cron.write_bytes(original + b"\n# BEGIN PM3000 ACME SCHEDULE\n"
+                         b"17 3 * * * /mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance scheduled\n"
+                         b"# END PM3000 ACME SCHEDULE\n")
+        self.helper.rollback_simulated(
+            self.root, Path(result["backup_dir"]), syntax_check=lambda: True,
+            reload_apache=lambda: True, legacy_health=lambda: True)
+        self.assertFalse(schedule.exists())
+        self.assertEqual(original, cron.read_bytes())
+
     def test_selected_backup_rollback_restores_bytes_and_preserves_tokens(self):
         result = self.deploy()
         self.token.write_bytes(b"new-private-token-state\n")
@@ -916,12 +942,12 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('verify_release_sums "$release" "$release/RELEASE_SHA256SUMS"', rollback)
         self.assertNotIn('sha256sum', rollback)
         self.assertIn('--verify-release "$release" "$daemon_gid"', rollback)
-        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-acme\nbin/pm3000-acme-admin\nbin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
-        self.assertIn('bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
-        self.assertIn('[ "$_sum_count" -eq 10 ]', rollback)
-        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', installer)
-        self.assertIn('[ "$_sum_count" -eq 10 ]', installer)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-acme-maintenance|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme\nbin/pm3000-acme-admin\nbin/pm3000-acme-maintenance\nbin/pm3000-atomic-publish\nbin/pm3000-gsp-session-helper\nbin/pm3000-rest', rollback)
+        self.assertIn('bin/pm3000-acme bin/pm3000-acme-admin bin/pm3000-acme-maintenance bin/pm3000-atomic-publish bin/pm3000-gsp-session-helper bin/pm3000-rest', rollback)
+        self.assertIn('[ "$_sum_count" -eq 11 ]', rollback)
+        self.assertIn('bin/pm3000-acme|bin/pm3000-acme-admin|bin/pm3000-acme-maintenance|bin/pm3000-atomic-publish|bin/pm3000-gsp-session-helper|bin/pm3000-rest', installer)
+        self.assertIn('[ "$_sum_count" -eq 11 ]', installer)
         self.assertIn('chmod 755 "$tmp/bin/pm3000-acme"', installer)
         self.assertIn('--verify-private-directory "$restore_dir"', rollback)
         apache = (DEPLOY / "pm3000-revive.conf").read_text()
@@ -945,6 +971,59 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn("AcceptPathInfo On", apache)
         self.assertIn("DirectoryIndex index.html", apache)
         self.assertNotIn("ScriptAlias /modern/api/v1/", apache)
+
+    def test_device_installer_integrates_only_the_pinned_busybox_cron_service(self):
+        installer = (DEPLOY / "device-install.sh").read_text(encoding="ascii")
+        broker = (MODERN / "native" / "pm3000-acme-admin.c").read_text(encoding="ascii")
+        self.assertIn("5a6e086a544630e10a916361b956a53eb030253d72e206cc1ed1f4d6eb926e65", installer)
+        self.assertIn('/etc/init.d/busybox-cron', installer)
+        self.assertIn('--verify-root-executable /etc/init.d/busybox-cron', installer)
+        self.assertIn('/usr/sbin/update-rc.d busybox-cron defaults 95', installer)
+        self.assertIn('initialize_root_directory /etc/cron/crontabs', installer)
+        self.assertIn('/etc/init.d/busybox-cron start', installer)
+        self.assertNotIn('/etc/init.d/busybox-cron stop', installer)
+        self.assertNotIn('/etc/init.d/busybox-cron disable', installer)
+        self.assertIn('"/etc/init.d/busybox-cron"', broker)
+        self.assertIn('"reload"', broker)
+        self.assertNotIn('system(', broker)
+        self.assertNotIn('popen(', broker)
+
+    def test_device_rollback_reconciles_exact_saved_scheduler_state_without_stopping_cron(self):
+        rollback = (DEPLOY / "device-rollback.sh").read_text(encoding="ascii")
+        self.assertIn('schedule_state_path=/mnt/hdUser/pm3000-revive/acme/schedule-v1', rollback)
+        self.assertIn('crontab_path=/etc/cron/crontabs/root', rollback)
+        self.assertIn('$restore_dir/schedule.state', rollback)
+        self.assertIn('$restore_dir/crontab.state', rollback)
+        self.assertIn('"$cron_init" reload', rollback)
+        self.assertNotIn('"$cron_init" stop', rollback)
+        self.assertNotIn('busybox-cron stop', rollback)
+        installer = (DEPLOY / "device-install.sh").read_text(encoding="ascii")
+        self.assertIn('old_schedule=absent', installer)
+        self.assertIn('old_crontab=absent', installer)
+        self.assertIn('"$atomic_helper" --verify-private-regular "$schedule_state_path"', installer)
+        self.assertIn('"$atomic_helper" --verify-private-regular "$crontab_path"', installer)
+        self.assertIn('"$cron_init" reload', installer)
+        self.assertNotIn('"$cron_init" stop', installer)
+
+    def test_atomic_helper_compares_exact_regular_file_metadata(self):
+        subprocess.run(["make", "-C", str(DEPLOY), "clean", "host"], check=True,
+                       stdout=subprocess.DEVNULL)
+        helper = DEPLOY / "build/pm3000-atomic-publish-host"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            left = root / "left"
+            right = root / "right"
+            left.write_bytes(b"one")
+            right.write_bytes(b"two")
+            left.chmod(0o600)
+            right.chmod(0o600)
+            self.assertEqual(0, subprocess.run(
+                [str(helper), "--verify-same-metadata", str(left), str(right)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode)
+            right.chmod(0o640)
+            self.assertNotEqual(0, subprocess.run(
+                [str(helper), "--verify-same-metadata", str(left), str(right)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode)
 
     def test_atomic_helper_replaces_symlink_to_directory_without_following_it(self):
         subprocess.run(["make", "-C", str(DEPLOY), "clean", "host"], check=True,
@@ -1110,6 +1189,7 @@ class ScriptStructureTests(unittest.TestCase):
                 "apache/pm3000-revive.conf": 0o644,
                 "bin/pm3000-acme": 0o755,
                 "bin/pm3000-acme-admin": 0o4750,
+                "bin/pm3000-acme-maintenance": 0o755,
                 "bin/pm3000-atomic-publish": 0o755,
                 "bin/pm3000-gsp-session-helper": 0o4750,
                 "bin/pm3000-rest": 0o755,
@@ -1202,7 +1282,7 @@ class ScriptStructureTests(unittest.TestCase):
             helper.write_text(
                 "#!/bin/sh\n"
                 "set -eu\n"
-                "case \"$1\" in --verify-regular|--verify-release|--verify-apache-listener|--verify-private-tree|--verify-public-directory|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner|--set-private-directory-owner|--set-private-regular-owner) exit 0;; esac\n"
+                "case \"$1\" in --verify-regular|--verify-release|--verify-apache-listener|--verify-root-executable|--verify-private-tree|--verify-public-directory|--verify-private-directory|--verify-private-regular|--verify-private-directory-owner|--verify-private-regular-owner|--set-private-directory-owner|--set-private-regular-owner) exit 0;; esac\n"
                 "parent=$1; source=$2; destination=$3; expected_type=$4\n"
                 "rm -rf \"$parent/$destination\"\n"
                 "mv \"$parent/$source\" \"$parent/$destination\"\n"
@@ -1217,6 +1297,7 @@ class ScriptStructureTests(unittest.TestCase):
                 "apache/pm3000-revive.conf": b"new-config\n",
                 "bin/pm3000-acme": b"#!/bin/sh\nexit 2\n",
                 "bin/pm3000-acme-admin": b"ELF-acme-admin\n",
+                "bin/pm3000-acme-maintenance": b"#!/bin/sh\nexit 2\n",
                 "bin/pm3000-atomic-publish": helper.read_bytes(),
                 "bin/pm3000-gsp-session-helper": b"ELF-session-helper\n",
                 "bin/pm3000-rest": b"#!/bin/sh\nexit 0\n",
@@ -1256,6 +1337,7 @@ class ScriptStructureTests(unittest.TestCase):
                 for name in ["RELEASE_MANIFEST.json", "RELEASE_SHA256SUMS",
                              "apache/listen.conf", "apache/pm3000-revive.conf", "bin/pm3000-acme",
                              "bin/pm3000-acme-admin",
+                    "bin/pm3000-acme-maintenance",
                              "bin/pm3000-atomic-publish",
                              "bin/pm3000-gsp-session-helper", "bin/pm3000-rest",
                              "web/app.js", "web/index.html", "web/styles.css"]:
@@ -1274,6 +1356,20 @@ class ScriptStructureTests(unittest.TestCase):
             for path in (usr_sbin / "httpd", init_d / "apache2"):
                 path.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
                 path.chmod(0o755)
+            cron_init = init_d / "busybox-cron"
+            cron_init.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            cron_init.chmod(0o755)
+            fake_openssl = root / "openssl"
+            fake_openssl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"${3:-}\" = /etc/init.d/busybox-cron ]; then\n"
+                "  echo 'SHA256(/etc/init.d/busybox-cron)= 5a6e086a544630e10a916361b956a53eb030253d72e206cc1ed1f4d6eb926e65'\n"
+                "else\n"
+                "  value=$(sha256sum \"$3\"); echo \"SHA256($3)= ${value%% *}\"\n"
+                "fi\n",
+                encoding="ascii",
+            )
+            fake_openssl.chmod(0o755)
             passwd = root / "passwd"
             group = root / "group"
             passwd.write_text("daemon:x:0:0:daemon:/:/bin/sh\n", encoding="ascii")
@@ -1284,7 +1380,7 @@ class ScriptStructureTests(unittest.TestCase):
                 "--bind", str(mnt), "/mnt", "--bind", str(apache), "/etc/apache2",
                 "--ro-bind", str(passwd), "/etc/passwd", "--ro-bind", str(group), "/etc/group",
                 "--bind", str(tmp_root), "/tmp", "--bind", str(usr_sbin), "/usr/sbin",
-                "--bind", str(init_d), "/etc/init.d",
+                "--bind", str(init_d), "/etc/init.d", "--ro-bind", str(fake_openssl), "/usr/bin/openssl",
                 "/bin/sh", "/tmp/input/installer", "/tmp/input/release.tar", digest, "r2",
                 "/tmp/input/BACKUP_COMPLETE",
             ]
