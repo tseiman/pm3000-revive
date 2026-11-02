@@ -172,6 +172,7 @@ vendor_listener_sha256=480de41dc0c7740904bbc2cc4ef8352ccc74bab17b831198bf1c6db1a
 managed_listener_sha256=45c0c16bafde886b8079a1a43047dc85352a164b923b369f9dc1e04cd6e5557f
 busybox_cron_sha256=5a6e086a544630e10a916361b956a53eb030253d72e206cc1ed1f4d6eb926e65
 cron_init=/etc/init.d/busybox-cron
+cron_parent=/etc/cron
 cron_spool=/etc/cron/crontabs
 schedule_state_path=$root/acme/schedule-v1
 crontab_path=$cron_spool/root
@@ -238,7 +239,9 @@ created_release=no
 committed=no
 publish_ambiguous=no
 cron_spool_created=no
+cron_parent_created=no
 cron_links_created=no
+cron_runtime_changed=no
 rollback_failed_install()
 {
     [ "$committed" = yes ] || return 0
@@ -279,8 +282,13 @@ rollback_failed_install()
     else
         rm -f "$crontab_path" || return 1
     fi
-    "$cron_init" reload >/dev/null 2>&1 || return 1
-    if [ "$cron_spool_created" = yes ]; then rmdir "$cron_spool" || return 1; fi
+    [ "$cron_runtime_changed" = no ] || "$cron_init" reload >/dev/null 2>&1 || return 1
+    if [ "$cron_spool_created" = yes ] && [ "$cron_runtime_changed" = no ]; then
+        rmdir "$cron_spool" || return 1
+    fi
+    if [ "$cron_parent_created" = yes ] && [ "$cron_runtime_changed" = no ]; then
+        rmdir "$cron_parent" || return 1
+    fi
     if [ "$created_release" = yes ] && [ -d "$release" ] && [ ! -L "$release" ]; then rm -rf "$release"; fi
     /usr/sbin/httpd -t -D SSL -f /etc/apache2/httpd.conf >/dev/null 2>&1 &&
         /etc/init.d/apache2 reload >/dev/null 2>&1 || return 1
@@ -384,7 +392,6 @@ initialize_root_directory()
     [ ! -L "$_root_directory" ] || return 1
     if [ ! -e "$_root_directory" ]; then
         mkdir -m 700 "$_root_directory" || return 1
-        cron_spool_created=yes
     fi
     "$atomic_helper" --verify-private-directory "$_root_directory"
 }
@@ -493,7 +500,18 @@ chmod 644 "$config_dir/.pm3000-revive.conf.stage6-tmp"
 cp "$release/apache/listen.conf" "$config_dir/.listen.conf.stage6-tmp"
 chmod 644 "$config_dir/.listen.conf.stage6-tmp"
 "$atomic_helper" "$config_dir" .listen.conf.stage6-tmp listen.conf regular
-initialize_root_directory /etc/cron/crontabs || { echo "unsafe BusyBox cron spool" >&2; exit 1; }
+if [ ! -e "$cron_parent" ]; then
+    initialize_root_directory /etc/cron || { echo "unsafe BusyBox cron parent" >&2; exit 1; }
+    cron_parent_created=yes
+else
+    initialize_root_directory /etc/cron || { echo "unsafe BusyBox cron parent" >&2; exit 1; }
+fi
+if [ ! -e "$cron_spool" ]; then
+    initialize_root_directory /etc/cron/crontabs || { echo "unsafe BusyBox cron spool" >&2; exit 1; }
+    cron_spool_created=yes
+else
+    initialize_root_directory /etc/cron/crontabs || { echo "unsafe BusyBox cron spool" >&2; exit 1; }
+fi
 cron_link_count=0
 for cron_link in /etc/rc0.d/K95busybox-cron /etc/rc1.d/K95busybox-cron \
     /etc/rc2.d/S95busybox-cron /etc/rc3.d/S95busybox-cron \
@@ -519,6 +537,7 @@ for cron_link in /etc/rc0.d/K95busybox-cron /etc/rc1.d/K95busybox-cron \
         echo "BusyBox cron startup integration failed" >&2; exit 1;
     }
 done
+cron_runtime_changed=yes
 case "$cron_action" in
     start) /etc/init.d/busybox-cron start;;
     reload) /etc/init.d/busybox-cron reload;;

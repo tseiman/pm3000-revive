@@ -979,7 +979,15 @@ class ScriptStructureTests(unittest.TestCase):
         self.assertIn('/etc/init.d/busybox-cron', installer)
         self.assertIn('--verify-root-executable /etc/init.d/busybox-cron', installer)
         self.assertIn('/usr/sbin/update-rc.d busybox-cron defaults 95', installer)
-        self.assertIn('initialize_root_directory /etc/cron/crontabs', installer)
+        cron_parent = installer.index('initialize_root_directory /etc/cron ')
+        cron_spool = installer.index('initialize_root_directory /etc/cron/crontabs')
+        self.assertLess(cron_parent, cron_spool)
+        self.assertIn('cron_runtime_changed=no', installer)
+        self.assertIn('[ "$cron_runtime_changed" = no ] || "$cron_init" reload', installer)
+        self.assertLess(
+            installer.index('cron_runtime_changed=yes'),
+            installer.index('case "$cron_action" in'),
+        )
         self.assertIn('/etc/init.d/busybox-cron start', installer)
         self.assertNotIn('/etc/init.d/busybox-cron stop', installer)
         self.assertNotIn('/etc/init.d/busybox-cron disable', installer)
