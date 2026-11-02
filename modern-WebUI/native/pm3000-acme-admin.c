@@ -168,6 +168,16 @@ static void close_inherited_descriptors(void)
         (void)close(descriptor);
 }
 
+/* Shell interpreters may discard an inherited effective root identity when
+ * real and effective IDs differ. Every exec target and argv below is fixed by
+ * this broker, so normalize only after the PMA1 request has been validated. */
+static int normalize_root_identity(void)
+{
+    if (setgid(0U) != 0) return -1;
+    if (setuid(0U) != 0) return -1;
+    return 0;
+}
+
 static int request_shape(unsigned int opcode, uint32_t length,
                          char *arguments[7])
 {
@@ -436,6 +446,7 @@ static int reload_cron(void)
     if (child < 0) return -1;
     if (child == 0) {
         close_inherited_descriptors();
+        if (normalize_root_identity() != 0) _exit(126);
         execve(CRON_INIT, arguments, environment);
         _exit(127);
     }
@@ -540,6 +551,7 @@ static int run_async_renew(char *const arguments[])
         if (limit < 4L || limit > 65536L) limit = 65536L;
         for (descriptor = 4; descriptor < (int)limit; ++descriptor)
             (void)close(descriptor);
+        if (normalize_root_identity() != 0) _exit(126);
         execve(PM3000_ACME_EXECUTABLE, arguments, environment);
         _exit(127);
     }
@@ -630,6 +642,7 @@ static int run_command(char *const arguments[], const unsigned char *input,
             _exit(127);
         (void)close(input_pipe[0]);
         (void)close(output_pipe[1]);
+        if (normalize_root_identity() != 0) _exit(126);
         execve(PM3000_ACME_EXECUTABLE, arguments, environment);
         _exit(127);
     }

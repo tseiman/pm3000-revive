@@ -104,6 +104,20 @@ int main(int argc, char **argv, char **envp) {
 #include <unistd.h>
 extern int __real_getsockopt(int, int, int, void *, socklen_t *);
 extern int __real_fsync(int);
+static int mark_identity(char value) {
+    int fd = open("IDENTITY_MARKER_PATH", O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) return -1;
+    if (write(fd, &value, 1) != 1) { close(fd); return -1; }
+    return close(fd);
+}
+int __wrap_setgid(gid_t value) {
+    if (value != 0 || mark_identity('g') != 0) { errno = EPERM; return -1; }
+    return 0;
+}
+int __wrap_setuid(uid_t value) {
+    if (value != 0 || mark_identity('u') != 0) { errno = EPERM; return -1; }
+    return 0;
+}
 uid_t __wrap_getuid(void) { return 1; }
 uid_t __wrap_geteuid(void) { return 0; }
 struct passwd *__wrap_getpwnam(const char *name) {
@@ -138,11 +152,14 @@ int __wrap_fsync(int fd) {
         wrappers.write_text(
             wrappers.read_text(encoding="utf-8").replace(
                 "FSYNC_CONTROL_PATH", str(cls.work / "fsync-control")
+            ).replace(
+                "IDENTITY_MARKER_PATH", str(cls.work / "root-identity")
             ), encoding="utf-8",
         )
         cls.broker = cls.work / "pm3000-acme-admin"
         cls.schedule = cls.work / "schedule-v1"
         cls.crontab = cls.work / "root.crontab"
+        cls.identity_marker = cls.work / "root-identity"
         subprocess.run(
             ["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic",
              "-DPM3000_TESTING", f'-DPM3000_TEST_EXECUTABLE="{cls.fake}"',
@@ -150,7 +167,8 @@ int __wrap_fsync(int fd) {
              f'-DPM3000_CRONTAB_PATH="{cls.crontab}"',
              str(NATIVE / "pm3000-acme-admin.c"), str(wrappers),
              "-Wl,--wrap=getuid", "-Wl,--wrap=geteuid", "-Wl,--wrap=getpwnam",
-             "-Wl,--wrap=getsockopt", "-Wl,--wrap=fsync", "-o", str(cls.broker)], check=True
+             "-Wl,--wrap=getsockopt", "-Wl,--wrap=fsync",
+             "-Wl,--wrap=setgid", "-Wl,--wrap=setuid", "-o", str(cls.broker)], check=True
         )
 
     @classmethod
@@ -188,11 +206,13 @@ int __wrap_fsync(int fd) {
         return response[4], response[5], bytes(response[12:]), process.returncode
 
     def test_config_show_executes_only_the_fixed_cli_form(self) -> None:
+        self.identity_marker.unlink(missing_ok=True)
         status, child_status, output, exit_status = self.transact(CONFIG_SHOW)
         self.assertEqual((OK, 0, 0), (status, child_status, exit_status))
         self.assertIn(b"argc=3", output)
         self.assertIn(b"argv1=config argv2=show", output)
         self.assertIn(b"input=0 env=empty fd3=closed", output)
+        self.assertEqual(b"gu", self.identity_marker.read_bytes())
 
     def test_config_revision_executes_only_the_fixed_cli_form(self) -> None:
         status, child_status, output, exit_status = self.transact(CONFIG_REVISION)
@@ -334,11 +354,13 @@ int __wrap_fsync(int fd) {
         self.assertEqual(before, self.crontab.read_bytes())
 
     def test_renew_returns_only_after_private_startup_acceptance_without_waiting_for_completion(self) -> None:
+        self.identity_marker.unlink(missing_ok=True)
         started = time.monotonic()
         status, child_status, output, exit_status = self.transact(RENEW_ASYNC)
         self.assertLess(time.monotonic() - started, 0.75)
         self.assertEqual((OK, 0, b"", 0),
                          (status, child_status, output, exit_status))
+        self.assertEqual(b"gu", self.identity_marker.read_bytes())
 
     def test_renew_distinguishes_busy_failure_unknown_and_bounds_startup_wait(self) -> None:
         control = self.work / "startup-control"
