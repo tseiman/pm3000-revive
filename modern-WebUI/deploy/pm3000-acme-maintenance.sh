@@ -15,12 +15,17 @@ ACME=/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme
 ATOMIC=/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-atomic-publish
 HTTPD=/usr/sbin/httpd
 APACHE_RELOAD=/etc/init.d/apache2
+SLEEP=/bin/sleep
+POLL_SLEEP=/bin/sleep
+S_CLIENT_TIMEOUT=5
+S_CLIENT_ATTEMPTS=10
 ORIGINAL_CONFIG_SHA=9c693be2e5e2bf7ea5f35a3b8578754fcbd6a941d222c4c6a0074ca510cc1f19
 
-usage() { echo "usage: pm3000-acme-maintenance scheduled|force [--broker-startup-notify]" >&2; exit 2; }
+usage() { echo "usage: pm3000-acme-maintenance scheduled|force [--broker-startup-notify]|activate" >&2; exit 2; }
 result() { printf '{"mode":"%s","result":"%s","changed":%s,"reloaded":%s}\n' "$1" "$2" "$3" "$4"; }
 transaction=0
 reload_attempted=no
+active_s_client_pid=
 stage=
 rollback=
 
@@ -30,6 +35,89 @@ sha256_file() {
     [ "${#_digest}" -eq 64 ] || return 1
     case "$_digest" in *[!0-9a-f]*) return 1;; esac
     printf '%s\n' "$_digest"
+}
+
+process_state() {
+    _proc_line=
+    read _proc_line <"/proc/$1/stat" || return 1
+    set -- $_proc_line
+    [ "$#" -ge 3 ] || return 1
+    printf '%s\n' "$3"
+}
+
+cleanup_active_s_client() {
+    _cleanup_pid=$active_s_client_pid
+    [ -n "$_cleanup_pid" ] || return 0
+    active_s_client_pid=
+    kill -KILL "$_cleanup_pid" 2>/dev/null
+    wait "$_cleanup_pid" 2>/dev/null
+    return 0
+}
+
+kill_and_reap_s_client() {
+    _reap_pid=$1
+    kill -KILL "$_reap_pid" 2>/dev/null
+    wait "$_reap_pid" 2>/dev/null
+    [ "$active_s_client_pid" != "$_reap_pid" ] || active_s_client_pid=
+    return 1
+}
+
+run_s_client_bounded() {
+    _sclient_output=$1
+    "$OPENSSL" s_client -connect 127.0.0.1:443 -showcerts </dev/null >"$_sclient_output" 2>/dev/null &
+    _sclient_pid=$!
+    active_s_client_pid=$_sclient_pid
+    _sclient_elapsed=0
+    while [ "$_sclient_elapsed" -lt "$S_CLIENT_TIMEOUT" ]; do
+        _sclient_state=$(process_state "$_sclient_pid" 2>/dev/null) || {
+            wait "$_sclient_pid"
+            _sclient_rc=$?
+            [ "$active_s_client_pid" != "$_sclient_pid" ] || active_s_client_pid=
+            return "$_sclient_rc"
+        }
+        if [ "$_sclient_state" = Z ]; then
+            wait "$_sclient_pid"
+            _sclient_rc=$?
+            [ "$active_s_client_pid" != "$_sclient_pid" ] || active_s_client_pid=
+            return "$_sclient_rc"
+        fi
+        "$POLL_SLEEP" 1 || {
+            kill_and_reap_s_client "$_sclient_pid"
+            return 1
+        }
+        _sclient_elapsed=$(($_sclient_elapsed + 1))
+    done
+    kill_and_reap_s_client "$_sclient_pid"
+    return 1
+}
+
+wait_for_tls_liveness() {
+    _liveness_output=$1
+    _liveness_attempt=1
+    while [ "$_liveness_attempt" -le "$S_CLIENT_ATTEMPTS" ]; do
+        run_s_client_bounded "$_liveness_output" && return 0
+        [ "$_liveness_attempt" -eq "$S_CLIENT_ATTEMPTS" ] && break
+        "$SLEEP" 1 || return 1
+        _liveness_attempt=$(($_liveness_attempt + 1))
+    done
+    return 1
+}
+
+wait_for_served_certificate() {
+    _wait_expected=$1
+    _wait_output=$2
+    _wait_attempt=1
+    _wait_expected_fp=$($OPENSSL x509 -in "$_wait_expected" -noout -fingerprint -sha256 2>/dev/null) || return 1
+    while [ "$_wait_attempt" -le "$S_CLIENT_ATTEMPTS" ]; do
+        if run_s_client_bounded "$_wait_output"; then
+            _wait_served_fp=$($OPENSSL x509 -in "$_wait_output" -noout -fingerprint -sha256 2>/dev/null) || _wait_served_fp=
+            [ "$_wait_served_fp" = "$_wait_expected_fp" ] && return 0
+        fi
+        [ "$_wait_attempt" -eq "$S_CLIENT_ATTEMPTS" ] && break
+        "$SLEEP" 1 || return 1
+        _wait_attempt=$(($_wait_attempt + 1))
+    done
+    return 1
 }
 
 status_payload() {
@@ -98,23 +186,41 @@ restore_previous() {
     "$HTTPD" -t -D SSL -f /etc/apache2/httpd.conf >/dev/null 2>&1 || _restore_ok=no
     if [ "$reload_attempted" = yes ]; then
         "$APACHE_RELOAD" reload >/dev/null 2>&1 || _restore_ok=no
-        if "$OPENSSL" s_client -connect 127.0.0.1:443 -showcerts </dev/null >"$stage/restored-served.pem" 2>/dev/null; then
-            if [ -f "$rollback/certificate.pem" ]; then
-                _expected_fp=$($OPENSSL x509 -in "$rollback/certificate.pem" -noout -fingerprint -sha256 2>/dev/null) || _restore_ok=no
-                _served_fp=$($OPENSSL x509 -in "$stage/restored-served.pem" -noout -fingerprint -sha256 2>/dev/null) || _restore_ok=no
-                [ "${_expected_fp-}" = "${_served_fp-}" ] || _restore_ok=no
-            fi
+        if [ -f "$rollback/certificate.pem" ]; then
+            wait_for_served_certificate "$rollback/certificate.pem" "$stage/restored-served.pem" || _restore_ok=no
+        elif [ -f "$rollback/.absent.certificate.pem" ]; then
+            wait_for_tls_liveness "$stage/restored-served.pem" || _restore_ok=no
         else
             _restore_ok=no
         fi
     fi
     [ "$_restore_ok" = yes ] || return 1
-    rm -rf "$stage" "$rollback" || return 1
     transaction=0
+    rm -rf "$stage" "$rollback" || return 1
     return 0
 }
 
+abort_during_failure() {
+    trap - 1 2 3 15
+    cleanup_active_s_client
+    if [ "$transaction" -ne 0 ]; then
+        echo "rollback interrupted; preserving activation snapshots" >&2
+        result "$mode" rollback_uncertain false false
+    else
+        result "$mode" failed false false
+    fi
+    exit 1
+}
+
+handle_activation_signal() {
+    trap 'abort_during_failure' 1 2 3 15
+    cleanup_active_s_client
+    fail "activation interrupted"
+}
+
 fail() {
+    trap 'abort_during_failure' 1 2 3 15
+    cleanup_active_s_client
     echo "$1" >&2
     publish_activation_status failed || echo "cannot publish terminal activation failure status" >&2
     if [ "$transaction" -ne 0 ]; then
@@ -142,7 +248,7 @@ case "$1" in
 esac
 mode=$1; shift; notify=no
 case "$mode:$#" in
-    scheduled:0|force:0) : ;;
+    scheduled:0|force:0|activate:0) : ;;
     force:1) [ "$1" = "--broker-startup-notify" ] || usage; notify=yes ;;
     *) usage ;;
 esac
@@ -154,8 +260,11 @@ fi
 publish_activation_status running || { result "$mode" failed false false; exit 1; }
 # pm3000-acme validates the exact configured SAN set, key match and complete
 # chain against managed-ca.pem before atomically publishing these fixed inputs.
-if [ "$notify" = yes ]; then "$ACME" renew --foreground --broker-startup-notify || fail "ACME renewal failed"
-else "$ACME" renew --foreground || fail "ACME renewal failed"; fi
+# "activate" reuses only those already-published inputs after an activation-only failure.
+if [ "$mode" != activate ]; then
+    if [ "$notify" = yes ]; then "$ACME" renew --foreground --broker-startup-notify || fail "ACME renewal failed"
+    else "$ACME" renew --foreground || fail "ACME renewal failed"; fi
+fi
 
 [ -d "$MANAGED_ROOT" ] || { mkdir "$MANAGED_ROOT" || fail "cannot create managed certificate directory"; }
 [ ! -L "$MANAGED_ROOT" ] || fail "managed certificate directory is a symlink"
@@ -173,7 +282,7 @@ stage=$MANAGED_ROOT/.stage.$$
 rollback=$MANAGED_ROOT/.rollback.$$
 umask 077
 mkdir "$stage" "$rollback" || fail "cannot create private activation staging"
-trap 'fail "activation interrupted"' 1 2 3 15
+trap 'handle_activation_signal' 1 2 3 15
 
 awk '
 BEGIN { n=0; inside=0; bad=0 }
@@ -233,14 +342,16 @@ if [ "$unchanged" = yes ] && [ "$(sha256_file "$APACHE_CONFIG")" = "$managed_sha
     active_key_mod=$($OPENSSL rsa -in "$MANAGED_ROOT/private-key.pem" -noout -modulus 2>/dev/null) || unchanged=no
     [ "${active_cert_mod-}" = "${active_key_mod-}" ] || unchanged=no
     if [ "$unchanged" = yes ]; then
-        "$OPENSSL" s_client -connect 127.0.0.1:443 -showcerts </dev/null >"$stage/served.pem" 2>/dev/null || unchanged=no
+        run_s_client_bounded "$stage/served.pem" || unchanged=no
         expected_fp=$($OPENSSL x509 -in "$MANAGED_ROOT/certificate.pem" -noout -fingerprint -sha256 2>/dev/null) || unchanged=no
         served_fp=$($OPENSSL x509 -in "$stage/served.pem" -noout -fingerprint -sha256 2>/dev/null) || unchanged=no
         [ "${served_fp-}" = "${expected_fp-}" ] || unchanged=no
     fi
 fi
 if [ "$unchanged" = yes ]; then
-    rm -rf "$stage" "$rollback"; transaction=0; trap - 1 2 3 15
+    transaction=0
+    rm -rf "$stage" "$rollback"
+    trap - 1 2 3 15
     publish_activation_status succeeded || { result "$mode" failed false false; exit 1; }
     result "$mode" unchanged false false; exit 0
 fi
@@ -264,11 +375,10 @@ done
 "$HTTPD" -t -D SSL -f /etc/apache2/httpd.conf >/dev/null 2>&1 || fail "Apache syntax check failed"
 reload_attempted=yes
 "$APACHE_RELOAD" reload >/dev/null 2>&1 || fail "Apache reload failed"
-"$OPENSSL" s_client -connect 127.0.0.1:443 -showcerts </dev/null >"$stage/served.pem" 2>/dev/null || fail "Apache TLS health check failed"
-expected_fp=$($OPENSSL x509 -in "$MANAGED_ROOT/certificate.pem" -noout -fingerprint -sha256 2>/dev/null) || fail "cannot fingerprint activated certificate"
-served_fp=$($OPENSSL x509 -in "$stage/served.pem" -noout -fingerprint -sha256 2>/dev/null) || fail "cannot inspect served certificate"
-[ "$served_fp" = "$expected_fp" ] || fail "Apache is not serving the activated certificate"
-rm -rf "$stage" "$rollback"; transaction=0; trap - 1 2 3 15
+wait_for_served_certificate "$MANAGED_ROOT/certificate.pem" "$stage/served.pem" || fail "Apache did not serve the activated certificate within the health-check window"
+transaction=0
+rm -rf "$stage" "$rollback"
+trap - 1 2 3 15
 publish_activation_status succeeded || { result "$mode" failed false true; exit 1; }
 result "$mode" activated true true
 exit 0

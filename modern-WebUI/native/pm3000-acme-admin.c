@@ -61,7 +61,10 @@
 #define SCHEDULE_BEGIN "# BEGIN PM3000 ACME SCHEDULE\n"
 #define SCHEDULE_END "# END PM3000 ACME SCHEDULE\n"
 #define SCHEDULE_COMMAND "/mnt/hdUser/pm3000-revive/webui/current/bin/pm3000-acme-maintenance scheduled"
-#define CRON_INIT "/etc/init.d/busybox-cron"
+#ifndef PM3000_CRON_INIT
+#define PM3000_CRON_INIT "/etc/init.d/busybox-cron"
+#endif
+#define CRON_INIT PM3000_CRON_INIT
 #define CRONTAB_LIMIT 65536U
 
 #define RESPONSE_OK 0U
@@ -175,6 +178,20 @@ static int normalize_root_identity(void)
 {
     if (setgid(0U) != 0) return -1;
     if (setuid(0U) != 0) return -1;
+    return 0;
+}
+
+static int redirect_standard_to_null(void)
+{
+    int descriptor = open("/dev/null", O_RDWR);
+    if (descriptor < 0) return -1;
+    if (dup2(descriptor, STDIN_FILENO) < 0 ||
+        dup2(descriptor, STDOUT_FILENO) < 0 ||
+        dup2(descriptor, STDERR_FILENO) < 0) {
+        if (descriptor > STDERR_FILENO) (void)close(descriptor);
+        return -1;
+    }
+    if (descriptor > STDERR_FILENO && close(descriptor) != 0) return -1;
     return 0;
 }
 
@@ -439,22 +456,19 @@ static int remove_published(const char *path)
 
 static int reload_cron(void)
 {
-#ifndef PM3000_TESTING
     pid_t child, waited; int status; char *const arguments[] = {(char *)CRON_INIT, (char *)"reload", NULL};
     char *const environment[] = {NULL};
     child = fork();
     if (child < 0) return -1;
     if (child == 0) {
         close_inherited_descriptors();
+        if (redirect_standard_to_null() != 0) _exit(126);
         if (normalize_root_identity() != 0) _exit(126);
         execve(CRON_INIT, arguments, environment);
         _exit(127);
     }
     do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
-#else
-    return 0;
-#endif
 }
 
 static int schedule_replace(const unsigned char desired[3], const char *revision,

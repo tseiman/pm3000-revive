@@ -91,6 +91,9 @@ int main(int argc, char **argv, char **envp) {
             ["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic",
              str(fake_source), "-o", str(cls.fake)], check=True
         )
+        cls.fake_cron = cls.work / "fake-cron"
+        cls.fake_cron.write_text("#!/bin/sh\nprintf 'cron-reload-noise\\n'\n", encoding="ascii")
+        cls.fake_cron.chmod(0o755)
         wrappers = cls.work / "identity-wrappers.c"
         wrappers.write_text(
             r'''#define _GNU_SOURCE
@@ -163,6 +166,7 @@ int __wrap_fsync(int fd) {
         subprocess.run(
             ["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-pedantic",
              "-DPM3000_TESTING", f'-DPM3000_TEST_EXECUTABLE="{cls.fake}"',
+             f'-DPM3000_CRON_INIT="{cls.fake_cron}"',
              f'-DPM3000_SCHEDULE_PATH="{cls.schedule}"',
              f'-DPM3000_CRONTAB_PATH="{cls.crontab}"',
              str(NATIVE / "pm3000-acme-admin.c"), str(wrappers),

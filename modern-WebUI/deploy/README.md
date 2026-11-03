@@ -244,12 +244,17 @@ Existing objects are validated and preserved.
 The installer creates only missing ACME directories; it never creates or replaces
 ACME configuration, hostname, CA selection, account material, keys, certificates,
 or status. WebUI release rollback changes only the release pointer and WebUI Apache
-fragment: persistent ACME state and issued certificates are not rolled back. ACME
+fragment: persistent ACME state and issued certificates are not rolled back.
 Manual ACME renewal runs the fixed release-owned `pm3000-acme-maintenance force`
 orchestrator through the existing setuid broker. It publishes only a changed,
 validated certificate into root-only `/etc/CA/pm3000-acme`, migrates only the
 three port-443 server certificate directives, syntax-checks, reloads once, and
-rolls back on failed activation health. The scheduler is a closed daily device-local
+waits for up to ten TLS checks, each bounded to five seconds with a one-second
+retry interval, before rolling back failed activation health. After issuance
+succeeded but activation rolled back, an operator can run the fixed
+`pm3000-acme-maintenance activate` recovery command
+to revalidate and activate the already-issued material without placing another
+ACME order. The scheduler is a closed daily device-local
 hour/minute model exposed only to authorized browser sessions. Its fixed cron entry
 runs `pm3000-acme-maintenance scheduled`, which applies the fixed 2,592,000-second
 `openssl x509 -checkend` gate and emits a closed JSON no-op without renewing or
